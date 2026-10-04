@@ -24,6 +24,7 @@ npm start                 # 워커 실행 (스케줄 + Telegram 봇)
 - [아키텍처](docs/architecture.md): 파이프라인, 상태, 중복 발행 방지
 - [운영](docs/operations.md): 매일 검수, CLI, 문제 해결, 배포
 - [설계 결정](docs/decisions.md): 왜 Threads만, 왜 n8n 없이, 로드맵
+- [코드 컨벤션](docs/conventions.md): 커밋 메시지(`feat: 한글 요약`), 코드·DB·job·테스트 규칙
 
 ## 개발
 

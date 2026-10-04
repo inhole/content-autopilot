@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Content Autopilot is a personal internal tool, not a SaaS. It collects AI and developer news from RSS, has an LLM pick topics and write Korean Threads posts, sends each draft to a Telegram bot for approval, and publishes approved posts at fixed time slots. The MVP covers **Threads only** and does **not use n8n**: all scheduling and retries live in this codebase on pg-boss.
 
-Human-facing docs (Korean) live in `docs/`: `setup.md` (external services and tokens), `architecture.md`, `operations.md` (CLI, troubleshooting, deployment) and `decisions.md` (why Threads-only and no n8n, plus the roadmap). Update them when behavior they describe changes.
+Human-facing docs (Korean) live in `docs/`: `setup.md` (external services and tokens), `architecture.md`, `operations.md` (CLI, troubleshooting, deployment), `decisions.md` (why Threads-only and no n8n, plus the roadmap) and `conventions.md`. Update them when behavior they describe changes.
+
+**Commit messages must follow `docs/conventions.md`:** `<type>: <Korean summary>`, e.g. `feat: Telegram 검수 메시지에 수정 답장 기능 추가`. The type is one of feat, fix, docs, refactor, test, chore or perf, and an optional body explains why. Code, comments and logs stay in English; prompts, Telegram text and `docs/` are in Korean.
 
 ## Commands
 
