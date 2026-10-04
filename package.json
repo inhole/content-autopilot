@@ -2,6 +2,7 @@
   "name": "content-autopilot",
   "version": "0.1.0",
   "scripts": {
+    "prepare": "node scripts/setup-hooks.mjs",
     "dev": "tsx watch src/worker.ts",
     "start": "tsx src/worker.ts",
     "cli": "tsx src/cli.ts",

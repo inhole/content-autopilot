@@ -8,7 +8,7 @@ Content Autopilot is a personal internal tool, not a SaaS. It collects AI and de
 
 Human-facing docs (Korean) live in `docs/`: `setup.md` (external services and tokens), `architecture.md`, `operations.md` (CLI, troubleshooting, deployment), `decisions.md` (why Threads-only and no n8n, plus the roadmap) and `conventions.md`. Update them when behavior they describe changes.
 
-**Commit messages must follow `docs/conventions.md`:** `<type>: <Korean summary>`, e.g. `feat: Telegram 검수 메시지에 수정 답장 기능 추가`. The type is one of feat, fix, docs, refactor, test, chore or perf, and an optional body explains why. Code, comments and logs stay in English; prompts, Telegram text and `docs/` are in Korean.
+**Commit messages must follow `docs/conventions.md`:** `<type>: <Korean summary>`, e.g. `feat: Telegram 검수 메시지에 수정 답장 기능 추가`. The type is one of feat, fix, docs, refactor, test, chore or perf, and an optional body explains why. A commit-msg hook (`.githooks/commit-msg` → `scripts/commit-msg.mjs`, enabled by `npm install` via `prepare`) rejects non-conforming messages. Fix the message instead of bypassing the hook with `--no-verify`. Code, comments and logs stay in English; prompts, Telegram text and `docs/` are in Korean.
 
 ## Commands
 
