@@ -1,6 +1,7 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
 import { dbSsl } from './db/pool.ts'
+import { pingHealthcheck } from './lib/healthcheck.ts'
 import { collectAll } from './pipeline/collect.ts'
 import {
   generatePost,
@@ -133,7 +134,16 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   }
   await boss.work(Q.daily, async ([job]) => {
     if (!job) return
-    await alertOnFinalFailure(job, DAILY_RETRY_LIMIT, '일일 파이프라인', reviewer, runDaily)
+    try {
+      await alertOnFinalFailure(job, DAILY_RETRY_LIMIT, '일일 파이프라인', reviewer, runDaily)
+    } catch (err) {
+      // Only the last attempt is a real failure; a retry may still succeed and ping success.
+      if (isFinalAttempt(job.retryCount, DAILY_RETRY_LIMIT)) {
+        await pingHealthcheck(config.HEALTHCHECK_DAILY_URL, 'fail')
+      }
+      throw err
+    }
+    await pingHealthcheck(config.HEALTHCHECK_DAILY_URL)
   })
 
   const handleGenerate = async ([job]: { data: GenerateData; retryCount: number }[]) => {

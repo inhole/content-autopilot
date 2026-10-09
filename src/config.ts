@@ -37,6 +37,10 @@ const schema = z.object({
     .string()
     .default('08:00,12:30,19:00')
     .transform((s) => s.split(',').map((t) => t.trim())),
+
+  // Dead man's switch pings (healthchecks.io style); unset disables them.
+  HEALTHCHECK_URL: z.url().optional(),
+  HEALTHCHECK_DAILY_URL: z.url().optional(),
 })
 
 export type Config = z.infer<typeof schema>
