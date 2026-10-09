@@ -32,6 +32,16 @@ describe('normalizeItem', () => {
     expect(normalizeItem({ title: 't' }, base)).toBeNull()
   })
 
+  it('skips items whose fields are not strings', () => {
+    // rss-parser turns e.g. <title xml:lang="ko"/> into an object.
+    const objectTitle = { _: '', $: { 'xml:lang': 'ko' } }
+    expect(normalizeItem({ title: objectTitle, link: '/a' }, base)).toBeNull()
+    expect(normalizeItem({ title: 't', link: { href: '/a' } }, base)).toBeNull()
+    expect(
+      normalizeItem({ title: 't', link: '/a', isoDate: 123, contentSnippet: {} }, base),
+    ).toMatchObject({ publishedAt: null, summary: null })
+  })
+
   it('turns an invalid date into null', () => {
     expect(
       normalizeItem({ title: 't', link: '/a', isoDate: 'garbage' }, base)?.publishedAt,

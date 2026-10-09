@@ -25,7 +25,10 @@ export type NormalizedItem = {
   publishedAt: Date | null
 }
 
-type RawItem = { link?: string; title?: string; isoDate?: string; contentSnippet?: string }
+// rss-parser types these as strings, but e.g. `<title xml:lang="ko"/>` parses to an object.
+type RawItem = { link?: unknown; title?: unknown; isoDate?: unknown; contentSnippet?: unknown }
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
 /**
  * Validates one feed item. Returns null when it cannot be stored (missing title/link, bad or
@@ -33,8 +36,8 @@ type RawItem = { link?: string; title?: string; isoDate?: string; contentSnippet
  * against `base` (the feed's site link or feed URL). An unparseable date becomes null.
  */
 export function normalizeItem(item: RawItem, base: string): NormalizedItem | null {
-  const title = item.title?.trim()
-  const link = item.link?.trim()
+  const title = str(item.title)?.trim()
+  const link = str(item.link)?.trim()
   if (!title || !link) return null
   let url: string
   let hash: string
@@ -47,15 +50,16 @@ export function normalizeItem(item: RawItem, base: string): NormalizedItem | nul
     return null
   }
   let publishedAt: Date | null = null
-  if (item.isoDate) {
-    const d = new Date(item.isoDate)
+  const isoDate = str(item.isoDate)
+  if (isoDate) {
+    const d = new Date(isoDate)
     if (!Number.isNaN(d.getTime())) publishedAt = d
   }
   return {
     title,
     url,
     urlHash: hash,
-    summary: item.contentSnippet?.slice(0, 2000) ?? null,
+    summary: str(item.contentSnippet)?.slice(0, 2000) ?? null,
     publishedAt,
   }
 }
@@ -89,7 +93,12 @@ async function collectSource(source: Source): Promise<CollectResult> {
   let inserted = 0
   let skipped = 0
   for (const raw of feed.items) {
-    const item = normalizeItem(raw, base)
+    let item: NormalizedItem | null
+    try {
+      item = normalizeItem(raw, base)
+    } catch {
+      item = null
+    }
     if (!item) {
       skipped++
       continue
