@@ -11,6 +11,12 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 | 🗑 폐기 | 발행하지 않는다 |
 | 초안에 `수정: <본문>` 답장 | 본문을 그대로 교체하고 다시 검수 메시지를 보낸다 |
 | 초안에 다른 내용으로 답장 | 그 내용을 피드백으로 반영해 재생성한다 |
+| 승인 메시지의 ⏪ 예약 취소 | 예약을 풀고 검수 대기로 되돌린다. 새 검수 메시지가 온다. |
+| 승인 메시지의 🚀 지금 발행 | 발행 시각을 지금으로 당긴다. 다음 발행 확인 주기(5분 이내)에 나간다. |
+
+두 버튼은 버튼이 만들어진 그 예약에만 동작한다. 이미 발행됐거나 다시 승인해서 시간이 바뀌었으면 "이미 처리된 예약이에요"라고 답한다.
+
+**검수를 놓쳤을 때:** 48시간 동안 손대지 않은 초안은 `EXPIRED`로 만료되고 ⌛ 알림이 온다(매시 정각 확인). 09:00과 18:00에 검수 대기가 있으면 📝 리마인더가 온다.
 
 발행이 끝나면 🚀 메시지가 온다. 발행이 3번 실패하면 ❌ 메시지가 온다. 일일 파이프라인, 초안 생성, 검수 전송 job이 재시도를 모두 소진해도 ❌ 메시지가 온다. 수집이 실패하거나 토큰 갱신이 실패하면 ⚠️ 메시지가 온다.
 
@@ -18,7 +24,8 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 
 | 명령 | 하는 일 |
 |---|---|
-| `/status` | 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 토큰 만료일, 마지막 수집 실행 결과를 보여준다 |
+| `/status` | 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 최근 7일 만료 수, 토큰 만료일, 마지막 수집 실행 결과, 이번 달 LLM 비용(OpenRouter)을 보여준다 |
+| `/help` | 명령과 답장 규칙을 보여준다. 입력창에 `/`를 치면 명령 메뉴도 뜬다. |
 | `/add <url> [한 줄 의견]` | 직접 고른 기사로 초안을 만든다. 의견을 붙이면 그 의견을 글의 관점으로 삼는다. 의견은 관점일 뿐이고, 사실은 기사 본문에서만 가져온다. 이미 다룬 기사면 알려주기만 하고 새로 만들지 않는다. |
 | `/start` | chat id를 알려준다 (처음 설정할 때) |
 
@@ -104,3 +111,25 @@ select name, state, retry_count, output, created_on from pgboss.job order by cre
 - **워커는 한 곳에서만 실행한다.** 로컬에서 `npm start`를 켜 둔 채로 Railway 워커가 뜨면 두 워커가 Telegram polling을 놓고 충돌한다 (`409 Conflict`). 중복 발행은 일어나지 않지만 버튼 응답이 불안정해진다. 로컬 워커는 끄고, 로컬에서는 CLI만 쓴다.
 - 워커는 시작할 때 migration을 자동으로 적용한다.
 - 환경변수를 바꾸면 Railway가 자동으로 재배포한다.
+
+### CI 통과 후에만 배포 (Wait for CI)
+GitHub Actions(`.github/workflows/ci.yml`)는 main에 push하거나 PR을 올리면 실행된다.
+- `check` job: typecheck, lint, 단위 테스트
+- `integration` job: pgvector Postgres 컨테이너에서 DB 시나리오 테스트
+
+Railway 서비스 Settings에서 **Wait for CI**를 켜면, CI가 통과한 커밋만 배포된다. 원하면 GitHub Settings → Branches에서 main 보호 규칙을 만들고 `check`, `integration`을 필수로 지정한다.
+
+### 생존 감시 (healthchecks.io)
+워커가 죽으면 워커가 보내는 알림도 함께 멈춘다. 그래서 외부 서비스가 "신호가 끊겼다"를 대신 알리게 한다.
+1. https://healthchecks.io 에 가입한다 (무료). 알림 채널(이메일 또는 Telegram)을 연결한다.
+2. 체크 두 개를 만든다.
+   - **worker:** Period 5분, Grace 10~15분 → ping URL을 Railway 변수 `HEALTHCHECK_URL`에 넣는다. 워커는 시작 직후와 5분마다 신호를 보낸다.
+   - **daily:** Schedule(cron) `0 6 * * *`, 시간대 Asia/Seoul, Grace 1~2시간 → ping URL을 `HEALTHCHECK_DAILY_URL`에 넣는다. 일일 파이프라인이 성공하면 신호를 보내고, 마지막 재시도까지 실패하면 `<url>/fail`을 보낸다.
+3. 둘 다 설정하지 않으면 신호를 보내지 않는다. 기능이 꺼질 뿐이고 다른 동작에는 영향이 없다.
+
+### 로컬에서 통합 테스트
+```bash
+docker run -d --name ca-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg17
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres DATABASE_SSL=false npm run test:integration
+```
+통합 테스트는 테이블을 비우기 때문에 `DATABASE_URL` 호스트가 localhost/127.0.0.1/postgres가 아니면 실행을 거부한다(`test/integration/setup.ts`). 운영 DB에는 절대 돌지 않는다.

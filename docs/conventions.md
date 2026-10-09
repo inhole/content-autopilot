@@ -90,3 +90,6 @@ docs: Threads 토큰 발급 절차 보완
 - `test/*.test.ts`에 vitest로 작성한다.
 - DB나 네트워크 없이 검증할 수 있게, 핵심 로직은 순수 함수로 분리한다. 예: `nextFreeSlot`, `pickTop`, `driveContainer`.
 - 실제 외부 API를 부르는 테스트는 만들지 않는다. 연결 확인은 CLI로 한다 (`threads:check`, `daily`).
+- 기본값이 config에서 오는 매개변수에 `undefined`를 넘기면 로컬 `.env`의 실제 값이 쓰인다. 테스트에서는 값을 명시한다.
+- DB가 필요한 시나리오는 `test/integration/`에 쓴다. CI의 `integration` job이 pgvector Postgres로 실행한다. 로컬 실행 방법은 operations.md에 있다.
+- main에 push하기 전에 `npm run typecheck && npm run lint && npm test`가 통과해야 한다. CI도 같은 검사를 한다.

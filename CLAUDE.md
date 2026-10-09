@@ -19,7 +19,8 @@ npm run dev               # same as start, with watch mode
 npm run cli -- <command>  # manual ops; run without arguments to see all commands
 npm run typecheck         # tsc --noEmit (code is run by tsx; there is no build step)
 npm run lint              # biome check (npm run format applies fixes)
-npm test                  # vitest run
+npm test                  # vitest run (unit; test/integration is excluded)
+npm run test:integration  # DB scenarios against a LOCAL Postgres only (guard in test/integration/setup.ts); CI runs it on pgvector/pgvector:pg17 with DATABASE_SSL=false
 npx vitest run test/time.test.ts -t "rolls over"   # run a single test
 ```
 
@@ -43,6 +44,7 @@ review {postId}           → Telegram message with approve / regen / reject but
 publish-due (*/5 cron)    → enqueue publish for due posts (singletonKey per post)
 publish {postId}          → Threads container → wait FINISHED → threads_publish
 refresh-token (daily)     → refresh the Threads long-lived token (60 days) near expiry
+review-maintenance (hourly) → expire PENDING_REVIEW drafts untouched 48h (EXPIRED) + 09/18h reminders
 ```
 
 Key design points that span several files:
@@ -53,10 +55,13 @@ Key design points that span several files:
 - **Generation is grounded in the fetched article body** (Readability + linkedom). If no body can be read, the topic is skipped (`SkipTopicError`, not retried). Transient fetch failures (429/5xx/timeouts, `TransientFetchError`) are retried instead. An initial generate reuses an existing draft and never overwrites one (`on conflict do nothing`). Regeneration goes through `enqueueRegeneration`, which bumps `posts.regen_seq`. The rewrite is applied only if that seq is still the latest and the post is PENDING_REVIEW, so a retried older request cannot clobber a newer result. Jobs on the legacy `generate` queue are forwarded to `generate-v2`. The source URL goes in `link_attachment`, never in the post text.
 - **Threads access goes through the `ThreadsApi` interface.** When `THREADS_DRY_RUN=true`, `getThreadsApi()` returns `DryRunThreadsClient`. The token is seeded from env into `platform_accounts` on first use; after that, the DB copy is authoritative.
 - **Telegram review.** Buttons and replies act only on the post's current `review_message_id` while it is `PENDING_REVIEW` and `review_revision = revision`. Every text change bumps `revision`, and approval passes the revision the reviewer saw to `approvePost`. `sendForReview` registers a message only if the revision it displays is still current. Sending a new review message strips the previous message's keyboard. Replying to a review message with `수정: <text>` replaces the draft verbatim. Any other reply is treated as feedback and triggers regeneration. The bot ignores every chat except `TELEGRAM_CHAT_ID`; `/start` prints the chat id. `/status` shows pipeline state (`src/pipeline/status.ts`). `/add <url> [note]` creates a manual topic whose `topics.note` (the owner's opinion) becomes the post's angle, but never a source of facts. Commands must be registered before the `message:text` handler, which ends the middleware chain for non-reply text. Without `TELEGRAM_BOT_TOKEN`, review falls back to console output plus the CLI.
+- **After approval**, the confirmation message has `unsched:<id>:<epoch>` / `pubnow:<id>:<epoch>` buttons. They are bound to that exact `scheduled_at`. Un-scheduling bumps `revision` and re-sends review. Publish-now only moves `scheduled_at` to now and still goes through the sweep and claim.
+- **Liveness:** `HEALTHCHECK_URL` is pinged every 5 min by `worker.ts`. `HEALTHCHECK_DAILY_URL` is pinged after each daily run, and `/fail` is pinged on its final failure. Both are optional.
 - **Final-failure alerts.** `alertOnFinalFailure` in `jobs.ts` notifies Telegram when the daily, generate or review job throws on its last attempt. The retry-limit constants there are shared with `createQueue`.
 
 ## Environment notes
 
+- **DB SSL:** `DATABASE_SSL` (default true) controls `dbSsl` in `src/db/pool.ts`, shared with pg-boss. Set it to false only for local/CI Postgres.
 - **Supabase:** use the **session pooler** URL (`aws-0-ap-northeast-2.pooler.supabase.com:5432`). The direct `db.*.supabase.co` host is IPv6-only. Transaction mode (port 6543) does not suit a long-running pg-boss worker.
 - **pg types:** `pg` is configured in `src/db/pool.ts` to parse `int8`/`numeric` as JS numbers.
 - **Threads API:** host `graph.threads.net/v1.0`. Posts have a 500-character limit, at most 5 links, and 250 posts per 24h. The Meta app runs in development mode with the owner as a Threads tester, so no App Review is needed. Keep the profile public; private-profile grants expire after 90 days.

@@ -13,6 +13,7 @@
                                               ▼                         │
                publish-due (5분마다) ──▶ publish ──▶ Threads API          │
                refresh-token (04:00) ──▶ Threads 토큰 갱신               │
+               review-maintenance (매시) ──▶ 초안 만료 + 리마인더        │
                     └──────────────────────────────────────────────────┘
                                        │
                                Supabase Postgres
@@ -40,9 +41,11 @@ topics:  COLLECTED ─▶ SHORTLISTED ─▶ USED
             └───────▶ DUPLICATE
 
 posts:   PENDING_REVIEW ─▶ SCHEDULED ─▶ PUBLISHING ─▶ PUBLISHED
-              │  ▲                         │
-              │  └ 재생성 / 수정             └─▶ SCHEDULED (재시도) ─▶ FAILED (3회 실패)
-              └─▶ REJECTED
+           │ │  ▲  ▲          │                │
+           │ │  │  └ 예약 취소 ┘                └─▶ SCHEDULED (재시도) ─▶ FAILED (3회 실패)
+           │ │  └ 재생성 / 수정
+           │ └─▶ REJECTED
+           └───▶ EXPIRED (48시간 동안 손대지 않음, review-maintenance)
 ```
 
 ## 중복 발행 방지
@@ -68,6 +71,10 @@ posts:   PENDING_REVIEW ─▶ SCHEDULED ─▶ PUBLISHING ─▶ PUBLISHED
 처음에는 임베딩 유사도(pgvector)로 중복을 걸렀다. 그런데 GeekNews 한국어 요약과 HN 영어 원문은 같은 기사여도 유사도가 0.37~0.63밖에 나오지 않았다. 다른 기사와 구분할 수 있는 기준값을 정할 수 없어서 임베딩 방식은 제거했다 (`migrations/002_drop_embedding.sql`).
 
 LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 표시를 무시한다. 중복 참조가 순환하면(A→B, A→B→C→A 등 길이와 관계없이) 그 안에서 점수가 가장 높은 하나를 대표로 남긴다. 그래서 같은 사건이 통째로 사라지는 일은 없다.
+
+## 생존 감시
+
+워커는 시작 직후와 5분마다 `HEALTHCHECK_URL`로 신호를 보낸다. 일일 파이프라인은 성공하면 `HEALTHCHECK_DAILY_URL`로 신호를 보내고, 마지막 재시도까지 실패하면 `<url>/fail`을 보낸다. 신호가 끊기면 외부 서비스(healthchecks.io)가 알린다. 워커가 죽으면 워커 자신의 Telegram 알림도 함께 멈추기 때문에 외부 서비스가 필요하다. 신호 전송(`src/lib/healthcheck.ts`)은 실패해도 예외를 던지지 않는다.
 
 ## 데이터
 
