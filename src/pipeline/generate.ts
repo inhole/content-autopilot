@@ -15,6 +15,38 @@ export const generationSchema = z.object({
 })
 export type Generation = z.infer<typeof generationSchema>
 
+// Providers do not reliably enforce maxLength in structured output (Opus routinely writes 500+
+// chars), so the first pass accepts long text and an over-limit draft is shortened once.
+const draftSchema = generationSchema.extend({ text: z.string().min(50).max(4000) })
+const shortenSchema = z.object({ text: z.string().min(50).max(THREADS_TEXT_LIMIT) })
+const SHORTEN_TARGET = 450
+
+export const shortenPrompt = (text: string) =>
+  `아래 Threads 글을 공백 포함 ${SHORTEN_TARGET}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
+
+export const charCount = (text: string) => [...text].length
+
+/** One LLM draft for an assembled user prompt, shortened once if it exceeds the Threads limit. */
+export async function draftPost(user: string, model = config.LLM_MODEL): Promise<Generation> {
+  const draft = await chatJson({
+    model,
+    system: GENERATE_SYSTEM,
+    user,
+    schema: draftSchema,
+    schemaName: 'threads_post',
+  })
+  if (charCount(draft.text) <= THREADS_TEXT_LIMIT) return draft
+  const { text } = await chatJson({
+    model,
+    system: GENERATE_SYSTEM,
+    user: shortenPrompt(draft.text),
+    schema: shortenSchema,
+    schemaName: 'threads_post_shortened',
+    temperature: 0.3,
+  })
+  return { ...draft, text }
+}
+
 type Topic = {
   id: number
   title: string
@@ -125,13 +157,7 @@ export async function generatePost(
     ...(stylePrompt ? [stylePrompt] : []),
   ]
 
-  const gen = await chatJson({
-    model: config.LLM_MODEL,
-    system: GENERATE_SYSTEM,
-    user: `${parts.join('\n\n')}${notePrompt}${revisionPrompt}`,
-    schema: generationSchema,
-    schemaName: 'threads_post',
-  })
+  const gen = await draftPost(`${parts.join('\n\n')}${notePrompt}${revisionPrompt}`)
 
   // An initial generation never overwrites: if another job created the draft meanwhile, that
   // draft (and any edit made to it) wins and that job sends it to review.
