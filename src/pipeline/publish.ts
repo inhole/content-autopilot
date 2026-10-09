@@ -54,10 +54,11 @@ export async function approvePost(
   }
 }
 
-export async function rejectPost(postId: number): Promise<void> {
+export async function rejectPost(postId: number, reason?: string): Promise<void> {
   await query(
-    "update posts set status = 'REJECTED', updated_at = now() where id = $1 and status = 'PENDING_REVIEW'",
-    [postId],
+    `update posts set status = 'REJECTED', reject_reason = $2, updated_at = now()
+     where id = $1 and status = 'PENDING_REVIEW'`,
+    [postId, reason ?? null],
   )
 }
 

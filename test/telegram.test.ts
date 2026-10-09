@@ -3,6 +3,7 @@ import {
   encodeScheduleAction,
   HELP_TEXT,
   isCurrentReviewAction,
+  parseCallback,
   parseScheduleAction,
 } from '../src/review/telegram.ts'
 
@@ -47,5 +48,21 @@ describe('isCurrentReviewAction', () => {
   })
   it('rejects posts that are no longer pending', () => {
     expect(isCurrentReviewAction({ ...post, status: 'SCHEDULED' }, 10)).toBe(false)
+  })
+})
+
+describe('parseCallback', () => {
+  it('parses plain actions', () => {
+    expect(parseCallback('reject:12')).toEqual({ action: 'reject', postId: 12 })
+  })
+  it('parses a reject reason', () => {
+    expect(parseCallback('rr:12:boring')).toEqual({ action: 'rr', postId: 12, reason: 'boring' })
+  })
+  it('rejects unknown reasons and bad ids', () => {
+    expect(parseCallback('rr:12:nope')).toBeNull()
+    expect(parseCallback('approve:x')).toBeNull()
+  })
+  it('stays under the 64-byte callback limit', () => {
+    expect(new TextEncoder().encode('rr:9999999999:boring').length).toBeLessThan(64)
   })
 })
