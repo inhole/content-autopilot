@@ -4,8 +4,8 @@ import { urlHash } from '../lib/url.ts'
 
 const parser = new Parser({ timeout: 20_000 })
 
-// Ignore feed items older than this so a newly added feed does not flood the queue.
-const MAX_AGE_HOURS = 48
+// Topics older than this are never collected or ranked: news does not carry over.
+export const MAX_AGE_HOURS = 48
 
 type Source = { id: number; name: string; url: string }
 
@@ -52,6 +52,18 @@ async function collectSource(source: Source): Promise<CollectResult> {
     inserted += rows.length
   }
   return { source: source.name, fetched: feed.items.length, inserted }
+}
+
+/** Skips COLLECTED topics that aged out before being ranked (e.g. the worker was down). */
+export async function expireStaleTopics(): Promise<number> {
+  const rows = await query(
+    `update topics set status = 'SKIPPED', updated_at = now()
+     where status = 'COLLECTED'
+       and coalesce(published_at, created_at) < now() - make_interval(hours => $1)
+     returning id`,
+    [MAX_AGE_HOURS],
+  )
+  return rows.length
 }
 
 export async function addManualTopic(title: string, url?: string): Promise<number> {

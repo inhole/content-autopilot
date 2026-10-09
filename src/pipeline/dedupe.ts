@@ -1,6 +1,7 @@
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { embed } from '../llm/openrouter.ts'
+import { expireStaleTopics } from './collect.ts'
 
 // Cosine similarity at or above this marks a topic as the same story as an earlier one.
 // Tune with real data: cross-language pairs (GeekNews KR vs HN EN) score lower than same-language.
@@ -9,7 +10,13 @@ const LOOKBACK_DAYS = 14
 
 export const toVector = (v: number[]) => `[${v.join(',')}]`
 
-export async function dedupeCollected(): Promise<{ embedded: number; duplicates: number }> {
+export async function dedupeCollected(): Promise<{
+  expired: number
+  embedded: number
+  duplicates: number
+}> {
+  // Expire first so stale topics are not embedded for nothing.
+  const expired = await expireStaleTopics()
   const pending = await query<{ id: number; title: string; feed_summary: string | null }>(
     `select id, title, feed_summary from topics
      where status = 'COLLECTED' and embedding is null order by id`,
@@ -50,5 +57,5 @@ export async function dedupeCollected(): Promise<{ embedded: number; duplicates:
       duplicates++
     }
   }
-  return { embedded: pending.length, duplicates }
+  return { expired, embedded: pending.length, duplicates }
 }
