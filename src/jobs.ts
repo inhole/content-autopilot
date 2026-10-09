@@ -1,5 +1,6 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
+import { dbSsl } from './db/pool.ts'
 import { collectAll } from './pipeline/collect.ts'
 import {
   generatePost,
@@ -75,7 +76,7 @@ type PostData = { postId: number }
 export function createBoss(): PgBoss {
   const boss = new PgBoss({
     connectionString: config.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: dbSsl,
     max: 5,
   })
   boss.on('error', (err) => console.error('[pg-boss]', err))

@@ -10,6 +10,11 @@ const bool = z
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
+  // Defaults to true because production runs on Supabase; CI and local Postgres have no SSL.
+  DATABASE_SSL: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 
   OPENROUTER_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default('anthropic/claude-sonnet-5.5'),
