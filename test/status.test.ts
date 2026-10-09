@@ -30,10 +30,11 @@ describe('status extras', () => {
     expect(parseLlmCost({ nope: 1 })).toBeNull()
   })
   it('omits the cost on any fetch failure', async () => {
-    expect(await fetchLlmCost(undefined)).toBeNull()
     const boom = (async () => {
       throw new Error('net')
     }) as unknown as typeof fetch
+    // '' rather than undefined: undefined would fall back to the real key from config.
+    expect(await fetchLlmCost('', boom)).toBeNull()
     expect(await fetchLlmCost('k', boom)).toBeNull()
     const bad = (async () => new Response('x', { status: 401 })) as unknown as typeof fetch
     expect(await fetchLlmCost('k', bad)).toBeNull()
