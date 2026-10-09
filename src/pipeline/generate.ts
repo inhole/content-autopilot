@@ -5,6 +5,7 @@ import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 import { GENERATE_SYSTEM } from './prompts.ts'
 import { gatherSources } from './sources.ts'
+import { buildStylePrompt, loadStyleContext } from './style.ts'
 
 export const generationSchema = z.object({
   text: z.string().min(50).max(THREADS_TEXT_LIMIT),
@@ -107,11 +108,21 @@ export async function generatePost(
   // The note is the owner's opinion (the angle), never a source of facts.
   const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
 
-  // Labeled parts joined by blank lines; add new context (e.g. a style fragment) as another part.
+  // Style learning (owner's edited/approved posts, recent hooks, reject reasons) is a nice-to-have:
+  // a failure to load it must not block the draft.
+  const stylePrompt = await loadStyleContext()
+    .then(buildStylePrompt)
+    .catch((err: unknown) => {
+      console.warn(`[generate] style context unavailable: ${(err as Error).message}`)
+      return ''
+    })
+
+  // Labeled parts joined by blank lines; add new context as another part.
   const parts = [
     `제목: ${topic.title}\n출처: ${sources.sourceUrl ?? '(직접 입력)'}`,
     `본문:\n${sources.body}`,
     ...sources.aux.map((a) => `${a.label}:\n${a.text}`),
+    ...(stylePrompt ? [stylePrompt] : []),
   ]
 
   const gen = await chatJson({
