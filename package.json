@@ -21,18 +21,18 @@
     "pg": "^8.23.1",
     "pg-boss": "^12.36.0",
     "rss-parser": "^3.13.0",
+    "tsx": "^4.23.15",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   },
   "private": true,
   "engines": {
-    "node": ">=22.12"
+    "node": ">=24.2"
   }
 }

@@ -67,13 +67,32 @@ job 상태는 `pgboss.job` 테이블에서 볼 수 있다.
 select name, state, retry_count, output, created_on from pgboss.job order by created_on desc limit 20;
 ```
 
-## 배포 (Railway, 아직 하지 않음)
+## 배포 (Railway)
 
-워커는 계속 실행되는 프로세스 하나라서 Railway 서비스 하나면 된다.
+워커는 HTTP 포트 없이 계속 실행되는 프로세스 하나다. Railway 서비스 하나로 충분하다. GitHub `main`에 push하면 자동으로 다시 배포된다.
 
-1. GitHub repo를 연결해 서비스를 만든다.
-2. Start command는 `npm start`. 빌드 단계는 없다 (tsx로 바로 실행).
-3. Variables에 `.env`와 같은 값을 넣는다.
-4. 인스턴스는 **1개**로 유지한다. 여러 개를 띄워도 중복 발행은 일어나지 않지만, Telegram 봇 polling이 서로 충돌한다.
+### 빌드 동작
+- Railway(Railpack)는 `package.json`의 `engines.node`(`>=24.2`)로 Node 버전을 고르고, `npm start`로 실행한다. 별도 빌드 단계는 없다.
+- `tsx`는 실행에 필요하므로 `dependencies`에 둔다. devDependencies를 정리(prune)하는 설정을 켜도 깨지지 않게 하기 위해서다.
+- `prepare`의 hook 설정은 git 저장소가 아니면 건너뛴다.
 
-워커는 시작할 때 migration을 자동으로 적용한다.
+### 처음 배포
+1. https://railway.com 에서 GitHub 계정으로 가입한다. Hobby 플랜은 월 $5이고 $5 사용량이 포함된다. 이 워커는 그 안에서 돈다.
+2. **New Project → Deploy from GitHub repo**를 고르고, `inhole/content-autopilot`을 선택한다 (GitHub 앱 권한 허용).
+3. 첫 배포는 환경변수가 없어서 실패한다. 정상이다.
+4. 서비스 → **Variables → Raw Editor**에 로컬 `.env` 내용을 붙여넣고 저장한다.
+   - `DATABASE_URL`, `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_DRY_RUN`, (발급 후) `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`
+5. **Deployments**에서 다시 배포한다. 로그에 다음 두 줄이 보이면 성공이다.
+   ```
+   [worker] started · collect "0 6 * * *" Asia/Seoul · ...
+   [telegram] @<봇이름> polling
+   ```
+6. **Settings**에서 확인한다.
+   - Replicas: **1**
+   - Serverless(App Sleeping): **끔** (켜져 있으면 06:00 수집과 Telegram 응답이 멈춘다)
+   - Restart Policy: On Failure (기본값)
+
+### 주의
+- **워커는 한 곳에서만 실행한다.** 로컬에서 `npm start`를 켜 둔 채로 Railway 워커가 뜨면 두 워커가 Telegram polling을 놓고 충돌한다 (`409 Conflict`). 중복 발행은 일어나지 않지만 버튼 응답이 불안정해진다. 로컬 워커는 끄고, 로컬에서는 CLI만 쓴다.
+- 워커는 시작할 때 migration을 자동으로 적용한다.
+- 환경변수를 바꾸면 Railway가 자동으로 재배포한다.

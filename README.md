@@ -34,4 +34,4 @@ npm run lint
 npm test
 ```
 
-Node 22.12 이상 · TypeScript (tsx로 실행) · pg-boss · Supabase Postgres · OpenRouter · grammY
+Node 24.2 이상 · TypeScript (tsx로 실행) · pg-boss · Supabase Postgres · OpenRouter · grammY
