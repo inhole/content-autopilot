@@ -5,6 +5,8 @@ import { getThreadsApi } from '../threads/account.ts'
 import type { TextPost, ThreadsApi } from '../threads/client.ts'
 
 const MAX_ATTEMPTS = 3
+// Extra attempts allowed when we cannot tell whether the last one actually published.
+const MAX_UNKNOWN_ATTEMPTS = MAX_ATTEMPTS * 2
 // A PUBLISHING row untouched this long belongs to a crashed worker and may be resumed.
 const STALE_PUBLISHING_MINUTES = 10
 
@@ -131,6 +133,8 @@ export type FailureDecision = 'published' | 'retry' | 'failed'
  * be lost after Threads already published, so a PUBLISHED container wins over everything. If we
  * cannot tell on the final attempt, stay retryable: a wrong FAILED is never revisited by the
  * sweep and would hide a live post, while one more attempt re-checks the container safely.
+ * That grace is capped so a persistent lookup failure (e.g. an expired token) still ends in
+ * FAILED and gets reported instead of retrying silently forever.
  */
 export function decideAfterFailure(input: {
   attempts: number
@@ -138,7 +142,8 @@ export function decideAfterFailure(input: {
 }): FailureDecision {
   if (input.containerStatus === 'PUBLISHED') return 'published'
   if (input.attempts < MAX_ATTEMPTS) return 'retry'
-  return input.containerStatus === 'unknown' ? 'retry' : 'failed'
+  if (input.containerStatus === 'unknown' && input.attempts < MAX_UNKNOWN_ATTEMPTS) return 'retry'
+  return 'failed'
 }
 
 export async function publishPost(postId: number, api?: ThreadsApi): Promise<PublishOutcome> {
@@ -173,9 +178,12 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
     return rows.length > 0
   }
 
-  const threads = api ?? (await getThreadsApi())
+  // Resolved inside try: a missing/invalid token must go through the failure path, not leave
+  // the row stuck in PUBLISHING to be silently re-claimed every few minutes.
+  let threads: ThreadsApi | undefined = api
   let containerId = post.container_id
   try {
+    threads ??= await getThreadsApi()
     const { platformPostId } = await driveContainer(
       threads,
       { text: post.text, linkAttachment: post.source_url, topicTag: post.topic_tag },
@@ -202,6 +210,7 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
     let containerStatus: string | null = null
     if (containerId) {
       try {
+        if (!threads) throw new Error('Threads client unavailable')
         containerStatus = (await threads.getContainerStatus(containerId)).status
       } catch {
         containerStatus = 'unknown'

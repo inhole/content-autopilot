@@ -102,4 +102,8 @@ describe('decideAfterFailure', () => {
   it('stays retryable when the status check failed on the final attempt', () => {
     expect(decideAfterFailure({ attempts: 3, containerStatus: 'unknown' })).toBe('retry')
   })
+  it('stops retrying an unknown outcome after the extra attempts run out', () => {
+    expect(decideAfterFailure({ attempts: 5, containerStatus: 'unknown' })).toBe('retry')
+    expect(decideAfterFailure({ attempts: 6, containerStatus: 'unknown' })).toBe('failed')
+  })
 })
