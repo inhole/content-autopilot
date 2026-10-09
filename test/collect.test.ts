@@ -42,6 +42,19 @@ describe('normalizeItem', () => {
     ).toMatchObject({ publishedAt: null, summary: null })
   })
 
+  it('keeps the discussion URL only when it is an absolute http(s) URL', () => {
+    const hn = 'https://news.ycombinator.com/item?id=123'
+    expect(normalizeItem({ title: 't', link: '/a', comments: hn }, base)?.discussionUrl).toBe(hn)
+    expect(normalizeItem({ title: 't', link: '/a' }, base)?.discussionUrl).toBeNull()
+    expect(normalizeItem({ title: 't', link: '/a', comments: '/item?id=1' }, base)).toMatchObject({
+      discussionUrl: null,
+    })
+    expect(
+      normalizeItem({ title: 't', link: '/a', comments: 'javascript:x' }, base)?.discussionUrl,
+    ).toBeNull()
+    expect(normalizeItem({ title: 't', link: '/a', comments: {} }, base)?.discussionUrl).toBeNull()
+  })
+
   it('turns an invalid date into null', () => {
     expect(
       normalizeItem({ title: 't', link: '/a', isoDate: 'garbage' }, base)?.publishedAt,

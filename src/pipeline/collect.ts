@@ -22,11 +22,18 @@ export type NormalizedItem = {
   url: string
   urlHash: string
   summary: string | null
+  discussionUrl: string | null
   publishedAt: Date | null
 }
 
 // rss-parser types these as strings, but e.g. `<title xml:lang="ko"/>` parses to an object.
-type RawItem = { link?: unknown; title?: unknown; isoDate?: unknown; contentSnippet?: unknown }
+type RawItem = {
+  link?: unknown
+  title?: unknown
+  isoDate?: unknown
+  contentSnippet?: unknown
+  comments?: unknown
+}
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
@@ -55,11 +62,23 @@ export function normalizeItem(item: RawItem, base: string): NormalizedItem | nul
     const d = new Date(isoDate)
     if (!Number.isNaN(d.getTime())) publishedAt = d
   }
+  // hnrss puts the HN thread in <comments>; keep it only when it is an absolute http(s) URL.
+  let discussionUrl: string | null = null
+  const comments = str(item.comments)?.trim()
+  if (comments) {
+    try {
+      const d = new URL(comments)
+      if (d.protocol === 'http:' || d.protocol === 'https:') discussionUrl = d.toString()
+    } catch {
+      // not a URL: no discussion
+    }
+  }
   return {
     title,
     url,
     urlHash: hash,
     summary: str(item.contentSnippet)?.slice(0, 2000) ?? null,
+    discussionUrl,
     publishedAt,
   }
 }
@@ -105,11 +124,19 @@ async function collectSource(source: Source): Promise<CollectResult> {
     }
     if (item.publishedAt && item.publishedAt.getTime() < cutoff) continue
     const rows = await query(
-      `insert into topics (source_id, title, url, url_hash, feed_summary, published_at)
-       values ($1, $2, $3, $4, $5, $6)
+      `insert into topics (source_id, title, url, url_hash, feed_summary, discussion_url, published_at)
+       values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (url_hash) do nothing
        returning id`,
-      [source.id, item.title, item.url, item.urlHash, item.summary, item.publishedAt],
+      [
+        source.id,
+        item.title,
+        item.url,
+        item.urlHash,
+        item.summary,
+        item.discussionUrl,
+        item.publishedAt,
+      ],
     )
     inserted += rows.length
   }

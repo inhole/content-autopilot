@@ -3,8 +3,8 @@ import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
-import { fetchArticle, TransientFetchError } from './article.ts'
 import { GENERATE_SYSTEM } from './prompts.ts'
+import { gatherSources } from './sources.ts'
 
 export const generationSchema = z.object({
   text: z.string().min(50).max(THREADS_TEXT_LIMIT),
@@ -18,6 +18,7 @@ type Topic = {
   id: number
   title: string
   url: string | null
+  discussion_url: string | null
   feed_summary: string | null
   note: string | null
 }
@@ -75,7 +76,7 @@ export async function generatePost(
 ): Promise<number | null> {
   const { regenerate = false, feedback, seq } = options
   const [topic] = await query<Topic>(
-    'select id, title, url, feed_summary, note from topics where id = $1',
+    'select id, title, url, discussion_url, feed_summary, note from topics where id = $1',
     [topicId],
   )
   if (!topic) throw new Error(`topic ${topicId} not found`)
@@ -92,8 +93,8 @@ export async function generatePost(
     return existing.id
   }
 
-  const body = await articleBody(topic)
-  if (!body) {
+  const sources = await gatherSources(topic)
+  if (!sources) {
     await query("update topics set status = 'SKIPPED', updated_at = now() where id = $1", [topicId])
     throw new SkipTopicError(`topic ${topicId}: no readable article body`)
   }
@@ -106,10 +107,17 @@ export async function generatePost(
   // The note is the owner's opinion (the angle), never a source of facts.
   const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
 
+  // Labeled parts joined by blank lines; add new context (e.g. a style fragment) as another part.
+  const parts = [
+    `제목: ${topic.title}\n출처: ${sources.sourceUrl ?? '(직접 입력)'}`,
+    `본문:\n${sources.body}`,
+    ...sources.aux.map((a) => `${a.label}:\n${a.text}`),
+  ]
+
   const gen = await chatJson({
     model: config.LLM_MODEL,
     system: GENERATE_SYSTEM,
-    user: `제목: ${topic.title}\n출처: ${topic.url ?? '(직접 입력)'}\n\n본문:\n${body}${notePrompt}${revisionPrompt}`,
+    user: `${parts.join('\n\n')}${notePrompt}${revisionPrompt}`,
     schema: generationSchema,
     schemaName: 'threads_post',
   })
@@ -131,30 +139,9 @@ export async function generatePost(
          values ($1, $2, $3, $4, $5, 'PENDING_REVIEW')
          on conflict (topic_id, platform) do nothing
          returning id`,
-        [topic.id, gen.text, gen.angle, topic.url, JSON.stringify(gen)],
+        [topic.id, gen.text, gen.angle, sources.sourceUrl, JSON.stringify(gen)],
       )
   if (!post) return null
   await markUsed(topicId)
   return post.id
-}
-
-async function articleBody(topic: Topic): Promise<string | null> {
-  let transient: TransientFetchError | null = null
-  if (topic.url) {
-    try {
-      const article = await fetchArticle(topic.url)
-      if (article) return article.text
-    } catch (err) {
-      // Fall back to the feed summary below. A transient failure with no usable summary
-      // must retry the job instead of skipping the topic for good.
-      if (err instanceof TransientFetchError) transient = err
-      else console.warn(`[generate] topic ${topic.id}: ${(err as Error).message}`)
-    }
-  }
-  const summary = topic.feed_summary?.trim()
-  if (summary && summary.length >= 200) return summary
-  // Manual topics without a URL: the title itself is the brief.
-  if (!topic.url) return topic.title
-  if (transient) throw transient
-  return null
 }
