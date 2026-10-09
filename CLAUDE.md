@@ -25,7 +25,7 @@ npx vitest run test/time.test.ts -t "rolls over"   # run a single test
 
 Useful CLI commands:
 - `collect` / `daily`: run the pipeline by hand, without the queue
-- `add-topic "<title>" [url]`: create a draft from a manual topic
+- `add-topic "<title>" [url] [note]`: create a draft from a manual topic (same as Telegram `/add`)
 - `show <postId>`, `approve <postId>`, `publish-now <postId>`
 - `threads:check`: verify the Threads token
 
@@ -52,7 +52,8 @@ Key design points that span several files:
 - **LLM calls go through `chatJson`** (`src/llm/openrouter.ts`). It sends a JSON schema built from the zod schema and always re-validates the output with zod. Prompts are in Korean and live in `src/pipeline/prompts.ts`.
 - **Generation is grounded in the fetched article body** (Readability + linkedom). If no body can be read, the topic is skipped (`SkipTopicError`, not retried). Transient fetch failures (429/5xx/timeouts, `TransientFetchError`) are retried instead. An initial generate reuses an existing draft and never overwrites one (`on conflict do nothing`). Regeneration goes through `enqueueRegeneration`, which bumps `posts.regen_seq`. The rewrite is applied only if that seq is still the latest and the post is PENDING_REVIEW, so a retried older request cannot clobber a newer result. Jobs on the legacy `generate` queue are forwarded to `generate-v2`. The source URL goes in `link_attachment`, never in the post text.
 - **Threads access goes through the `ThreadsApi` interface.** When `THREADS_DRY_RUN=true`, `getThreadsApi()` returns `DryRunThreadsClient`. The token is seeded from env into `platform_accounts` on first use; after that, the DB copy is authoritative.
-- **Telegram review.** Buttons and replies act only on the post's current `review_message_id` while it is `PENDING_REVIEW` and `review_revision = revision`. Every text change bumps `revision`, and approval passes the revision the reviewer saw to `approvePost`. `sendForReview` registers a message only if the revision it displays is still current. Sending a new review message strips the previous message's keyboard. Replying to a review message with `수정: <text>` replaces the draft verbatim. Any other reply is treated as feedback and triggers regeneration. The bot ignores every chat except `TELEGRAM_CHAT_ID`; `/start` prints the chat id. Without `TELEGRAM_BOT_TOKEN`, review falls back to console output plus the CLI.
+- **Telegram review.** Buttons and replies act only on the post's current `review_message_id` while it is `PENDING_REVIEW` and `review_revision = revision`. Every text change bumps `revision`, and approval passes the revision the reviewer saw to `approvePost`. `sendForReview` registers a message only if the revision it displays is still current. Sending a new review message strips the previous message's keyboard. Replying to a review message with `수정: <text>` replaces the draft verbatim. Any other reply is treated as feedback and triggers regeneration. The bot ignores every chat except `TELEGRAM_CHAT_ID`; `/start` prints the chat id. `/status` shows pipeline state (`src/pipeline/status.ts`). `/add <url> [note]` creates a manual topic whose `topics.note` (the owner's opinion) becomes the post's angle, but never a source of facts. Commands must be registered before the `message:text` handler, which ends the middleware chain for non-reply text. Without `TELEGRAM_BOT_TOKEN`, review falls back to console output plus the CLI.
+- **Final-failure alerts.** `alertOnFinalFailure` in `jobs.ts` notifies Telegram when the daily, generate or review job throws on its last attempt. The retry-limit constants there are shared with `createQueue`.
 
 ## Environment notes
 

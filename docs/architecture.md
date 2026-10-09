@@ -74,7 +74,7 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 | 테이블 | 내용 |
 |---|---|
 | `sources` | 수집할 RSS 목록. 새 피드는 여기에 행을 추가하면 된다. `MANUAL`은 직접 입력한 주제용이다. |
-| `topics` | 수집한 글, 점수, 중복 대상(`duplicate_of`), 상태 |
+| `topics` | 수집한 글, 점수, 중복 대상(`duplicate_of`), 상태. `/add`로 넣은 주제는 작성자 의견(`note`)을 가진다(`005_topic_note.sql`). |
 | `posts` | 초안과 발행 상태. `(topic_id, platform)`이 unique라 재생성하면 같은 행이 갱신된다. `revision`(본문 버전)·`review_revision`(검수 메시지가 보여준 버전), `regen_seq`(최근 재생성 요청 순번), `claim_seq`(발행 소유 토큰)는 경합을 막기 위한 컬럼이다(`004_post_revisions.sql`). |
 | `platform_accounts` | Threads 토큰과 만료 시각 |
 | `pgboss.*` | pg-boss가 관리하는 큐와 스케줄 |
