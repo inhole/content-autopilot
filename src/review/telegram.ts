@@ -1,10 +1,12 @@
-import { Bot, InlineKeyboard } from 'grammy'
+import { Bot, GrammyError, InlineKeyboard } from 'grammy'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { approvePost, rejectPost } from '../pipeline/publish.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
 const EDIT_PREFIX = /^수정\s*[:：]\s*/
+// Another poller (e.g. the previous instance during a Railway redeploy) causes 409 until it exits.
+const POLL_RETRY_MS = 30_000
 
 type ReviewPost = {
   id: number
@@ -80,6 +82,8 @@ export function createReviewer(opts: {
   }
 
   const bot = new Bot(token)
+  let stopped = false
+  let retryTimer: NodeJS.Timeout | undefined
 
   // Until TELEGRAM_CHAT_ID is set the bot only tells you your chat id.
   bot.command('start', (ctx) =>
@@ -171,10 +175,26 @@ export function createReviewer(opts: {
       else console.log(`[notify] ${text}`)
     },
     start() {
-      void bot.start({ onStart: (me) => console.log(`[telegram] @${me.username} polling`) })
+      // A polling failure must not take the whole worker (and its jobs) down: retry instead.
+      const run = () => {
+        bot
+          .start({ onStart: (me) => console.log(`[telegram] @${me.username} polling`) })
+          .catch((err: unknown) => {
+            if (stopped) return
+            const conflict = err instanceof GrammyError && err.error_code === 409
+            console.error(
+              `[telegram] polling stopped${conflict ? ' (another instance is polling)' : ''}: ` +
+                `${(err as Error).message}; retrying in ${POLL_RETRY_MS / 1000}s`,
+            )
+            retryTimer = setTimeout(run, POLL_RETRY_MS)
+          })
+      }
+      run()
     },
     async stop() {
-      await bot.stop()
+      stopped = true
+      clearTimeout(retryTimer)
+      if (bot.isRunning()) await bot.stop()
     },
   }
   return reviewer
