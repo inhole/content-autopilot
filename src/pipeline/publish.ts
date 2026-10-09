@@ -8,27 +8,40 @@ const MAX_ATTEMPTS = 3
 // A PUBLISHING row untouched this long belongs to a crashed worker and may be resumed.
 const STALE_PUBLISHING_MINUTES = 10
 
+const APPROVE_SLOT_RETRIES = 5
+
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === '23505'
+}
+
 /** Approves a reviewed draft and assigns it the next free publish slot. */
 export async function approvePost(postId: number, now = new Date()): Promise<Date> {
-  const taken = await query<{ scheduled_at: Date }>(
-    `select scheduled_at from posts
-     where status in ('SCHEDULED', 'PUBLISHING', 'PUBLISHED') and scheduled_at >= $1`,
-    [now],
-  )
-  const at = nextFreeSlot({
-    now,
-    slots: config.PUBLISH_SLOTS,
-    timeZone: config.TZ_NAME,
-    taken: taken.map((r) => r.scheduled_at),
-  })
-  const rows = await query(
-    `update posts set status = 'SCHEDULED', scheduled_at = $2, updated_at = now()
-     where id = $1 and status in ('PENDING_REVIEW', 'APPROVED')
-     returning id`,
-    [postId, at],
-  )
-  if (rows.length === 0) throw new Error(`post ${postId} is not awaiting review`)
-  return at
+  for (let attempt = 1; ; attempt++) {
+    const taken = await query<{ scheduled_at: Date }>(
+      `select scheduled_at from posts
+       where status in ('SCHEDULED', 'PUBLISHING', 'PUBLISHED') and scheduled_at >= $1`,
+      [now],
+    )
+    const at = nextFreeSlot({
+      now,
+      slots: config.PUBLISH_SLOTS,
+      timeZone: config.TZ_NAME,
+      taken: taken.map((r) => r.scheduled_at),
+    })
+    try {
+      const rows = await query(
+        `update posts set status = 'SCHEDULED', scheduled_at = $2, updated_at = now()
+         where id = $1 and status in ('PENDING_REVIEW', 'APPROVED')
+         returning id`,
+        [postId, at],
+      )
+      if (rows.length === 0) throw new Error(`post ${postId} is not awaiting review`)
+      return at
+    } catch (err) {
+      // A concurrent approval took this slot (unique index); re-read taken slots and retry.
+      if (!isUniqueViolation(err) || attempt >= APPROVE_SLOT_RETRIES) throw err
+    }
+  }
 }
 
 export async function rejectPost(postId: number): Promise<void> {
@@ -53,6 +66,14 @@ export async function duePostIds(): Promise<number[]> {
 type Sleep = (ms: number) => Promise<void>
 const sleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** Thrown when another worker has taken over this post's claim. */
+export class LostClaimError extends Error {
+  constructor() {
+    super('publish claim was taken over by another worker')
+    this.name = 'LostClaimError'
+  }
+}
+
 /**
  * Drives one Threads post from container to published. Reuses `containerId` when a previous
  * attempt already created one, so a retry never creates a second post.
@@ -62,7 +83,13 @@ export async function driveContainer(
   post: TextPost,
   containerId: string | null,
   onContainer: (id: string) => Promise<void>,
-  opts: { sleep?: Sleep; pollMs?: number; maxPolls?: number } = {},
+  opts: {
+    sleep?: Sleep
+    pollMs?: number
+    maxPolls?: number
+    /** Runs right before the irreversible publish call; throws LostClaimError if not the owner. */
+    beforePublish?: () => Promise<void>
+  } = {},
 ): Promise<{ platformPostId: string | null }> {
   const wait = opts.sleep ?? sleep
   let id = containerId
@@ -86,6 +113,7 @@ export async function driveContainer(
     if (i >= (opts.maxPolls ?? 12)) throw new Error(`container ${id} still ${status}`)
     await wait(opts.pollMs ?? 5_000)
   }
+  await opts.beforePublish?.()
   return { platformPostId: await api.publish(id) }
 }
 
@@ -94,6 +122,24 @@ export type PublishOutcome =
   | { kind: 'skipped' }
   | { kind: 'retry'; error: string }
   | { kind: 'failed'; error: string }
+
+export type FailureDecision = 'published' | 'retry' | 'failed'
+
+/**
+ * Decides what a failed attempt means. `containerStatus` is a fresh lookup of the container
+ * (null when none is known, 'unknown' when the lookup itself failed). The publish response can
+ * be lost after Threads already published, so a PUBLISHED container wins over everything. If we
+ * cannot tell on the final attempt, stay retryable: a wrong FAILED is never revisited by the
+ * sweep and would hide a live post, while one more attempt re-checks the container safely.
+ */
+export function decideAfterFailure(input: {
+  attempts: number
+  containerStatus: string | null
+}): FailureDecision {
+  if (input.containerStatus === 'PUBLISHED') return 'published'
+  if (input.attempts < MAX_ATTEMPTS) return 'retry'
+  return input.containerStatus === 'unknown' ? 'retry' : 'failed'
+}
 
 export async function publishPost(postId: number, api?: ThreadsApi): Promise<PublishOutcome> {
   // Claiming the row is the lock: only one worker can move it into PUBLISHING.
@@ -113,34 +159,67 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
   )
   if (!post) return { kind: 'skipped' }
 
+  // `attempts` is bumped by every claim, so it identifies this claim: if the stale-claim sweep
+  // re-claimed the row, the token no longer matches and our writes must not land.
+  const token = post.attempts
+  // Ownership-checked update; false means the claim was lost. $1 = id, $2 = token, extras from $3.
+  const ownedUpdate = async (set: string, params: unknown[] = []): Promise<boolean> => {
+    const rows = await query(
+      `update posts set ${set}, updated_at = now()
+       where id = $1 and status = 'PUBLISHING' and attempts = $2
+       returning id`,
+      [postId, token, ...params],
+    )
+    return rows.length > 0
+  }
+
+  const threads = api ?? (await getThreadsApi())
+  let containerId = post.container_id
   try {
     const { platformPostId } = await driveContainer(
-      api ?? (await getThreadsApi()),
+      threads,
       { text: post.text, linkAttachment: post.source_url, topicTag: post.topic_tag },
       post.container_id,
-      async (containerId) => {
-        await query('update posts set container_id = $2, updated_at = now() where id = $1', [
-          postId,
-          containerId,
-        ])
+      async (id) => {
+        containerId = id
+        if (!(await ownedUpdate('container_id = $3', [id]))) throw new LostClaimError()
+      },
+      {
+        // Doubles as a heartbeat: bumps updated_at so a slow but live worker is not reclaimed.
+        beforePublish: async () => {
+          if (!(await ownedUpdate('status = status'))) throw new LostClaimError()
+        },
       },
     )
-    await query(
-      `update posts set status = 'PUBLISHED', platform_post_id = $2, published_at = now(),
-         last_error = null, updated_at = now()
-       where id = $1`,
-      [postId, platformPostId],
+    const saved = await ownedUpdate(
+      `status = 'PUBLISHED', platform_post_id = $3, published_at = now(), last_error = null`,
+      [platformPostId],
     )
-    return { kind: 'published', platformPostId }
+    return saved ? { kind: 'published', platformPostId } : { kind: 'skipped' }
   } catch (err) {
+    if (err instanceof LostClaimError) return { kind: 'skipped' }
     const error = (err as Error).message
-    const failed = post.attempts >= MAX_ATTEMPTS
+    let containerStatus: string | null = null
+    if (containerId) {
+      try {
+        containerStatus = (await threads.getContainerStatus(containerId)).status
+      } catch {
+        containerStatus = 'unknown'
+      }
+    }
+    const decision = decideAfterFailure({ attempts: post.attempts, containerStatus })
+    if (decision === 'published') {
+      const saved = await ownedUpdate(
+        `status = 'PUBLISHED', published_at = now(), last_error = null`,
+      )
+      return saved ? { kind: 'published', platformPostId: null } : { kind: 'skipped' }
+    }
     // Back to SCHEDULED so the next due-sweep retries it.
-    await query('update posts set status = $2, last_error = $3, updated_at = now() where id = $1', [
-      postId,
-      failed ? 'FAILED' : 'SCHEDULED',
-      error,
-    ])
-    return failed ? { kind: 'failed', error } : { kind: 'retry', error }
+    const saved = await ownedUpdate(
+      `status = '${decision === 'failed' ? 'FAILED' : 'SCHEDULED'}', last_error = $3`,
+      [error],
+    )
+    if (!saved) return { kind: 'skipped' }
+    return decision === 'failed' ? { kind: 'failed', error } : { kind: 'retry', error }
   }
 }

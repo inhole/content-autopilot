@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { driveContainer } from '../src/pipeline/publish.ts'
+import { decideAfterFailure, driveContainer, LostClaimError } from '../src/pipeline/publish.ts'
 import type { ContainerStatus, ThreadsApi } from '../src/threads/client.ts'
 
 function fakeApi(statuses: ContainerStatus[]) {
@@ -53,5 +53,53 @@ describe('driveContainer', () => {
       driveContainer(api, post, null, async () => {}, { sleep: noSleep, maxPolls: 3 }),
     ).rejects.toThrow('still IN_PROGRESS')
     expect(api.publish).not.toHaveBeenCalled()
+  })
+
+  it('does not publish when ownership is lost before publish', async () => {
+    const api = fakeApi(['FINISHED'])
+    const beforePublish = vi.fn(async () => {
+      throw new LostClaimError()
+    })
+    await expect(
+      driveContainer(api, post, 'old', async () => {}, { sleep: noSleep, beforePublish }),
+    ).rejects.toBeInstanceOf(LostClaimError)
+    expect(api.publish).not.toHaveBeenCalled()
+  })
+
+  it('does not publish when onContainer reports a lost claim', async () => {
+    const api = fakeApi(['FINISHED'])
+    const onContainer = vi.fn(async () => {
+      throw new LostClaimError()
+    })
+    await expect(
+      driveContainer(api, post, null, onContainer, { sleep: noSleep }),
+    ).rejects.toBeInstanceOf(LostClaimError)
+    expect(api.publish).not.toHaveBeenCalled()
+  })
+
+  it('checks ownership right before publishing', async () => {
+    const api = fakeApi(['FINISHED'])
+    const beforePublish = vi.fn(async () => {
+      expect(api.publish).not.toHaveBeenCalled()
+    })
+    await driveContainer(api, post, 'old', async () => {}, { sleep: noSleep, beforePublish })
+    expect(beforePublish).toHaveBeenCalledOnce()
+    expect(api.publish).toHaveBeenCalledOnce()
+  })
+})
+
+describe('decideAfterFailure', () => {
+  it('trusts a PUBLISHED container even on the final attempt', () => {
+    expect(decideAfterFailure({ attempts: 3, containerStatus: 'PUBLISHED' })).toBe('published')
+  })
+  it('retries before the final attempt', () => {
+    expect(decideAfterFailure({ attempts: 1, containerStatus: 'ERROR' })).toBe('retry')
+  })
+  it('fails on the final attempt when the container is not published', () => {
+    expect(decideAfterFailure({ attempts: 3, containerStatus: 'ERROR' })).toBe('failed')
+    expect(decideAfterFailure({ attempts: 3, containerStatus: null })).toBe('failed')
+  })
+  it('stays retryable when the status check failed on the final attempt', () => {
+    expect(decideAfterFailure({ attempts: 3, containerStatus: 'unknown' })).toBe('retry')
   })
 })
