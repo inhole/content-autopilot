@@ -1,7 +1,12 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
 import { collectAll } from './pipeline/collect.ts'
-import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
+import {
+  generatePost,
+  pendingShortlistedTopicIds,
+  requestRegeneration,
+  SkipTopicError,
+} from './pipeline/generate.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import type { Reviewer } from './review/telegram.ts'
@@ -22,7 +27,7 @@ export const Q = {
 const LEGACY_GENERATE_QUEUE = 'generate'
 
 /** `regenerate` is absent on jobs queued before it existed; feedback implied a regeneration then. */
-type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean }
+type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean; seq?: number }
 type PostData = { postId: number }
 
 export function createBoss(): PgBoss {
@@ -39,6 +44,18 @@ export function createBoss(): PgBoss {
 // the rest queued, so feedback sent during a running generation is processed afterwards.
 export const enqueueGenerate = (boss: PgBoss, data: GenerateData) =>
   boss.send(Q.generate, data, { singletonKey: `topic-${data.topicId}` })
+
+/** Queues a regeneration that supersedes any earlier, still pending or retrying one. */
+export async function enqueueRegeneration(
+  boss: PgBoss,
+  topicId: number,
+  feedback?: string,
+): Promise<boolean> {
+  const seq = await requestRegeneration(topicId)
+  if (seq === null) return false
+  await enqueueGenerate(boss, { topicId, feedback, regenerate: true, seq })
+  return true
+}
 
 export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<void> {
   await boss.createQueue(Q.daily, { policy: 'singleton', retryLimit: 1 })
@@ -74,10 +91,11 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
 
   const handleGenerate = async ([job]: { data: GenerateData }[]) => {
     if (!job) return
-    const { topicId, feedback } = job.data
+    const { topicId, feedback, seq } = job.data
     try {
       const postId = await generatePost(topicId, {
         feedback,
+        seq,
         regenerate: job.data.regenerate ?? Boolean(feedback),
       })
       if (postId !== null) await boss.send(Q.review, { postId } satisfies PostData)
@@ -90,7 +108,10 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     }
   }
   await boss.work<GenerateData>(Q.generate, handleGenerate)
-  await boss.work<GenerateData>(LEGACY_GENERATE_QUEUE, handleGenerate)
+  // Forward instead of running here, so legacy jobs go through the same per-topic serialization.
+  await boss.work<GenerateData>(LEGACY_GENERATE_QUEUE, async ([job]) => {
+    if (job) await enqueueGenerate(boss, job.data)
+  })
 
   await boss.work<PostData>(Q.review, async ([job]) => {
     if (job) await reviewer.sendForReview(job.data.postId)

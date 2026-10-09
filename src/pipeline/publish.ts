@@ -16,8 +16,15 @@ function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === '23505'
 }
 
-/** Approves a reviewed draft and assigns it the next free publish slot. */
-export async function approvePost(postId: number, now = new Date()): Promise<Date> {
+/**
+ * Approves a reviewed draft and assigns it the next free publish slot. Pass the `revision` the
+ * reviewer saw so a draft rewritten in the meantime is not approved unread.
+ */
+export async function approvePost(
+  postId: number,
+  opts: { now?: Date; revision?: number } = {},
+): Promise<Date> {
+  const now = opts.now ?? new Date()
   for (let attempt = 1; ; attempt++) {
     const taken = await query<{ scheduled_at: Date }>(
       `select scheduled_at from posts
@@ -34,10 +41,11 @@ export async function approvePost(postId: number, now = new Date()): Promise<Dat
       const rows = await query(
         `update posts set status = 'SCHEDULED', scheduled_at = $2, updated_at = now()
          where id = $1 and status in ('PENDING_REVIEW', 'APPROVED')
+           and ($3::int is null or revision = $3)
          returning id`,
-        [postId, at],
+        [postId, at, opts.revision ?? null],
       )
-      if (rows.length === 0) throw new Error(`post ${postId} is not awaiting review`)
+      if (rows.length === 0) throw new Error(`post ${postId} is not awaiting review or has changed`)
       return at
     } catch (err) {
       // A concurrent approval took this slot (unique index); re-read taken slots and retry.
@@ -153,25 +161,29 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
     source_url: string | null
     container_id: string | null
     attempts: number
+    claim_seq: number
     topic_tag: string | null
   }>(
-    `update posts set status = 'PUBLISHING', attempts = attempts + 1, updated_at = now()
+    `update posts set status = 'PUBLISHING', attempts = attempts + 1, claim_seq = claim_seq + 1,
+       updated_at = now()
      where id = $1
        and (status = 'SCHEDULED'
             or (status = 'PUBLISHING' and updated_at < now() - make_interval(mins => $2)))
-     returning text, source_url, container_id, attempts, generation->>'topic_tag' as topic_tag`,
+     returning text, source_url, container_id, attempts, claim_seq,
+       generation->>'topic_tag' as topic_tag`,
     [postId, STALE_PUBLISHING_MINUTES],
   )
   if (!post) return { kind: 'skipped' }
 
-  // `attempts` is bumped by every claim, so it identifies this claim: if the stale-claim sweep
-  // re-claimed the row, the token no longer matches and our writes must not land.
-  const token = post.attempts
+  // `claim_seq` is bumped by every claim and never reset, so it identifies this claim: if the
+  // stale-claim sweep re-claimed the row, the token no longer matches and our writes must not land.
+  // (`attempts` cannot serve as the token: publish-now resets it.)
+  const token = post.claim_seq
   // Ownership-checked update; false means the claim was lost. $1 = id, $2 = token, extras from $3.
   const ownedUpdate = async (set: string, params: unknown[] = []): Promise<boolean> => {
     const rows = await query(
       `update posts set ${set}, updated_at = now()
-       where id = $1 and status = 'PUBLISHING' and attempts = $2
+       where id = $1 and status = 'PUBLISHING' and claim_seq = $2
        returning id`,
       [postId, token, ...params],
     )

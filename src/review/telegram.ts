@@ -11,6 +11,7 @@ const POLL_RETRY_MS = 30_000
 type ReviewPost = {
   id: number
   topic_id: number
+  revision: number
   text: string
   angle: string | null
   source_url: string | null
@@ -52,17 +53,24 @@ export function formatReview(p: ReviewPost): string {
 }
 
 /**
- * Buttons only count on the post's current review message: an edit or regeneration sends a new
- * message, and an old one must not approve text the reviewer has not read.
+ * Buttons only count on the post's current review message, and only while the text is still the
+ * revision that message displayed. An edit or regeneration bumps the revision before its new
+ * message is sent, and the old message must not approve text the reviewer has not read.
  */
 export function isCurrentReviewAction(
-  post: { status: string; review_message_id: number | null },
+  post: {
+    status: string
+    review_message_id: number | null
+    revision: number
+    review_revision: number | null
+  },
   pressedMessageId: number | undefined,
 ): boolean {
   return (
     post.status === 'PENDING_REVIEW' &&
     pressedMessageId != null &&
-    post.review_message_id === pressedMessageId
+    post.review_message_id === pressedMessageId &&
+    post.review_revision === post.revision
   )
 }
 
@@ -116,7 +124,12 @@ export function createReviewer(opts: {
       topic_id: number
       status: string
       review_message_id: number | null
-    }>('select topic_id, status, review_message_id from posts where id = $1', [postId])
+      revision: number
+      review_revision: number | null
+    }>(
+      'select topic_id, status, review_message_id, revision, review_revision from posts where id = $1',
+      [postId],
+    )
     if (!post) {
       await ctx.answerCallbackQuery({ text: '글을 찾을 수 없어요' })
       return
@@ -130,7 +143,8 @@ export function createReviewer(opts: {
     }
     try {
       if (action === 'approve') {
-        const at = await approvePost(postId)
+        // The revision guard closes the gap between this check and the approval.
+        const at = await approvePost(postId, { revision: post.revision })
         await ctx.editMessageReplyMarkup()
         await ctx.reply(`✅ #${postId} 승인 · ${fmtTime(at)} 발행 예정`)
       } else if (action === 'reject') {
@@ -168,8 +182,9 @@ export function createReviewer(opts: {
       }
       // Conditioned on status and message id so it cannot race with an approval or a newer draft.
       const updated = await query(
-        `update posts set text = $2, updated_at = now()
+        `update posts set text = $2, revision = revision + 1, updated_at = now()
          where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $3
+           and review_revision = revision
          returning id`,
         [post.id, text, replyTo],
       )
@@ -190,7 +205,7 @@ export function createReviewer(opts: {
     async sendForReview(postId) {
       if (!chatId) throw new Error('TELEGRAM_CHAT_ID is not set (send /start to the bot)')
       const [post] = await query<ReviewPost>(
-        `select p.id, p.topic_id, p.text, p.angle, p.source_url, t.score,
+        `select p.id, p.topic_id, p.revision, p.text, p.angle, p.source_url, t.score,
                 array(select jsonb_array_elements_text(p.generation->'caveats')) as caveats
          from posts p join topics t on t.id = p.topic_id where p.id = $1`,
         [postId],
@@ -204,10 +219,20 @@ export function createReviewer(opts: {
         reply_markup: keyboard(postId),
         link_preview_options: { is_disabled: true },
       })
-      await query(
-        'update posts set review_chat_id = $2, review_message_id = $3, updated_at = now() where id = $1',
-        [postId, chatId, msg.message_id],
+      // Register the message only if the text is still the revision it shows. Otherwise a newer
+      // revision was written while sending, its own review message is on the way, and this one
+      // must not carry buttons.
+      const registered = await query(
+        `update posts set review_chat_id = $2, review_message_id = $3, review_revision = $4,
+           updated_at = now()
+         where id = $1 and revision = $4 and status = 'PENDING_REVIEW'
+         returning id`,
+        [postId, chatId, msg.message_id, post.revision],
       )
+      if (registered.length === 0) {
+        await bot.api.editMessageReplyMarkup(chatId, msg.message_id).catch(() => {})
+        return
+      }
       // Best effort: the old message may be deleted or too old to edit.
       if (prev?.review_message_id && prev.review_chat_id != null) {
         await bot.api

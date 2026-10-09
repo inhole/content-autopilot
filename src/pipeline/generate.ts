@@ -22,6 +22,28 @@ export type GenerateOptions = {
   /** Replace an existing PENDING_REVIEW draft instead of reusing it. */
   regenerate?: boolean
   feedback?: string
+  /**
+   * `posts.regen_seq` of the request (see requestRegeneration). The write is dropped if a newer
+   * request exists, so a retried older request never overwrites a newer result.
+   */
+  seq?: number
+}
+
+const markUsed = (topicId: number) =>
+  query("update topics set status = 'USED', updated_at = now() where id = $1", [topicId])
+
+/**
+ * Registers a regeneration request and returns its sequence number, or null when the topic has
+ * no draft under review. Only the latest request's result is kept (see GenerateOptions.seq).
+ */
+export async function requestRegeneration(topicId: number): Promise<number | null> {
+  const [row] = await query<{ regen_seq: number }>(
+    `update posts set regen_seq = regen_seq + 1, updated_at = now()
+     where topic_id = $1 and platform = 'THREADS' and status = 'PENDING_REVIEW'
+     returning regen_seq`,
+    [topicId],
+  )
+  return row?.regen_seq ?? null
 }
 
 /** SHORTLISTED topics that never got a draft, e.g. because enqueueing crashed after ranking. */
@@ -45,7 +67,7 @@ export async function generatePost(
   topicId: number,
   options: GenerateOptions = {},
 ): Promise<number | null> {
-  const { regenerate = false, feedback } = options
+  const { regenerate = false, feedback, seq } = options
   const [topic] = await query<Topic>(
     'select id, title, url, feed_summary from topics where id = $1',
     [topicId],
@@ -57,7 +79,12 @@ export async function generatePost(
     [topicId],
   )
   if (existing && existing.status !== 'PENDING_REVIEW') return null
-  if (existing && !regenerate) return existing.id
+  if (existing && !regenerate) {
+    // Also repairs a topic left SHORTLISTED when an earlier run saved the draft but crashed
+    // before marking the topic.
+    await markUsed(topicId)
+    return existing.id
+  }
 
   const body = await articleBody(topic)
   if (!body) {
@@ -65,7 +92,7 @@ export async function generatePost(
     throw new SkipTopicError(`topic ${topicId}: no readable article body`)
   }
 
-  const revision =
+  const revisionPrompt =
     existing && feedback
       ? `\n\n이전 초안:\n${existing.text}\n\n검수자 피드백: ${feedback}\n피드백을 반영해 새로 써라.`
       : ''
@@ -73,24 +100,32 @@ export async function generatePost(
   const gen = await chatJson({
     model: config.LLM_MODEL,
     system: GENERATE_SYSTEM,
-    user: `제목: ${topic.title}\n출처: ${topic.url ?? '(직접 입력)'}\n\n본문:\n${body}${revision}`,
+    user: `제목: ${topic.title}\n출처: ${topic.url ?? '(직접 입력)'}\n\n본문:\n${body}${revisionPrompt}`,
     schema: generationSchema,
     schemaName: 'threads_post',
   })
 
-  // The status guard also protects against a reject/approve that landed while the LLM ran.
-  const [post] = await query<{ id: number }>(
-    `insert into posts (topic_id, text, angle, source_url, generation, status)
-     values ($1, $2, $3, $4, $5, 'PENDING_REVIEW')
-     on conflict (topic_id, platform) do update
-       set text = excluded.text, angle = excluded.angle, generation = excluded.generation,
-           status = 'PENDING_REVIEW', updated_at = now()
-       where posts.status = 'PENDING_REVIEW'
-     returning id`,
-    [topic.id, gen.text, gen.angle, topic.url, JSON.stringify(gen)],
-  )
+  // An initial generation never overwrites: if another job created the draft meanwhile, that
+  // draft (and any edit made to it) wins and that job sends it to review.
+  // A regeneration only replaces a draft still under review (a reject/approve may have landed
+  // while the LLM ran) and only if it is still the latest request.
+  const [post] = existing
+    ? await query<{ id: number }>(
+        `update posts set text = $2, angle = $3, generation = $4, revision = revision + 1,
+           updated_at = now()
+         where id = $1 and status = 'PENDING_REVIEW' and ($5::int is null or regen_seq = $5)
+         returning id`,
+        [existing.id, gen.text, gen.angle, JSON.stringify(gen), seq ?? null],
+      )
+    : await query<{ id: number }>(
+        `insert into posts (topic_id, text, angle, source_url, generation, status)
+         values ($1, $2, $3, $4, $5, 'PENDING_REVIEW')
+         on conflict (topic_id, platform) do nothing
+         returning id`,
+        [topic.id, gen.text, gen.angle, topic.url, JSON.stringify(gen)],
+      )
   if (!post) return null
-  await query("update topics set status = 'USED', updated_at = now() where id = $1", [topicId])
+  await markUsed(topicId)
   return post.id
 }
 
