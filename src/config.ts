@@ -10,6 +10,11 @@ const bool = z
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
+  // Defaults to true because production runs on Supabase; CI and local Postgres have no SSL.
+  DATABASE_SSL: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 
   OPENROUTER_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default('anthropic/claude-sonnet-5.5'),
@@ -32,6 +37,10 @@ const schema = z.object({
     .string()
     .default('08:00,12:30,19:00')
     .transform((s) => s.split(',').map((t) => t.trim())),
+
+  // Dead man's switch pings (healthchecks.io style); unset disables them.
+  HEALTHCHECK_URL: z.url().optional(),
+  HEALTHCHECK_DAILY_URL: z.url().optional(),
 })
 
 export type Config = z.infer<typeof schema>
