@@ -61,6 +61,45 @@ export async function rejectPost(postId: number): Promise<void> {
   )
 }
 
+/**
+ * Takes an approved post back to review. Bound to the `scheduledAt` the reviewer saw, so a button
+ * on an old confirmation cannot act on a post that was rescheduled or already picked up. The
+ * revision bump makes every earlier review button stale. Returns false when nothing matched.
+ */
+export async function unschedulePost(postId: number, scheduledAt: Date): Promise<boolean> {
+  const rows = await query(
+    `update posts set status = 'PENDING_REVIEW', scheduled_at = null, revision = revision + 1,
+       updated_at = now()
+     where id = $1 and status = 'SCHEDULED' and scheduled_at = $2
+     returning id`,
+    [postId, scheduledAt],
+  )
+  return rows.length > 0
+}
+
+/**
+ * Moves a scheduled post's slot to now so the next publish-due sweep picks it up. It does not
+ * publish directly: the sweep and the claim logic stay the only way a post goes out.
+ */
+export async function publishNow(postId: number, scheduledAt: Date): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      // The unique index on scheduled_at can in theory collide with a post already at this
+      // instant; each retry shifts by a few milliseconds.
+      const rows = await query(
+        `update posts set scheduled_at = now() + make_interval(secs => $3::double precision),
+           updated_at = now()
+         where id = $1 and status = 'SCHEDULED' and scheduled_at = $2
+         returning id`,
+        [postId, scheduledAt, attempt * 0.001],
+      )
+      return rows.length > 0
+    } catch (err) {
+      if (!isUniqueViolation(err) || attempt >= APPROVE_SLOT_RETRIES) throw err
+    }
+  }
+}
+
 /** Posts whose slot has come, plus PUBLISHING rows abandoned by a crashed worker. */
 export async function duePostIds(): Promise<number[]> {
   const rows = await query<{ id: number }>(
