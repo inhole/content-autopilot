@@ -9,7 +9,56 @@ export const MAX_AGE_HOURS = 48
 
 type Source = { id: number; name: string; url: string }
 
-export type CollectResult = { source: string; fetched: number; inserted: number; error?: string }
+export type CollectResult = {
+  source: string
+  fetched: number
+  inserted: number
+  skipped: number
+  error?: string
+}
+
+export type NormalizedItem = {
+  title: string
+  url: string
+  urlHash: string
+  summary: string | null
+  publishedAt: Date | null
+}
+
+type RawItem = { link?: string; title?: string; isoDate?: string; contentSnippet?: string }
+
+/**
+ * Validates one feed item. Returns null when it cannot be stored (missing title/link, bad or
+ * non-http(s) URL), so a single bad item never aborts the feed. Relative links are resolved
+ * against `base` (the feed's site link or feed URL). An unparseable date becomes null.
+ */
+export function normalizeItem(item: RawItem, base: string): NormalizedItem | null {
+  const title = item.title?.trim()
+  const link = item.link?.trim()
+  if (!title || !link) return null
+  let url: string
+  let hash: string
+  try {
+    const parsed = new URL(link, base)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    url = parsed.toString()
+    hash = urlHash(url)
+  } catch {
+    return null
+  }
+  let publishedAt: Date | null = null
+  if (item.isoDate) {
+    const d = new Date(item.isoDate)
+    if (!Number.isNaN(d.getTime())) publishedAt = d
+  }
+  return {
+    title,
+    url,
+    urlHash: hash,
+    summary: item.contentSnippet?.slice(0, 2000) ?? null,
+    publishedAt,
+  }
+}
 
 export async function collectAll(): Promise<CollectResult[]> {
   const sources = await query<Source>(
@@ -21,7 +70,13 @@ export async function collectAll(): Promise<CollectResult[]> {
     try {
       results.push(await collectSource(source))
     } catch (err) {
-      results.push({ source: source.name, fetched: 0, inserted: 0, error: (err as Error).message })
+      results.push({
+        source: source.name,
+        fetched: 0,
+        inserted: 0,
+        skipped: 0,
+        error: (err as Error).message,
+      })
     }
   }
   return results
@@ -30,28 +85,26 @@ export async function collectAll(): Promise<CollectResult[]> {
 async function collectSource(source: Source): Promise<CollectResult> {
   const feed = await parser.parseURL(source.url)
   const cutoff = Date.now() - MAX_AGE_HOURS * 3600_000
+  const base = feed.link ?? source.url
   let inserted = 0
-  for (const item of feed.items) {
-    if (!item.link || !item.title) continue
-    const published = item.isoDate ? new Date(item.isoDate) : null
-    if (published && published.getTime() < cutoff) continue
+  let skipped = 0
+  for (const raw of feed.items) {
+    const item = normalizeItem(raw, base)
+    if (!item) {
+      skipped++
+      continue
+    }
+    if (item.publishedAt && item.publishedAt.getTime() < cutoff) continue
     const rows = await query(
       `insert into topics (source_id, title, url, url_hash, feed_summary, published_at)
        values ($1, $2, $3, $4, $5, $6)
        on conflict (url_hash) do nothing
        returning id`,
-      [
-        source.id,
-        item.title.trim(),
-        item.link,
-        urlHash(item.link),
-        item.contentSnippet?.slice(0, 2000) ?? null,
-        published,
-      ],
+      [source.id, item.title, item.url, item.urlHash, item.summary, item.publishedAt],
     )
     inserted += rows.length
   }
-  return { source: source.name, fetched: feed.items.length, inserted }
+  return { source: source.name, fetched: feed.items.length, inserted, skipped }
 }
 
 /** Skips COLLECTED topics that aged out before being ranked (e.g. the worker was down). */
