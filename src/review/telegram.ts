@@ -4,7 +4,7 @@ import { query } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
 import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
-import { approvePost, rejectPost } from '../pipeline/publish.ts'
+import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
@@ -42,8 +42,55 @@ export function parseAddCommand(
   return { url: first, note: note || undefined }
 }
 
+export const HELP_TEXT = [
+  '📖 사용법',
+  '/status — 현재 현황',
+  '/add <url> [의견] — 기사 URL로 초안 만들기',
+  '/help — 이 도움말',
+  '',
+  '검수 메시지에 답장하기',
+  '- "수정: <새 본문>" → 본문을 그대로 교체',
+  '- 그 외 답장 → 피드백으로 보고 재생성',
+].join('\n')
+
+const BOT_COMMANDS = [
+  { command: 'status', description: '현재 현황 보기' },
+  { command: 'add', description: '기사 URL로 초안 만들기: /add <url> [의견]' },
+  { command: 'help', description: '사용법 보기' },
+]
+
+type ScheduleAction = 'unsched' | 'pubnow'
+
+/**
+ * Callback data for the buttons under an approval confirmation, e.g. `unsched:42:1760000000`.
+ * The epoch seconds bind the button to the exact slot it was created for; the string stays far
+ * below Telegram's 64-byte limit.
+ */
+export function encodeScheduleAction(action: ScheduleAction, postId: number, at: Date): string {
+  return `${action}:${postId}:${Math.floor(at.getTime() / 1000)}`
+}
+
+export function parseScheduleAction(
+  data: string,
+): { action: ScheduleAction; postId: number; scheduledAt: Date } | null {
+  const m = /^(unsched|pubnow):(\d+):(\d+)$/.exec(data)
+  if (!m) return null
+  return {
+    action: m[1] as ScheduleAction,
+    postId: Number(m[2]),
+    scheduledAt: new Date(Number(m[3]) * 1000),
+  }
+}
+
+const scheduleKeyboard = (postId: number, at: Date) =>
+  new InlineKeyboard()
+    .text('⏪ 예약 취소', encodeScheduleAction('unsched', postId, at))
+    .text('🚀 지금 발행', encodeScheduleAction('pubnow', postId, at))
+
 export type Reviewer = {
   sendForReview(postId: number): Promise<void>
+  /** Best effort: removes the buttons of these posts' review messages (e.g. after expiry). */
+  retireReviewMessages(postIds: number[]): Promise<void>
   notify(text: string): Promise<void>
   start(): void
   stop(): Promise<void>
@@ -120,6 +167,7 @@ export function createReviewer(opts: {
           `[review] post ${postId} awaiting review (no Telegram): npm run cli -- show ${postId}`,
         )
       },
+      async retireReviewMessages() {},
       async notify(text) {
         console.log(`[notify] ${text}`)
       },
@@ -152,6 +200,8 @@ export function createReviewer(opts: {
 
   // Commands must be registered before the message:text handler, which ends the chain for every
   // non-reply text message (commands included).
+  bot.command('help', (ctx) => ctx.reply(HELP_TEXT))
+
   bot.command('add', async (ctx) => {
     const parsed = parseAddCommand(ctx.message?.text ?? '')
     if ('error' in parsed) {
@@ -178,6 +228,33 @@ export function createReviewer(opts: {
   })
 
   bot.on('callback_query:data', async (ctx) => {
+    const sched = parseScheduleAction(ctx.callbackQuery.data)
+    if (sched) {
+      try {
+        // Both helpers only act while the post is still SCHEDULED at the slot the button shows.
+        const done =
+          sched.action === 'unsched'
+            ? await unschedulePost(sched.postId, sched.scheduledAt)
+            : await publishNow(sched.postId, sched.scheduledAt)
+        await ctx.editMessageReplyMarkup().catch(() => {})
+        if (!done) {
+          await ctx.answerCallbackQuery({ text: '이미 처리된 예약이에요' })
+          return
+        }
+        await ctx.answerCallbackQuery()
+        if (sched.action === 'unsched') {
+          await ctx.reply(`⏪ #${sched.postId} 예약 취소 · 검수 대기로 되돌렸어요`)
+          await reviewer.sendForReview(sched.postId)
+        } else {
+          await ctx.reply(`🚀 #${sched.postId} 5분 안에 발행돼요 (다음 발행 확인 주기)`)
+        }
+      } catch (err) {
+        await ctx
+          .answerCallbackQuery({ text: (err as Error).message.slice(0, 180) })
+          .catch(() => {})
+      }
+      return
+    }
     const [action, idText] = ctx.callbackQuery.data.split(':')
     const postId = Number(idText)
     const [post] = await query<{
@@ -206,7 +283,9 @@ export function createReviewer(opts: {
         // The revision guard closes the gap between this check and the approval.
         const at = await approvePost(postId, { revision: post.revision })
         await ctx.editMessageReplyMarkup()
-        await ctx.reply(`✅ #${postId} 승인 · ${fmtTime(at)} 발행 예정`)
+        await ctx.reply(`✅ #${postId} 승인 · ${fmtTime(at)} 발행 예정`, {
+          reply_markup: scheduleKeyboard(postId, at),
+        })
       } else if (action === 'reject') {
         await rejectPost(postId)
         await ctx.editMessageReplyMarkup()
@@ -300,6 +379,18 @@ export function createReviewer(opts: {
           .catch(() => {})
       }
     },
+    async retireReviewMessages(postIds) {
+      if (postIds.length === 0) return
+      const rows = await query<{ review_chat_id: number | null; review_message_id: number | null }>(
+        'select review_chat_id, review_message_id from posts where id = any($1::bigint[])',
+        [postIds],
+      )
+      for (const r of rows) {
+        if (r.review_chat_id == null || r.review_message_id == null) continue
+        // Best effort: the message may be deleted or too old to edit.
+        await bot.api.editMessageReplyMarkup(r.review_chat_id, r.review_message_id).catch(() => {})
+      }
+    },
     async notify(text) {
       if (chatId) await bot.api.sendMessage(chatId, text)
       else console.log(`[notify] ${text}`)
@@ -308,7 +399,15 @@ export function createReviewer(opts: {
       // A polling failure must not take the whole worker (and its jobs) down: retry instead.
       const run = () => {
         polling = bot
-          .start({ onStart: (me) => console.log(`[telegram] @${me.username} polling`) })
+          .start({
+            onStart: (me) => {
+              console.log(`[telegram] @${me.username} polling`)
+              // Best effort: the menu is a convenience, and every retry re-registers it harmlessly.
+              bot.api
+                .setMyCommands(BOT_COMMANDS)
+                .catch((err: unknown) => console.warn('[telegram] setMyCommands failed', err))
+            },
+          })
           .catch((err: unknown) => {
             if (stopped) return
             const conflict = err instanceof GrammyError && err.error_code === 409
