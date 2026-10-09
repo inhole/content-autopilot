@@ -51,6 +51,21 @@ export function formatReview(p: ReviewPost): string {
   return lines.join('\n')
 }
 
+/**
+ * Buttons only count on the post's current review message: an edit or regeneration sends a new
+ * message, and an old one must not approve text the reviewer has not read.
+ */
+export function isCurrentReviewAction(
+  post: { status: string; review_message_id: number | null },
+  pressedMessageId: number | undefined,
+): boolean {
+  return (
+    post.status === 'PENDING_REVIEW' &&
+    pressedMessageId != null &&
+    post.review_message_id === pressedMessageId
+  )
+}
+
 const keyboard = (postId: number) =>
   new InlineKeyboard()
     .text('✅ 승인', `approve:${postId}`)
@@ -84,6 +99,7 @@ export function createReviewer(opts: {
   const bot = new Bot(token)
   let stopped = false
   let retryTimer: NodeJS.Timeout | undefined
+  let polling: Promise<unknown> = Promise.resolve()
 
   // Until TELEGRAM_CHAT_ID is set the bot only tells you your chat id.
   bot.command('start', (ctx) =>
@@ -96,11 +112,20 @@ export function createReviewer(opts: {
   bot.on('callback_query:data', async (ctx) => {
     const [action, idText] = ctx.callbackQuery.data.split(':')
     const postId = Number(idText)
-    const [post] = await query<{ topic_id: number }>('select topic_id from posts where id = $1', [
-      postId,
-    ])
+    const [post] = await query<{
+      topic_id: number
+      status: string
+      review_message_id: number | null
+    }>('select topic_id, status, review_message_id from posts where id = $1', [postId])
     if (!post) {
       await ctx.answerCallbackQuery({ text: '글을 찾을 수 없어요' })
+      return
+    }
+    if (!isCurrentReviewAction(post, ctx.callbackQuery.message?.message_id)) {
+      await ctx.answerCallbackQuery({
+        text: '이전 초안이에요. 최신 검수 메시지에서 눌러주세요',
+      })
+      await ctx.editMessageReplyMarkup().catch(() => {})
       return
     }
     try {
@@ -141,7 +166,17 @@ export function createReviewer(opts: {
         await ctx.reply(`${THREADS_TEXT_LIMIT}자를 넘어요 (${[...text].length}자).`)
         return
       }
-      await query('update posts set text = $2, updated_at = now() where id = $1', [post.id, text])
+      // Conditioned on status and message id so it cannot race with an approval or a newer draft.
+      const updated = await query(
+        `update posts set text = $2, updated_at = now()
+         where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $3
+         returning id`,
+        [post.id, text, replyTo],
+      )
+      if (updated.length === 0) {
+        await ctx.reply('이미 처리됐거나 최신 초안이 아니라서 수정하지 못했어요.')
+        return
+      }
       await reviewer.sendForReview(post.id)
     } else {
       await ctx.reply(`🔁 #${post.id} 피드백 반영해서 재생성 중…`)
@@ -161,6 +196,10 @@ export function createReviewer(opts: {
         [postId],
       )
       if (!post) throw new Error(`post ${postId} not found`)
+      const [prev] = await query<{
+        review_chat_id: number | null
+        review_message_id: number | null
+      }>('select review_chat_id, review_message_id from posts where id = $1', [postId])
       const msg = await bot.api.sendMessage(chatId, formatReview(post), {
         reply_markup: keyboard(postId),
         link_preview_options: { is_disabled: true },
@@ -169,6 +208,12 @@ export function createReviewer(opts: {
         'update posts set review_chat_id = $2, review_message_id = $3, updated_at = now() where id = $1',
         [postId, chatId, msg.message_id],
       )
+      // Best effort: the old message may be deleted or too old to edit.
+      if (prev?.review_message_id && prev.review_chat_id != null) {
+        await bot.api
+          .editMessageReplyMarkup(prev.review_chat_id, prev.review_message_id)
+          .catch(() => {})
+      }
     },
     async notify(text) {
       if (chatId) await bot.api.sendMessage(chatId, text)
@@ -177,7 +222,7 @@ export function createReviewer(opts: {
     start() {
       // A polling failure must not take the whole worker (and its jobs) down: retry instead.
       const run = () => {
-        bot
+        polling = bot
           .start({ onStart: (me) => console.log(`[telegram] @${me.username} polling`) })
           .catch((err: unknown) => {
             if (stopped) return
@@ -195,6 +240,8 @@ export function createReviewer(opts: {
       stopped = true
       clearTimeout(retryTimer)
       if (bot.isRunning()) await bot.stop()
+      // bot.stop() does not wait for in-flight updates; the polling promise settles after they finish.
+      await polling.catch(() => {})
     },
   }
   return reviewer
