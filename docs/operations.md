@@ -23,6 +23,7 @@ npm run cli -- daily                 # 수집 → 중복 제거 → 선정 → �
 npm run cli -- add-topic "제목" [url] # 직접 고른 주제로 초안 생성
 npm run cli -- list [status]         # 최근 글 목록 (예: list scheduled)
 npm run cli -- show <postId>         # 초안 보기
+npm run cli -- review [postId]       # 초안을 Telegram으로 (다시) 보내기. id가 없으면 검수 대기 전부
 npm run cli -- approve <postId>      # 승인 (다음 발행 시간 배정)
 npm run cli -- reject <postId>
 npm run cli -- publish-now <postId>  # 즉시 발행 (FAILED 글 재시도에도 사용)

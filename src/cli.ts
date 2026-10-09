@@ -14,6 +14,7 @@ const USAGE = `usage: npm run cli -- <command>
   add-topic "<title>" [url]   create a draft from a manual topic
   list [status]               list posts (default: all recent)
   show <postId>               print a draft as it appears in review
+  review [postId]             (re)send a draft, or all PENDING_REVIEW drafts, to Telegram
   approve <postId>            approve and assign the next publish slot
   reject <postId>             reject a draft
   publish-now <postId>        approve (if needed) and publish immediately
@@ -74,6 +75,21 @@ try {
     case 'show':
       await show(id())
       break
+    case 'review': {
+      if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_CHAT_ID) {
+        throw new Error('TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set')
+      }
+      const ids = args[0]
+        ? [id()]
+        : (
+            await query<{ id: number }>(
+              "select id from posts where status = 'PENDING_REVIEW' order by id",
+            )
+          ).map((r) => r.id)
+      for (const postId of ids) await reviewer.sendForReview(postId)
+      console.log(`sent ${ids.length} draft(s) to Telegram: ${ids.join(', ') || '-'}`)
+      break
+    }
     case 'approve':
       console.log(`scheduled at ${(await approvePost(id())).toISOString()}`)
       break
