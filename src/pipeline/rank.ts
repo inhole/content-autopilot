@@ -25,31 +25,84 @@ type Candidate = { id: number; title: string; feed_summary: string | null; sourc
 type Score = { id: number; score: number; duplicate_of: number | null }
 
 /**
+ * Checks that the ranker scored every candidate exactly once and returns only the scores for
+ * candidates. Unknown ids are ignored (the model may echo a recent-topic id; they carry no data we
+ * can use). Missing or repeated candidate ids throw so the job retries before anything is written.
+ */
+export function validateScores<T extends { id: number }>(
+  scores: T[],
+  candidateIds: Set<number>,
+): T[] {
+  const seen = new Set<number>()
+  const out: T[] = []
+  for (const s of scores) {
+    if (!candidateIds.has(s.id)) continue
+    if (seen.has(s.id)) throw new Error(`ranking response repeats candidate id ${s.id}`)
+    seen.add(s.id)
+    out.push(s)
+  }
+  const missing = [...candidateIds].filter((id) => !seen.has(id))
+  if (missing.length > 0) {
+    throw new Error(
+      `ranking response is missing ${missing.length} candidate(s): ${missing.slice(0, 10).join(', ')}`,
+    )
+  }
+  return out
+}
+
+/**
  * Drops duplicate labels that would hide a story entirely: references to unknown ids, self
- * references, and mutual pairs (the higher-scored side of a mutual pair is kept).
+ * references, and cycles (A -> B -> A, A -> B -> C -> A, ...). In each cycle the highest-scored
+ * member (tie: lowest id) becomes the representative and the rest keep pointing into it. Chains
+ * that end at a non-duplicate candidate or a recent topic are left alone.
  */
 export function resolveDuplicates<T extends Score>(scores: T[], known: Set<number>): T[] {
-  const byId = new Map(scores.map((s) => [s.id, s]))
-  return scores.map((s) => {
-    const target = s.duplicate_of
-    if (target === null) return s
-    if (target === s.id || !known.has(target)) return { ...s, duplicate_of: null }
-    const other = byId.get(target)
-    if (other?.duplicate_of === s.id) {
-      const keep = s.score > other.score || (s.score === other.score && s.id < other.id)
-      if (keep) return { ...s, duplicate_of: null }
+  const cleaned = scores.map((s) =>
+    s.duplicate_of !== null && (s.duplicate_of === s.id || !known.has(s.duplicate_of))
+      ? { ...s, duplicate_of: null }
+      : s,
+  )
+  const byId = new Map(cleaned.map((s) => [s.id, s]))
+  const roots = new Set<number>()
+  const done = new Set<number>()
+  for (const start of cleaned) {
+    if (done.has(start.id)) continue
+    // Each node has at most one outgoing edge, so revisiting a node within one walk is a cycle.
+    const path: number[] = []
+    const onPath = new Map<number, number>()
+    let cur: Score | undefined = start
+    while (cur && !done.has(cur.id) && !onPath.has(cur.id)) {
+      onPath.set(cur.id, path.length)
+      path.push(cur.id)
+      cur = cur.duplicate_of === null ? undefined : byId.get(cur.duplicate_of)
     }
-    return s
-  })
+    if (cur && onPath.has(cur.id)) {
+      const members = path.slice(onPath.get(cur.id)).map((id) => byId.get(id) as Score)
+      const best = members.reduce((a, b) =>
+        b.score > a.score || (b.score === a.score && b.id < a.id) ? b : a,
+      )
+      roots.add(best.id)
+    }
+    for (const id of path) done.add(id)
+  }
+  return cleaned.map((s) => (roots.has(s.id) ? { ...s, duplicate_of: null } : s))
 }
 
 /** Pick the top `count` non-duplicate topics. A fixed count keeps daily volume stable. */
 export function pickTop(scores: Score[], candidateIds: Set<number>, count: number): number[] {
-  return scores
+  const picked: number[] = []
+  const seen = new Set<number>()
+  const ranked = scores
     .filter((s) => candidateIds.has(s.id) && s.duplicate_of === null)
     .sort((a, b) => b.score - a.score)
-    .slice(0, count)
-    .map((s) => s.id)
+  for (const s of ranked) {
+    if (picked.length >= count) break
+    // Defensive: a repeated id must not take two pick slots.
+    if (seen.has(s.id)) continue
+    seen.add(s.id)
+    picked.push(s.id)
+  }
+  return picked
 }
 
 export async function rankCollected(count = config.DAILY_POST_COUNT): Promise<number[]> {
@@ -85,7 +138,7 @@ export async function rankCollected(count = config.DAILY_POST_COUNT): Promise<nu
 
   const ids = new Set(candidates.map((c) => c.id))
   const scores = resolveDuplicates(
-    raw.filter((s) => ids.has(s.id)),
+    validateScores(raw, ids),
     new Set([...ids, ...recent.map((t) => t.id)]),
   )
   for (const s of scores) {
