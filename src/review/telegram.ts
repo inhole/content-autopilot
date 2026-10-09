@@ -150,6 +150,33 @@ export function createReviewer(opts: {
     }
   })
 
+  // Commands must be registered before the message:text handler, which ends the chain for every
+  // non-reply text message (commands included).
+  bot.command('add', async (ctx) => {
+    const parsed = parseAddCommand(ctx.message?.text ?? '')
+    if ('error' in parsed) {
+      await ctx.reply(parsed.error)
+      return
+    }
+    const { url, note } = parsed
+    const [covered] = await query<{ id: number; status: string }>(
+      `select p.id, p.status from posts p join topics t on t.id = p.topic_id
+       where t.url_hash = $1 order by p.id desc limit 1`,
+      [urlHash(url)],
+    )
+    if (covered) {
+      await ctx.reply(`이미 다룬 기사예요 (#${covered.id}, ${covered.status})`)
+      return
+    }
+    // A failed fetch must not block adding the topic; generation fetches the body again anyway.
+    const title = await fetchArticle(url)
+      .then((a) => a?.title?.trim() || url)
+      .catch(() => url)
+    const topicId = await addManualTopic(title, url, note)
+    await opts.onAddTopic(topicId)
+    await ctx.reply(`📥 주제 추가 · 초안 생성 중…${note ? `\n의견: ${note}` : ''}`)
+  })
+
   bot.on('callback_query:data', async (ctx) => {
     const [action, idText] = ctx.callbackQuery.data.split(':')
     const postId = Number(idText)
@@ -230,31 +257,6 @@ export function createReviewer(opts: {
       await ctx.reply(`🔁 #${post.id} 피드백 반영해서 재생성 중…`)
       await opts.onRegenerate(post.topic_id, input)
     }
-  })
-
-  bot.command('add', async (ctx) => {
-    const parsed = parseAddCommand(ctx.message?.text ?? '')
-    if ('error' in parsed) {
-      await ctx.reply(parsed.error)
-      return
-    }
-    const { url, note } = parsed
-    const [covered] = await query<{ id: number; status: string }>(
-      `select p.id, p.status from posts p join topics t on t.id = p.topic_id
-       where t.url_hash = $1 order by p.id desc limit 1`,
-      [urlHash(url)],
-    )
-    if (covered) {
-      await ctx.reply(`이미 다룬 기사예요 (#${covered.id}, ${covered.status})`)
-      return
-    }
-    // A failed fetch must not block adding the topic; generation fetches the body again anyway.
-    const title = await fetchArticle(url)
-      .then((a) => a?.title?.trim() || url)
-      .catch(() => url)
-    const topicId = await addManualTopic(title, url, note)
-    await opts.onAddTopic(topicId)
-    await ctx.reply(`📥 주제 추가 · 초안 생성 중…${note ? `\n의견: ${note}` : ''}`)
   })
 
   bot.catch((err) => console.error('[telegram]', err.error))
