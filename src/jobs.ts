@@ -7,6 +7,7 @@ import {
   requestRegeneration,
   SkipTopicError,
 } from './pipeline/generate.ts'
+import { expireDrafts, loadPendingDrafts, runReviewMaintenance } from './pipeline/maintenance.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import type { Reviewer } from './review/telegram.ts'
@@ -211,5 +212,23 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
       )
       throw err
     }
+  })
+
+  // Hourly: expire stale drafts and send the 09:00 / 18:00 reminder (decided from the local hour).
+  const maintenanceQueue = 'review-maintenance'
+  await boss.createQueue(maintenanceQueue, { policy: 'singleton', retryLimit: 0 })
+  await boss.schedule(maintenanceQueue, '0 * * * *', null, { tz })
+  await boss.work(maintenanceQueue, async () => {
+    const result = await runReviewMaintenance(
+      {
+        loadPending: loadPendingDrafts,
+        expire: (ids) => expireDrafts(ids, new Date()),
+        retire: (ids) => reviewer.retireReviewMessages(ids),
+        notify: (text) => reviewer.notify(text),
+      },
+      new Date(),
+      tz,
+    )
+    console.log('[review-maintenance]', result)
   })
 }

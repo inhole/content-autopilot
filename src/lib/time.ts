@@ -27,6 +27,14 @@ export function localDate(instant: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone }).format(instant)
 }
 
+/** Local hour (0-23) of `instant` in `timeZone`. */
+export function localHour(instant: Date, timeZone: string): number {
+  const part = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', hour: '2-digit' })
+    .formatToParts(instant)
+    .find((p) => p.type === 'hour')
+  return Number(part?.value)
+}
+
 /** The UTC instant for wall-clock `date` (YYYY-MM-DD) + `time` (HH:MM) in `timeZone`. */
 export function zonedToUtc(date: string, time: string, timeZone: string): Date {
   const [y, m, d] = date.split('-').map(Number)
