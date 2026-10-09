@@ -2,6 +2,7 @@ import { Bot, GrammyError, InlineKeyboard } from 'grammy'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { approvePost, rejectPost } from '../pipeline/publish.ts'
+import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
 const EDIT_PREFIX = /^수정\s*[:：]\s*/
@@ -115,6 +116,15 @@ export function createReviewer(opts: {
   )
   bot.use(async (ctx, next) => {
     if (chatId && ctx.chat?.id === chatId) await next()
+  })
+
+  bot.command('status', async (ctx) => {
+    try {
+      await ctx.reply(formatStatus(await loadStatus(), config.TZ_NAME))
+    } catch (err) {
+      console.error('[telegram] /status failed', err)
+      await ctx.reply('상태를 불러오지 못했어요. 로그를 확인해 주세요.')
+    }
   })
 
   bot.on('callback_query:data', async (ctx) => {
