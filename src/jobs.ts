@@ -1,7 +1,7 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
 import { collectAll } from './pipeline/collect.ts'
-import { generatePost, SkipTopicError } from './pipeline/generate.ts'
+import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import type { Reviewer } from './review/telegram.ts'
@@ -9,14 +9,20 @@ import { refreshThreadsTokenIfNeeded, threadsTokenExpiry } from './threads/accou
 
 export const Q = {
   daily: 'daily-pipeline',
-  generate: 'generate',
+  // 'generate' was created with the default policy, which cannot be changed in place, so the
+  // serialized per-topic queue lives under a new name. See LEGACY_GENERATE_QUEUE.
+  generate: 'generate-v2',
   review: 'review',
   publishDue: 'publish-due',
   publish: 'publish',
   refreshToken: 'refresh-token',
 } as const
 
-type GenerateData = { topicId: number; feedback?: string }
+/** Queue name from before the policy change; still drained so in-flight jobs are not lost. */
+const LEGACY_GENERATE_QUEUE = 'generate'
+
+/** `regenerate` is absent on jobs queued before it existed; feedback implied a regeneration then. */
+type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean }
 type PostData = { postId: number }
 
 export function createBoss(): PgBoss {
@@ -29,12 +35,16 @@ export function createBoss(): PgBoss {
   return boss
 }
 
+// The singleton queue policy runs at most one job per singletonKey at a time while keeping
+// the rest queued, so feedback sent during a running generation is processed afterwards.
 export const enqueueGenerate = (boss: PgBoss, data: GenerateData) =>
   boss.send(Q.generate, data, { singletonKey: `topic-${data.topicId}` })
 
 export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<void> {
   await boss.createQueue(Q.daily, { policy: 'singleton', retryLimit: 1 })
-  await boss.createQueue(Q.generate, { retryLimit: 2, retryDelay: 60, retryBackoff: true })
+  const generateQueue = { retryLimit: 2, retryDelay: 60, retryBackoff: true }
+  await boss.createQueue(Q.generate, { ...generateQueue, policy: 'singleton' })
+  await boss.createQueue(LEGACY_GENERATE_QUEUE, generateQueue)
   await boss.createQueue(Q.review, { retryLimit: 3, retryDelay: 30 })
   await boss.createQueue(Q.publishDue, { policy: 'singleton', retryLimit: 0 })
   // Retries come from publish-due re-finding the post, so the job itself never retries.
@@ -49,9 +59,11 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.work(Q.daily, async () => {
     const collected = await collectAll()
     const picked = await rankCollected()
-    for (const topicId of picked) await enqueueGenerate(boss, { topicId })
+    // Includes leftovers from an earlier crash between ranking and enqueueing.
+    const toGenerate = await pendingShortlistedTopicIds()
+    for (const topicId of toGenerate) await enqueueGenerate(boss, { topicId })
     const failedFeeds = collected.filter((c) => c.error)
-    console.log('[daily]', { collected, picked })
+    console.log('[daily]', { collected, picked, toGenerate })
     if (failedFeeds.length) {
       await reviewer.notify(
         `⚠️ 수집 실패: ${failedFeeds.map((f) => `${f.source} (${f.error})`).join(', ')}`,
@@ -60,11 +72,15 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     if (picked.length === 0) await reviewer.notify('오늘은 새로 고른 주제가 없어요.')
   })
 
-  await boss.work<GenerateData>(Q.generate, async ([job]) => {
+  const handleGenerate = async ([job]: { data: GenerateData }[]) => {
     if (!job) return
+    const { topicId, feedback } = job.data
     try {
-      const postId = await generatePost(job.data.topicId, job.data.feedback)
-      await boss.send(Q.review, { postId } satisfies PostData)
+      const postId = await generatePost(topicId, {
+        feedback,
+        regenerate: job.data.regenerate ?? Boolean(feedback),
+      })
+      if (postId !== null) await boss.send(Q.review, { postId } satisfies PostData)
     } catch (err) {
       if (err instanceof SkipTopicError) {
         console.warn(`[generate] ${err.message}`)
@@ -72,7 +88,9 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
       }
       throw err
     }
-  })
+  }
+  await boss.work<GenerateData>(Q.generate, handleGenerate)
+  await boss.work<GenerateData>(LEGACY_GENERATE_QUEUE, handleGenerate)
 
   await boss.work<PostData>(Q.review, async ([job]) => {
     if (job) await reviewer.sendForReview(job.data.postId)

@@ -1,7 +1,7 @@
 import { config } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
-import { generatePost } from './pipeline/generate.ts'
+import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
@@ -54,13 +54,32 @@ try {
       break
     case 'daily': {
       console.table(await collectAll())
-      for (const topicId of await rankCollected()) await sendReview(await generatePost(topicId))
+      await rankCollected()
+      // Also picks up SHORTLISTED leftovers from earlier runs. Errors are handled per topic so
+      // one bad topic does not block the rest; failed ones stay SHORTLISTED for the next run.
+      let failures = 0
+      for (const topicId of await pendingShortlistedTopicIds()) {
+        try {
+          const postId = await generatePost(topicId)
+          if (postId !== null) await sendReview(postId)
+        } catch (err) {
+          if (err instanceof SkipTopicError) {
+            console.warn(`skipped: ${err.message}`)
+          } else {
+            failures++
+            console.error(`topic ${topicId} failed: ${(err as Error).message}`)
+          }
+        }
+      }
+      if (failures > 0) process.exitCode = 1
       break
     }
     case 'add-topic': {
       const [title, url] = args
       if (!title) throw new Error('title is required')
-      await sendReview(await generatePost(await addManualTopic(title, url)))
+      const postId = await generatePost(await addManualTopic(title, url))
+      if (postId === null) throw new Error('no draft to review (post is rejected or past review)')
+      await sendReview(postId)
       break
     }
     case 'list': {
