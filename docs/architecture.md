@@ -26,8 +26,8 @@
 | 단계 | 코드 | 하는 일 |
 |---|---|---|
 | collect | `src/pipeline/collect.ts` | `sources`의 RSS를 읽어 48시간 이내 글만 `topics`에 넣는다. 정규화한 URL의 sha256(`url_hash`)으로 중복을 막는다. 피드 하나가 실패해도 나머지는 계속한다. |
-| dedupe | `src/pipeline/dedupe.ts` | 제목+요약을 임베딩해 `topics.embedding`에 저장한다. 최근 14일 동안 먼저 들어온 주제와 코사인 유사도가 0.85 이상이면 `DUPLICATE`로 표시한다. |
-| rank | `src/pipeline/rank.ts` | 후보 최대 60개를 LLM 한 번 호출로 0~10점 평가한다. 상위 `DAILY_POST_COUNT`개만 `SHORTLISTED`, 나머지는 `SKIPPED`. |
+| dedupe | `src/pipeline/dedupe.ts` | 48시간이 지난 `COLLECTED` 주제를 `SKIPPED`로 정리한다. 그다음 제목+요약을 임베딩해 `topics.embedding`에 저장하고, 최근 14일 동안 먼저 들어온 주제와 코사인 유사도가 0.85 이상이면 `DUPLICATE`로 표시한다. 같은 언어의 거의 같은 글만 잡는 1차 필터다. |
+| rank | `src/pipeline/rank.ts` | 후보 최대 100개와 최근 14일 동안 다룬 주제 목록을 함께 LLM에 넘겨 한 번에 0~10점으로 평가한다. 이때 같은 사건이면 `duplicate_of`로 표시하게 한다. 한국어 요약과 영어 원문처럼 언어가 다른 중복은 임베딩으로 잡히지 않아서(실측 유사도 0.37~0.63) 이 단계에서 거른다. 중복이 아닌 것 중 상위 `DAILY_POST_COUNT`개만 `SHORTLISTED`, 나머지는 `SKIPPED`. |
 | generate | `src/pipeline/generate.ts` | 기사 본문을 가져와(Readability) 그 내용만 근거로 초안 JSON(`text`, `angle`, `topic_tag`, `caveats`)을 만든다. 본문을 읽을 수 없으면 해당 주제는 건너뛴다. |
 | review | `src/review/telegram.ts` | 초안, 관점, 확인할 점, 출처를 Telegram으로 보낸다. 버튼은 승인 / 재생성 / 폐기. |
 | approve | `src/pipeline/publish.ts` | `PUBLISH_SLOTS` 중 아직 비어 있는 가장 빠른 시간을 `scheduled_at`으로 정한다. |
