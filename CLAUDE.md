@@ -36,7 +36,7 @@ Config is loaded from `.env` (see `.env.example`) and validated in `src/config.t
 The pipeline is a chain of pg-boss queues, all defined in `src/jobs.ts`:
 
 ```
-daily-pipeline (cron) → collect → dedupe → rank → enqueue generate per picked topic
+daily-pipeline (cron) → collect → rank (expire stale, score, flag duplicates) → enqueue generate per picked topic
 generate {topicId, feedback?} → posts row PENDING_REVIEW → enqueue review
 review {postId}           → Telegram message with approve / regen / reject buttons
   approve                 → approvePost assigns next free PUBLISH_SLOTS time → SCHEDULED
@@ -48,10 +48,7 @@ refresh-token (daily)     → refresh the Threads long-lived token (60 days) nea
 Key design points that span several files:
 - **The `posts` row is the source of truth for publishing, not the job.** `publishPost` claims a row with an atomic `UPDATE … status='PUBLISHING'`. It saves `container_id` before calling publish. `driveContainer` reuses an existing container and treats `PUBLISHED` as done, so retries never double-post. The `publish` queue uses `retryLimit: 0`; retries happen when `publish-due` re-finds the row (failed attempts go back to `SCHEDULED`, then `FAILED` after 3 attempts). Rows stuck in `PUBLISHING` for more than 10 minutes are treated as crashed and resumed.
 - **Volume is a fixed count, not a score threshold.** `rank` sends all candidates in one LLM call and keeps the top `DAILY_POST_COUNT`. Unpicked topics become `SKIPPED`, so news does not carry over to the next day.
-- **Dedupe has two layers.**
-  - Embedding dedupe (`src/pipeline/dedupe.ts`, `text-embedding-3-small` in pgvector, threshold 0.85) only catches near-identical same-language items.
-  - Cross-language duplicates (GeekNews Korean summary vs HN English original measured 0.37–0.63 cosine) and repeats of topics used in the last 14 days are caught by the ranker. The LLM returns `duplicate_of`, and `resolveDuplicates` drops invalid, self and mutual references before `pickTop`.
-  - `dedupe` also expires `COLLECTED` topics older than 48h.
+- **Dedupe is done by the ranker, not embeddings.** Exact URLs are blocked by `topics.url_hash`. For everything else, the rank LLM sees the candidates plus topics used in the last 14 days and returns `duplicate_of`. `resolveDuplicates` drops invalid, self and mutual references before `pickTop`. Embedding dedupe was removed (`002_drop_embedding.sql`): GeekNews Korean summaries and their HN English originals measured only 0.37–0.63 cosine, so no threshold could separate them. `rankCollected` first expires `COLLECTED` topics older than 48h.
 - **LLM calls go through `chatJson`** (`src/llm/openrouter.ts`). It sends a JSON schema built from the zod schema and always re-validates the output with zod. Prompts are in Korean and live in `src/pipeline/prompts.ts`.
 - **Generation is grounded in the fetched article body** (Readability + linkedom). If no body can be read, the topic is skipped (`SkipTopicError`, not retried). The source URL goes in `link_attachment`, never in the post text.
 - **Threads access goes through the `ThreadsApi` interface.** When `THREADS_DRY_RUN=true`, `getThreadsApi()` returns `DryRunThreadsClient`. The token is seeded from env into `platform_accounts` on first use; after that, the DB copy is authoritative.

@@ -57,13 +57,3 @@ export async function chatJson<S extends z.ZodType>(opts: {
   if (!content) throw new Error('LLM returned empty content')
   return opts.schema.parse(extractJson(content))
 }
-
-const embeddingResponse = z.object({
-  data: z.array(z.object({ index: z.number(), embedding: z.array(z.number()) })),
-})
-
-export async function embed(model: string, inputs: string[]): Promise<number[][]> {
-  if (inputs.length === 0) return []
-  const raw = embeddingResponse.parse(await post('/embeddings', { model, input: inputs }))
-  return raw.data.sort((a, b) => a.index - b.index).map((d) => d.embedding)
-}

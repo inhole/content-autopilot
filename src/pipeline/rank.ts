@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
+import { expireStaleTopics } from './collect.ts'
 import { RANK_SYSTEM } from './prompts.ts'
 
 const MAX_CANDIDATES = 100
@@ -52,10 +53,11 @@ export function pickTop(scores: Score[], candidateIds: Set<number>, count: numbe
 }
 
 export async function rankCollected(count = config.DAILY_POST_COUNT): Promise<number[]> {
+  await expireStaleTopics()
   const candidates = await query<Candidate>(
     `select t.id, t.title, t.feed_summary, s.name as source
      from topics t join sources s on s.id = t.source_id
-     where t.status = 'COLLECTED' and t.embedding is not null
+     where t.status = 'COLLECTED'
      order by coalesce(t.published_at, t.created_at) desc
      limit $1`,
     [MAX_CANDIDATES],

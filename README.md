@@ -3,7 +3,7 @@
 AI·개발 뉴스를 수집하고, LLM으로 Threads 글을 써서, Telegram 승인 한 번이면 정해진 시간에 자동 발행하는 개인용 도구.
 
 ```
-RSS → 중복 제거 → LLM 주제 선정 → 기사 본문 기반 초안 → Telegram 승인 → Threads 발행
+RSS → LLM 주제 선정·중복 판정 → 기사 본문 기반 초안 → Telegram 승인 → Threads 발행
 ```
 
 ## 빠른 시작
@@ -34,4 +34,4 @@ npm run lint
 npm test
 ```
 
-Node 22.12 이상 · TypeScript (tsx로 실행) · pg-boss · Supabase Postgres + pgvector · OpenRouter · grammY
+Node 22.12 이상 · TypeScript (tsx로 실행) · pg-boss · Supabase Postgres · OpenRouter · grammY

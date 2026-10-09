@@ -1,7 +1,6 @@
 import { config } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
-import { dedupeCollected } from './pipeline/dedupe.ts'
 import { generatePost } from './pipeline/generate.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
@@ -11,7 +10,7 @@ import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts
 const USAGE = `usage: npm run cli -- <command>
 
   collect                     fetch RSS feeds into topics
-  daily                       collect → dedupe → rank → generate drafts (no queue)
+  daily                       collect → rank → generate drafts (no queue)
   add-topic "<title>" [url]   create a draft from a manual topic
   list [status]               list posts (default: all recent)
   show <postId>               print a draft as it appears in review
@@ -54,7 +53,6 @@ try {
       break
     case 'daily': {
       console.table(await collectAll())
-      console.log(await dedupeCollected())
       for (const topicId of await rankCollected()) await sendReview(await generatePost(topicId))
       break
     }

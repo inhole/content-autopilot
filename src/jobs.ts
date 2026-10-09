@@ -1,7 +1,6 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
 import { collectAll } from './pipeline/collect.ts'
-import { dedupeCollected } from './pipeline/dedupe.ts'
 import { generatePost, SkipTopicError } from './pipeline/generate.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
@@ -49,11 +48,10 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
 
   await boss.work(Q.daily, async () => {
     const collected = await collectAll()
-    const deduped = await dedupeCollected()
     const picked = await rankCollected()
     for (const topicId of picked) await enqueueGenerate(boss, { topicId })
     const failedFeeds = collected.filter((c) => c.error)
-    console.log('[daily]', { collected, deduped, picked })
+    console.log('[daily]', { collected, picked })
     if (failedFeeds.length) {
       await reviewer.notify(
         `⚠️ 수집 실패: ${failedFeeds.map((f) => `${f.source} (${f.error})`).join(', ')}`,

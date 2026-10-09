@@ -14,7 +14,6 @@ const schema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default('anthropic/claude-sonnet-5.5'),
   LLM_RANK_MODEL: z.string().default('anthropic/claude-haiku-4.5'),
-  EMBEDDING_MODEL: z.string().default('openai/text-embedding-3-small'),
 
   THREADS_API_BASE: z.string().default('https://graph.threads.net'),
   // Seed values; after the first run the token lives in platform_accounts and is refreshed there.

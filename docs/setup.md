@@ -4,8 +4,8 @@
 
 | 서비스 | 용도 | 없을 때 동작 |
 |---|---|---|
-| Supabase | Postgres (데이터, pg-boss 큐, pgvector) | 필수 |
-| OpenRouter | 주제 선정, 초안 작성, 임베딩 | 중복 제거부터 실패 |
+| Supabase | Postgres (데이터, pg-boss 큐) | 필수 |
+| OpenRouter | 주제 선정·중복 판정, 초안 작성 | 주제 선정부터 실패 |
 | Telegram 봇 | 초안 검수 (승인/재생성/폐기) | 콘솔 출력 + CLI로 검수 |
 | Meta 앱 (Threads API) | 실제 발행 | `THREADS_DRY_RUN=true`로 로그만 남김 |
 
@@ -24,7 +24,7 @@
    ```
    - **Direct connection(`db.<ref>.supabase.co`)은 쓰지 않는다.** IPv6 전용이라 Railway나 일반 가정용 네트워크에서 `ENOTFOUND`로 실패한다.
    - **Transaction pooler(포트 6543)도 쓰지 않는다.** 계속 실행되는 pg-boss 워커와 맞지 않는다.
-3. `.env`의 `DATABASE_URL`에 넣고 `npm run db:migrate`를 실행한다. `vector` 확장은 migration이 켠다.
+3. `.env`의 `DATABASE_URL`에 넣고 `npm run db:migrate`를 실행한다.
 
 > Free 플랜은 1주일 동안 사용이 없으면 프로젝트가 일시정지된다. 워커가 매일 돌면 문제없다.
 
@@ -38,9 +38,6 @@
 |---|---|---|
 | 초안 작성 | `LLM_MODEL` | `anthropic/claude-sonnet-5.5` |
 | 주제 선정 | `LLM_RANK_MODEL` | `anthropic/claude-haiku-4.5` |
-| 임베딩 | `EMBEDDING_MODEL` | `openai/text-embedding-3-small` (1536차원) |
-
-> 임베딩 모델을 바꾸면 차원도 바뀐다. 그때는 `topics.embedding vector(1536)` 컬럼을 바꾸는 migration을 같이 추가해야 한다.
 
 ## 3. Telegram 봇
 
