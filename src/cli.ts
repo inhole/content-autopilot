@@ -11,7 +11,7 @@ const USAGE = `usage: npm run cli -- <command>
 
   collect                     fetch RSS feeds into topics
   daily                       collect → rank → generate drafts (no queue)
-  add-topic "<title>" [url]   create a draft from a manual topic
+  add-topic "<title>" [url] [note]  create a draft from a manual topic
   list [status]               list posts (default: all recent)
   show <postId>               print a draft as it appears in review
   review [postId]             (re)send a draft, or all PENDING_REVIEW drafts, to Telegram
@@ -22,7 +22,7 @@ const USAGE = `usage: npm run cli -- <command>
   threads:refresh             refresh the Threads token if it is close to expiry`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
-const reviewer = createReviewer({ onRegenerate: async () => {} })
+const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
 
 async function sendReview(postId: number) {
   if (config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID) await reviewer.sendForReview(postId)
@@ -75,9 +75,9 @@ try {
       break
     }
     case 'add-topic': {
-      const [title, url] = args
+      const [title, url, note] = args
       if (!title) throw new Error('title is required')
-      const postId = await generatePost(await addManualTopic(title, url))
+      const postId = await generatePost(await addManualTopic(title, url, note))
       if (postId === null) throw new Error('no draft to review (post is rejected or past review)')
       await sendReview(postId)
       break

@@ -128,13 +128,14 @@ export async function expireStaleTopics(): Promise<number> {
   return rows.length
 }
 
-export async function addManualTopic(title: string, url?: string): Promise<number> {
+export async function addManualTopic(title: string, url?: string, note?: string): Promise<number> {
   const rows = await query<{ id: number }>(
-    `insert into topics (source_id, title, url, url_hash, status)
-     values ((select id from sources where kind = 'MANUAL' limit 1), $1, $2, $3, 'SHORTLISTED')
-     on conflict (url_hash) do update set status = 'SHORTLISTED', updated_at = now()
+    `insert into topics (source_id, title, url, url_hash, note, status)
+     values ((select id from sources where kind = 'MANUAL' limit 1), $1, $2, $3, $4, 'SHORTLISTED')
+     on conflict (url_hash) do update
+       set status = 'SHORTLISTED', note = coalesce(excluded.note, topics.note), updated_at = now()
      returning id`,
-    [title, url ?? null, url ? urlHash(url) : null],
+    [title, url ?? null, url ? urlHash(url) : null, note ?? null],
   )
   const row = rows[0]
   if (!row) throw new Error('failed to insert manual topic')

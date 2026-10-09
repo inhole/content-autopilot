@@ -1,7 +1,7 @@
 import { config } from './config.ts'
 import { migrate } from './db/migrate.ts'
 import { pool } from './db/pool.ts'
-import { createBoss, enqueueRegeneration, registerJobs } from './jobs.ts'
+import { createBoss, enqueueGenerate, enqueueRegeneration, registerJobs } from './jobs.ts'
 import { createReviewer } from './review/telegram.ts'
 
 const applied = await migrate()
@@ -15,6 +15,9 @@ const reviewer = createReviewer({
     if (!(await enqueueRegeneration(boss, topicId, feedback))) {
       console.warn(`[worker] regeneration ignored: topic ${topicId} has no draft under review`)
     }
+  },
+  onAddTopic: async (topicId) => {
+    await enqueueGenerate(boss, { topicId })
   },
 })
 await registerJobs(boss, reviewer)

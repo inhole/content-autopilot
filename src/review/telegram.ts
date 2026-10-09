@@ -1,6 +1,9 @@
 import { Bot, GrammyError, InlineKeyboard } from 'grammy'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
+import { urlHash } from '../lib/url.ts'
+import { fetchArticle } from '../pipeline/article.ts'
+import { addManualTopic } from '../pipeline/collect.ts'
 import { approvePost, rejectPost } from '../pipeline/publish.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
@@ -18,6 +21,25 @@ type ReviewPost = {
   source_url: string | null
   caveats: string[] | null
   score: number | null
+}
+
+const ADD_USAGE = '사용법: /add <url> [한 줄 의견]'
+
+/** Parses the text of `/add <url> [note]`: the first token must be an http(s) URL. */
+export function parseAddCommand(
+  text: string,
+): { url: string; note: string | undefined } | { error: string } {
+  const args = text.replace(/^\/add(@\w+)?\s*/i, '').trim()
+  const first = args.split(/\s+/)[0] ?? ''
+  let url: URL
+  try {
+    url = new URL(first)
+  } catch {
+    return { error: ADD_USAGE }
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return { error: ADD_USAGE }
+  const note = args.slice(first.length).trim()
+  return { url: first, note: note || undefined }
 }
 
 export type Reviewer = {
@@ -87,6 +109,7 @@ const keyboard = (postId: number) =>
  */
 export function createReviewer(opts: {
   onRegenerate: (topicId: number, feedback?: string) => Promise<void>
+  onAddTopic: (topicId: number) => Promise<void>
 }): Reviewer {
   const token = config.TELEGRAM_BOT_TOKEN
   const chatId = config.TELEGRAM_CHAT_ID
@@ -207,6 +230,31 @@ export function createReviewer(opts: {
       await ctx.reply(`🔁 #${post.id} 피드백 반영해서 재생성 중…`)
       await opts.onRegenerate(post.topic_id, input)
     }
+  })
+
+  bot.command('add', async (ctx) => {
+    const parsed = parseAddCommand(ctx.message?.text ?? '')
+    if ('error' in parsed) {
+      await ctx.reply(parsed.error)
+      return
+    }
+    const { url, note } = parsed
+    const [covered] = await query<{ id: number; status: string }>(
+      `select p.id, p.status from posts p join topics t on t.id = p.topic_id
+       where t.url_hash = $1 order by p.id desc limit 1`,
+      [urlHash(url)],
+    )
+    if (covered) {
+      await ctx.reply(`이미 다룬 기사예요 (#${covered.id}, ${covered.status})`)
+      return
+    }
+    // A failed fetch must not block adding the topic; generation fetches the body again anyway.
+    const title = await fetchArticle(url)
+      .then((a) => a?.title?.trim() || url)
+      .catch(() => url)
+    const topicId = await addManualTopic(title, url, note)
+    await opts.onAddTopic(topicId)
+    await ctx.reply(`📥 주제 추가 · 초안 생성 중…${note ? `\n의견: ${note}` : ''}`)
   })
 
   bot.catch((err) => console.error('[telegram]', err.error))

@@ -14,7 +14,13 @@ export const generationSchema = z.object({
 })
 export type Generation = z.infer<typeof generationSchema>
 
-type Topic = { id: number; title: string; url: string | null; feed_summary: string | null }
+type Topic = {
+  id: number
+  title: string
+  url: string | null
+  feed_summary: string | null
+  note: string | null
+}
 
 export class SkipTopicError extends Error {}
 
@@ -69,7 +75,7 @@ export async function generatePost(
 ): Promise<number | null> {
   const { regenerate = false, feedback, seq } = options
   const [topic] = await query<Topic>(
-    'select id, title, url, feed_summary from topics where id = $1',
+    'select id, title, url, feed_summary, note from topics where id = $1',
     [topicId],
   )
   if (!topic) throw new Error(`topic ${topicId} not found`)
@@ -97,10 +103,13 @@ export async function generatePost(
       ? `\n\n이전 초안:\n${existing.text}\n\n검수자 피드백: ${feedback}\n피드백을 반영해 새로 써라.`
       : ''
 
+  // The note is the owner's opinion (the angle), never a source of facts.
+  const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
+
   const gen = await chatJson({
     model: config.LLM_MODEL,
     system: GENERATE_SYSTEM,
-    user: `제목: ${topic.title}\n출처: ${topic.url ?? '(직접 입력)'}\n\n본문:\n${body}${revisionPrompt}`,
+    user: `제목: ${topic.title}\n출처: ${topic.url ?? '(직접 입력)'}\n\n본문:\n${body}${notePrompt}${revisionPrompt}`,
     schema: generationSchema,
     schemaName: 'threads_post',
   })
