@@ -12,7 +12,7 @@ await boss.start()
 
 const reviewer = createReviewer({
   onRegenerate: async (topicId, feedback) => {
-    await enqueueGenerate(boss, { topicId, feedback })
+    await enqueueGenerate(boss, { topicId, feedback, regenerate: true })
   },
 })
 await registerJobs(boss, reviewer)
