@@ -26,6 +26,48 @@ export const Q = {
 /** Queue name from before the policy change; still drained so in-flight jobs are not lost. */
 const LEGACY_GENERATE_QUEUE = 'generate'
 
+// Retry limits live here so the "last attempt" alert check uses the same numbers as createQueue.
+const DAILY_RETRY_LIMIT = 1
+const GENERATE_RETRY_LIMIT = 2
+const REVIEW_RETRY_LIMIT = 3
+
+/** pg-boss counts retries from 0, so the attempt with retryCount === retryLimit is the last one. */
+export function isFinalAttempt(retryCount: number, retryLimit: number): boolean {
+  return retryCount >= retryLimit
+}
+
+export function formatFinalFailure(label: string, err: unknown): string {
+  const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').trim()
+  const short = message.length > 300 ? `${message.slice(0, 300)}…` : message
+  return `❌ ${label} 실패 (재시도 소진): ${short}`
+}
+
+/**
+ * Runs `fn` and, if it throws on the queue's last attempt, tells the owner before rethrowing.
+ * Without this a job that exhausts its retries would only show up in logs. A failing notify must
+ * never mask the original error.
+ */
+async function alertOnFinalFailure<T>(
+  job: { retryCount: number },
+  retryLimit: number,
+  label: string,
+  reviewer: Reviewer,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (isFinalAttempt(job.retryCount, retryLimit)) {
+      try {
+        await reviewer.notify(formatFinalFailure(label, err))
+      } catch (notifyErr) {
+        console.error(`[${label}] failed to send failure alert`, notifyErr)
+      }
+    }
+    throw err
+  }
+}
+
 /** `regenerate` is absent on jobs queued before it existed; feedback implied a regeneration then. */
 type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean; seq?: number }
 type PostData = { postId: number }
@@ -58,11 +100,11 @@ export async function enqueueRegeneration(
 }
 
 export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<void> {
-  await boss.createQueue(Q.daily, { policy: 'singleton', retryLimit: 1 })
-  const generateQueue = { retryLimit: 2, retryDelay: 60, retryBackoff: true }
+  await boss.createQueue(Q.daily, { policy: 'singleton', retryLimit: DAILY_RETRY_LIMIT })
+  const generateQueue = { retryLimit: GENERATE_RETRY_LIMIT, retryDelay: 60, retryBackoff: true }
   await boss.createQueue(Q.generate, { ...generateQueue, policy: 'singleton' })
   await boss.createQueue(LEGACY_GENERATE_QUEUE, generateQueue)
-  await boss.createQueue(Q.review, { retryLimit: 3, retryDelay: 30 })
+  await boss.createQueue(Q.review, { retryLimit: REVIEW_RETRY_LIMIT, retryDelay: 30 })
   await boss.createQueue(Q.publishDue, { policy: 'singleton', retryLimit: 0 })
   // Retries come from publish-due re-finding the post, so the job itself never retries.
   await boss.createQueue(Q.publish, { policy: 'exclusive', retryLimit: 0 })
@@ -73,7 +115,7 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.schedule(Q.publishDue, '*/5 * * * *', null, { tz })
   await boss.schedule(Q.refreshToken, '0 4 * * *', null, { tz })
 
-  await boss.work(Q.daily, async () => {
+  const runDaily = async () => {
     const collected = await collectAll()
     const picked = await rankCollected()
     // Includes leftovers from an earlier crash between ranking and enqueueing.
@@ -87,16 +129,31 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
       )
     }
     if (picked.length === 0) await reviewer.notify('오늘은 새로 고른 주제가 없어요.')
+  }
+  await boss.work(Q.daily, async ([job]) => {
+    if (!job) return
+    await alertOnFinalFailure(job, DAILY_RETRY_LIMIT, '일일 파이프라인', reviewer, runDaily)
   })
 
-  const handleGenerate = async ([job]: { data: GenerateData }[]) => {
+  const handleGenerate = async ([job]: { data: GenerateData; retryCount: number }[]) => {
     if (!job) return
     const { topicId, feedback, seq } = job.data
+    const label = `초안 생성 (topic #${topicId})`
+    await alertOnFinalFailure(job, GENERATE_RETRY_LIMIT, label, reviewer, () =>
+      runGenerate(topicId, feedback, seq, job.data.regenerate),
+    )
+  }
+  const runGenerate = async (
+    topicId: number,
+    feedback: string | undefined,
+    seq: number | undefined,
+    regenerate: boolean | undefined,
+  ) => {
     try {
       const postId = await generatePost(topicId, {
         feedback,
         seq,
-        regenerate: job.data.regenerate ?? Boolean(feedback),
+        regenerate: regenerate ?? Boolean(feedback),
       })
       if (postId !== null) await boss.send(Q.review, { postId } satisfies PostData)
     } catch (err) {
@@ -114,7 +171,15 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   })
 
   await boss.work<PostData>(Q.review, async ([job]) => {
-    if (job) await reviewer.sendForReview(job.data.postId)
+    if (!job) return
+    const { postId } = job.data
+    await alertOnFinalFailure(
+      job,
+      REVIEW_RETRY_LIMIT,
+      `검수 메시지 전송 (#${postId})`,
+      reviewer,
+      () => reviewer.sendForReview(postId),
+    )
   })
 
   await boss.work(Q.publishDue, async () => {
