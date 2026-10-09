@@ -12,6 +12,11 @@ export const pool = new pg.Pool({
   max: 5,
 })
 
+// An unhandled 'error' on an idle client (DB restart, pooler dropping connections) would crash the worker.
+pool.on('error', (err) => {
+  console.error('pg pool idle client error:', err)
+})
+
 export async function query<T extends pg.QueryResultRow>(
   text: string,
   values?: unknown[],
