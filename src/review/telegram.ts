@@ -6,6 +6,7 @@ import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
 import { approvePost, rejectPost } from '../pipeline/publish.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
+import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
 const EDIT_PREFIX = /^수정\s*[:：]\s*/
@@ -103,6 +104,26 @@ const keyboard = (postId: number) =>
     .text('🔁 재생성', `regen:${postId}`)
     .text('🗑 폐기', `reject:${postId}`)
 
+const reasonKeyboard = (postId: number) => {
+  const kb = new InlineKeyboard()
+  for (const [code, label] of Object.entries(REJECT_REASONS)) kb.text(label, `rr:${postId}:${code}`)
+  return kb.row().text('↩ 취소', `rc:${postId}`)
+}
+
+/**
+ * Callback data is `<action>:<postId>[:<reason>]`. Actions: approve, regen, reject (opens the
+ * reason menu), rr (reject with a reason), rc (cancel the menu). Telegram caps data at 64 bytes.
+ */
+export function parseCallback(
+  data: string,
+): { action: string; postId: number; reason?: RejectReason } | null {
+  const [action, idText, reason] = data.split(':')
+  const postId = Number(idText)
+  if (!action || !Number.isInteger(postId)) return null
+  if (action === 'rr') return reason && isRejectReason(reason) ? { action, postId, reason } : null
+  return { action, postId }
+}
+
 /**
  * Telegram review bot. Without TELEGRAM_BOT_TOKEN it falls back to logging, and drafts can be
  * approved from the CLI instead.
@@ -178,8 +199,12 @@ export function createReviewer(opts: {
   })
 
   bot.on('callback_query:data', async (ctx) => {
-    const [action, idText] = ctx.callbackQuery.data.split(':')
-    const postId = Number(idText)
+    const parsed = parseCallback(ctx.callbackQuery.data)
+    if (!parsed) {
+      await ctx.answerCallbackQuery({ text: '알 수 없는 버튼이에요' })
+      return
+    }
+    const { action, postId, reason } = parsed
     const [post] = await query<{
       topic_id: number
       status: string
@@ -208,9 +233,14 @@ export function createReviewer(opts: {
         await ctx.editMessageReplyMarkup()
         await ctx.reply(`✅ #${postId} 승인 · ${fmtTime(at)} 발행 예정`)
       } else if (action === 'reject') {
-        await rejectPost(postId)
+        // Ask for a reason first; the revision/message checks above guard the next press too.
+        await ctx.editMessageReplyMarkup({ reply_markup: reasonKeyboard(postId) })
+      } else if (action === 'rc') {
+        await ctx.editMessageReplyMarkup({ reply_markup: keyboard(postId) })
+      } else if (action === 'rr' && reason) {
+        await rejectPost(postId, reason)
         await ctx.editMessageReplyMarkup()
-        await ctx.reply(`🗑 #${postId} 폐기`)
+        await ctx.reply(`🗑 #${postId} 폐기 (${REJECT_REASONS[reason]})`)
       } else if (action === 'regen') {
         await ctx.editMessageReplyMarkup()
         await ctx.reply(`🔁 #${postId} 재생성 중…`)
