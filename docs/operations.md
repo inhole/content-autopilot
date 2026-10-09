@@ -119,14 +119,6 @@ GitHub Actions(`.github/workflows/ci.yml`)는 main에 push하거나 PR을 올리
 
 Railway 서비스 Settings에서 **Wait for CI**를 켜면, CI가 통과한 커밋만 배포된다. 원하면 GitHub Settings → Branches에서 main 보호 규칙을 만들고 `check`, `integration`을 필수로 지정한다.
 
-### 생존 감시 (healthchecks.io)
-워커가 죽으면 워커가 보내는 알림도 함께 멈춘다. 그래서 외부 서비스가 "신호가 끊겼다"를 대신 알리게 한다.
-1. https://healthchecks.io 에 가입한다 (무료). 알림 채널(이메일 또는 Telegram)을 연결한다.
-2. 체크 두 개를 만든다.
-   - **worker:** Period 5분, Grace 10~15분 → ping URL을 Railway 변수 `HEALTHCHECK_URL`에 넣는다. 워커는 시작 직후와 5분마다 신호를 보낸다.
-   - **daily:** Schedule(cron) `0 6 * * *`, 시간대 Asia/Seoul, Grace 1~2시간 → ping URL을 `HEALTHCHECK_DAILY_URL`에 넣는다. 일일 파이프라인이 성공하면 신호를 보내고, 마지막 재시도까지 실패하면 `<url>/fail`을 보낸다.
-3. 둘 다 설정하지 않으면 신호를 보내지 않는다. 기능이 꺼질 뿐이고 다른 동작에는 영향이 없다.
-
 ### 로컬에서 통합 테스트
 ```bash
 docker run -d --name ca-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg17

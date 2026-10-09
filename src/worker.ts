@@ -2,7 +2,6 @@ import { config } from './config.ts'
 import { migrate } from './db/migrate.ts'
 import { pool } from './db/pool.ts'
 import { createBoss, enqueueGenerate, enqueueRegeneration, registerJobs } from './jobs.ts'
-import { pingHealthcheck } from './lib/healthcheck.ts'
 import { createReviewer } from './review/telegram.ts'
 
 const applied = await migrate()
@@ -29,20 +28,11 @@ console.log(
     (config.THREADS_DRY_RUN ? ' · THREADS DRY-RUN' : ''),
 )
 
-// Dead man's switch: the worker's own alerts cannot fire once it is dead, so an external
-// service alerts when these pings stop. Missed pings from a hung event loop are the point.
-const HEARTBEAT_MS = 5 * 60_000
-void pingHealthcheck(config.HEALTHCHECK_URL)
-const heartbeat = config.HEALTHCHECK_URL
-  ? setInterval(() => void pingHealthcheck(config.HEALTHCHECK_URL), HEARTBEAT_MS)
-  : undefined
-
 let stopping = false
 async function shutdown(signal: string) {
   if (stopping) return
   stopping = true
   console.log(`[worker] ${signal}, stopping`)
-  clearInterval(heartbeat)
   await reviewer.stop()
   await boss.stop({ graceful: true })
   await pool.end()

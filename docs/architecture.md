@@ -72,10 +72,6 @@ posts:   PENDING_REVIEW ─▶ SCHEDULED ─▶ PUBLISHING ─▶ PUBLISHED
 
 LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 표시를 무시한다. 중복 참조가 순환하면(A→B, A→B→C→A 등 길이와 관계없이) 그 안에서 점수가 가장 높은 하나를 대표로 남긴다. 그래서 같은 사건이 통째로 사라지는 일은 없다.
 
-## 생존 감시
-
-워커는 시작 직후와 5분마다 `HEALTHCHECK_URL`로 신호를 보낸다. 일일 파이프라인은 성공하면 `HEALTHCHECK_DAILY_URL`로 신호를 보내고, 마지막 재시도까지 실패하면 `<url>/fail`을 보낸다. 신호가 끊기면 외부 서비스(healthchecks.io)가 알린다. 워커가 죽으면 워커 자신의 Telegram 알림도 함께 멈추기 때문에 외부 서비스가 필요하다. 신호 전송(`src/lib/healthcheck.ts`)은 실패해도 예외를 던지지 않는다.
-
 ## 데이터
 
 | 테이블 | 내용 |

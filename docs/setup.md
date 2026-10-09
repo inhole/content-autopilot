@@ -8,7 +8,6 @@
 | OpenRouter | 주제 선정·중복 판정, 초안 작성 | 주제 선정부터 실패 |
 | Telegram 봇 | 초안 검수 (승인/재생성/폐기) | 콘솔 출력 + CLI로 검수 |
 | Meta 앱 (Threads API) | 실제 발행 | `THREADS_DRY_RUN=true`로 로그만 남김 |
-| healthchecks.io (선택) | 워커 생존 감시 | 감시 없음 ([operations.md](operations.md#생존-감시-healthchecksio)) |
 
 모든 값은 `.env`에 넣는다. 형식은 `.env.example`을 참고한다. `.env`는 git에 올라가지 않는다.
 
