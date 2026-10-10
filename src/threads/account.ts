@@ -4,6 +4,7 @@ import { DryRunThreadsClient, type ThreadsApi, ThreadsClient } from './client.ts
 
 // Refresh when the token has less than this left. Tokens last 60 days.
 const REFRESH_WITHIN_DAYS = 14
+const SEEDED_TOKEN_DAYS = 59
 
 type Account = { user_id: string; access_token: string; expires_at: Date | null }
 
@@ -14,17 +15,23 @@ async function loadAccount(): Promise<Account | null> {
   )
   if (row) return row
   if (!config.THREADS_USER_ID || !config.THREADS_ACCESS_TOKEN) return null
-  // Expiry of a pasted token is unknown; null makes the next refresh job renew it.
-  await query(
-    `insert into platform_accounts (platform, user_id, access_token)
-     values ('THREADS', $1, $2) on conflict (platform) do nothing`,
-    [config.THREADS_USER_ID, config.THREADS_ACCESS_TOKEN],
+  // A pasted long-lived token was just issued, so assume ~60 days (59 to be safe). Leaving the
+  // expiry unknown made the next 04:00 job try to refresh a token younger than 24h, which Threads
+  // rejects, raising a false "refresh failed" alert on day one.
+  const [seeded] = await query<Account>(
+    `insert into platform_accounts (platform, user_id, access_token, expires_at)
+     values ('THREADS', $1, $2, now() + make_interval(days => $3))
+     on conflict (platform) do nothing
+     returning user_id, access_token, expires_at`,
+    [config.THREADS_USER_ID, config.THREADS_ACCESS_TOKEN, SEEDED_TOKEN_DAYS],
   )
-  return {
-    user_id: config.THREADS_USER_ID,
-    access_token: config.THREADS_ACCESS_TOKEN,
-    expires_at: null,
-  }
+  return (
+    seeded ?? {
+      user_id: config.THREADS_USER_ID,
+      access_token: config.THREADS_ACCESS_TOKEN,
+      expires_at: null,
+    }
+  )
 }
 
 export async function getThreadsApi(): Promise<ThreadsApi> {
