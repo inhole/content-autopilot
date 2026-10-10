@@ -67,6 +67,13 @@
 
 ### 4-3. 장기 토큰 발급 (처음 한 번)
 
+**권장: CLI로 발급하기**
+1. `.env`에 `THREADS_APP_ID`, `THREADS_APP_SECRET`(Threads 앱 ID와 시크릿)을 넣는다.
+2. `npm run cli -- threads:auth-url`로 출력된 주소를 브라우저에서 열고 허용한다.
+3. 이동한 주소(`https://localhost/?code=…`)를 통째로 복사해 `npm run cli -- threads:token "<복사한 주소>"`를 실행한다. 단기 토큰과 장기 토큰 교환을 한 번에 하고, 결과(`THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`)를 `.env`에 바로 저장한다. 토큰은 화면에 출력되지 않는다.
+
+아래는 같은 과정을 curl로 직접 하는 방법이다.
+
 1. 브라우저로 아래 주소를 열고 허용한다.
    ```
    https://threads.com/oauth/authorize?client_id={APP_ID}&redirect_uri=https://localhost/&scope=threads_basic,threads_content_publish,threads_manage_insights&response_type=code
