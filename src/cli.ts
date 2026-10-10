@@ -1,4 +1,4 @@
-import { config } from './config.ts'
+import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
@@ -6,6 +6,7 @@ import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
 import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts'
+import { authorizeUrl, cleanCode, exchangeCode, writeEnv } from './threads/oauth.ts'
 
 const USAGE = `usage: npm run cli -- <command>
 
@@ -18,6 +19,8 @@ const USAGE = `usage: npm run cli -- <command>
   approve <postId>            approve and assign the next publish slot
   reject <postId>             reject a draft
   publish-now <postId>        approve (if needed) and publish immediately
+  threads:auth-url            print the Threads authorize URL (needs THREADS_APP_ID)
+  threads:token <code|url>    exchange the code for a long-lived token and save it to .env
   threads:check               verify the Threads token (GET /me)
   threads:refresh             refresh the Threads token if it is close to expiry`
 
@@ -124,6 +127,25 @@ try {
         [postId],
       )
       console.log(await publishPost(postId))
+      break
+    }
+    case 'threads:auth-url':
+      console.log(authorizeUrl(requireValue('THREADS_APP_ID')))
+      break
+    case 'threads:token': {
+      if (!args[0]) throw new Error('code (or the redirected URL) is required')
+      const token = await exchangeCode({
+        appId: requireValue('THREADS_APP_ID'),
+        appSecret: requireValue('THREADS_APP_SECRET'),
+        code: cleanCode(args[0]),
+      })
+      // Written straight to .env so the token never has to be copied around or printed.
+      await writeEnv('.env', {
+        THREADS_USER_ID: token.userId,
+        THREADS_ACCESS_TOKEN: token.accessToken,
+      })
+      const days = Math.round(token.expiresInSeconds / 86_400)
+      console.log(`saved to .env: THREADS_USER_ID=${token.userId}, long-lived token (${days} days)`)
       break
     }
     case 'threads:check':

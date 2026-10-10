@@ -22,6 +22,9 @@ const schema = z.object({
 
   THREADS_API_BASE: z.string().default('https://graph.threads.net'),
   // Seed values; after the first run the token lives in platform_accounts and is refreshed there.
+  // Only for the one-time token setup (`npm run cli -- threads:auth-url` / `threads:token`).
+  THREADS_APP_ID: z.string().optional(),
+  THREADS_APP_SECRET: z.string().optional(),
   THREADS_USER_ID: z.string().optional(),
   THREADS_ACCESS_TOKEN: z.string().optional(),
   THREADS_DRY_RUN: bool,
