@@ -45,6 +45,26 @@ describe('driveContainer', () => {
     expect(result.platformPostId).toBeNull()
   })
 
+  it('does not reuse a container made for other content', async () => {
+    const api = fakeApi(['FINISHED', 'FINISHED'])
+    const onContainer = vi.fn(async () => {})
+    await driveContainer(api, post, 'old', onContainer, { sleep: noSleep, reuse: false })
+    expect(api.createTextContainer).toHaveBeenCalledOnce()
+    expect(onContainer).toHaveBeenCalledWith('new-container')
+    expect(api.publish).toHaveBeenCalledWith('new-container')
+  })
+
+  it('still counts a container made for other content that already went out', async () => {
+    const api = fakeApi(['PUBLISHED'])
+    const result = await driveContainer(api, post, 'old', async () => {}, {
+      sleep: noSleep,
+      reuse: false,
+    })
+    expect(api.createTextContainer).not.toHaveBeenCalled()
+    expect(api.publish).not.toHaveBeenCalled()
+    expect(result.platformPostId).toBeNull()
+  })
+
   it('replaces an expired container', async () => {
     const api = fakeApi(['EXPIRED', 'FINISHED'])
     await driveContainer(api, post, 'old', async () => {}, { sleep: noSleep })

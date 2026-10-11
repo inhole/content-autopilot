@@ -13,9 +13,14 @@ const STALE_CLAIM_MINUTES = 10
 export type NewReply = {
   id: string
   post_id: number
+  /** Chain part the reply was left on (post_parts idx); null for the main post. */
+  part_idx: number | null
+  /** Number of posts in the chain, main post included (1 for a single post). */
+  chain_length: number
   username: string | null
   text: string | null
   permalink: string | null
+  /** Text of the post or part the reply was left on. */
   post_text: string
 }
 
@@ -34,8 +39,10 @@ const shorten = (s: string, max: number) => {
 
 export function formatReplyNotification(r: NewReply): string {
   const firstLine = shorten((r.post_text.split('\n')[0] ?? '').trim(), 30)
+  // Same [n/total] numbering as the review message; only shown for chains.
+  const where = r.chain_length > 1 ? ` [${r.part_idx ?? 1}/${r.chain_length}]` : ''
   return [
-    `💬 @${r.username ?? '알 수 없음'} 답글 · 글 #${r.post_id} "${firstLine}"`,
+    `💬 @${r.username ?? '알 수 없음'} 답글 · 글 #${r.post_id}${where} "${firstLine}"`,
     '',
     r.text ?? '(텍스트가 없는 답글이에요)',
     ...(r.permalink ? ['', r.permalink] : []),
@@ -55,45 +62,63 @@ export function validateAnswer(text: string): string {
   return trimmed
 }
 
-async function insertNewReplies(postId: number, replies: ThreadsReply[]): Promise<void> {
+async function insertNewReplies(
+  postId: number,
+  partIdx: number | null,
+  replies: ThreadsReply[],
+): Promise<void> {
   for (const r of selectNotifiable(replies)) {
     await query(
-      `insert into threads_replies (id, post_id, username, text, replied_at, permalink)
-       values ($1, $2, $3, $4, $5, $6)
+      `insert into threads_replies (id, post_id, part_idx, username, text, replied_at, permalink)
+       values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (id) do nothing`,
-      [r.id, postId, r.username, r.text, r.timestamp, r.permalink],
+      [r.id, postId, partIdx, r.username, r.text, r.timestamp, r.permalink],
     )
   }
 }
 
 /**
- * Fetches replies of recently published posts, records the unseen ones and notifies the owner.
+ * Fetches replies of recently published posts and of their published chain parts (a reader can
+ * answer any post of a chain), records the unseen ones and notifies the owner.
  * Per-post and per-notification failures are isolated; a failed notification is retried on the
  * next poll because `notified_at` stays null. Returns the replies notified in this run.
  */
 export async function pollReplies(send: SendNotification, api?: ThreadsApi): Promise<NewReply[]> {
-  const posts = await query<{ id: number; platform_post_id: string }>(
-    `select id, platform_post_id from posts
-     where status = 'PUBLISHED' and platform_post_id is not null
-       and platform_post_id not like 'dry-%'
-       and published_at > now() - make_interval(hours => $1)
-     order by id`,
+  // Each post and part gets its own window: a part retried later (chainretry, publish-now) can
+  // go out long after its main post.
+  const targets = await query<{ post_id: number; part_idx: number | null; media_id: string }>(
+    `select p.id as post_id, null::smallint as part_idx, p.platform_post_id as media_id
+     from posts p
+     where p.status = 'PUBLISHED' and p.platform_post_id is not null
+       and p.platform_post_id not like 'dry-%'
+       and p.published_at > now() - make_interval(hours => $1)
+     union all
+     select pp.post_id, pp.idx, pp.platform_post_id
+     from post_parts pp join posts p on p.id = pp.post_id
+     where p.status = 'PUBLISHED' and pp.status = 'PUBLISHED' and pp.platform_post_id is not null
+       and pp.platform_post_id not like 'dry-%'
+       and coalesce(pp.published_at, p.published_at) > now() - make_interval(hours => $1)
+     order by post_id, part_idx nulls first`,
     [REPLY_POLL_WINDOW_HOURS],
   )
-  if (posts.length > 0) {
+  if (targets.length > 0) {
     const threads = api ?? (await getThreadsApi())
-    for (const p of posts) {
+    for (const t of targets) {
       try {
-        await insertNewReplies(p.id, await threads.listReplies(p.platform_post_id))
+        await insertNewReplies(t.post_id, t.part_idx, await threads.listReplies(t.media_id))
       } catch (err) {
-        console.warn(`[replies] post #${p.id} failed: ${(err as Error).message}`)
+        const where = t.part_idx === null ? '' : ` part ${t.part_idx}`
+        console.warn(`[replies] post #${t.post_id}${where} failed: ${(err as Error).message}`)
       }
     }
   }
 
   const pending = await query<NewReply>(
-    `select r.id, r.post_id, r.username, r.text, r.permalink, p.text as post_text
+    `select r.id, r.post_id, r.part_idx, r.username, r.text, r.permalink,
+       coalesce(pp.text, p.text) as post_text,
+       1 + (select count(*) from post_parts c where c.post_id = r.post_id)::int as chain_length
      from threads_replies r join posts p on p.id = r.post_id
+     left join post_parts pp on pp.post_id = r.post_id and pp.idx = r.part_idx
      where r.notified_at is null and r.created_at > now() - make_interval(hours => $1)
        and (r.notify_claimed_at is null or r.notify_claimed_at < now() - make_interval(mins => $2))
      order by r.replied_at nulls last, r.created_at`,

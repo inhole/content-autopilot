@@ -51,6 +51,8 @@ describe('formatReplyNotification', () => {
   const reply: NewReply = {
     id: '1',
     post_id: 12,
+    part_idx: null,
+    chain_length: 1,
     username: 'alice',
     text: '어떻게 쓰나요?',
     permalink: 'https://threads.net/p/1',
@@ -62,6 +64,15 @@ describe('formatReplyNotification', () => {
     expect(text).toContain('💬 @alice 답글 · 글 #12 "첫 줄입니다"')
     expect(text).toContain('어떻게 쓰나요?')
     expect(text).toContain('이 메시지에 답장하면 Threads 답글로 달려요.')
+  })
+
+  it('says which post of a chain the reply was left on', () => {
+    expect(formatReplyNotification({ ...reply, chain_length: 3 })).toContain(
+      '💬 @alice 답글 · 글 #12 [1/3] "첫 줄입니다"',
+    )
+    expect(
+      formatReplyNotification({ ...reply, part_idx: 2, chain_length: 3, post_text: '답글 조각' }),
+    ).toContain('💬 @alice 답글 · 글 #12 [2/3] "답글 조각"')
   })
 
   it('handles a reply without text or user, and truncates a long first line', () => {
