@@ -67,7 +67,7 @@
    - 처음 쓰는 기기에서는 "평소에 사용하지 않는 기기" 보안 제한이 걸려 Contact info(이메일 인증) 단계가 막힐 수 있다. **평소 Facebook을 쓰는 휴대폰 브라우저**에서 진행하고, Facebook 계정에 이미 등록된 이메일로 인증한다.
 2. **내 앱 → 앱 만들기**에서 사용 사례로 **"Threads API에 액세스"**를 고른다.
 3. **사용 사례 → Threads API에 액세스 → 맞춤 설정 → 권한**에서 추가한다.
-   - `threads_basic`, `threads_content_publish`, `threads_manage_insights`(성과 수집용)
+   - `threads_basic`, `threads_content_publish`, `threads_manage_insights`(성과 수집용), `threads_read_replies`·`threads_manage_replies`(답글 알림·답글 달기용)
 4. 같은 곳의 **설정** 탭에서 **리디렉션 콜백 URL / 제거 콜백 URL / 삭제 콜백 URL**에 모두 `https://localhost/`를 넣고 **저장**한다.
 5. **앱 역할 → 역할 → 사람 추가 → "Threads 테스터"**로 발행 계정 username을 추가한다. 일반 "테스터"가 아니다.
    - 대시보드에는 수락 여부가 표시되지 않는다. 수락은 발행 계정으로 로그인한 브라우저에서 `https://www.threads.com/settings/account` → **웹사이트 권한 → 초대**에서 하고, **활성** 탭에 앱이 보이면 완료다. 앱 설정의 "계정 센터"가 아니다.
