@@ -291,6 +291,16 @@ describe('chain failure alerts', () => {
     await query("update post_parts set status = 'FAILED' where post_id = $1 and idx = 2", [postId])
     expect(await unalertedChainFailures()).toHaveLength(1)
   })
+
+  it('can be re-checked for one post right before sending', async () => {
+    const failed = await publishedChain(['a'])
+    const other = await publishedChain(['a'])
+    await query("update post_parts set status = 'FAILED', last_error = 'x'")
+    expect(await unalertedChainFailures(failed)).toEqual([{ postId: failed, error: 'x' }])
+    await markChainAlerted(failed)
+    expect(await unalertedChainFailures(failed)).toEqual([])
+    expect(await unalertedChainFailures(other)).toHaveLength(1)
+  })
 })
 
 describe('publishPost with parts', () => {

@@ -127,7 +127,13 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.createQueue(Q.publishChain, { policy: 'exclusive', retryLimit: 0 })
   // The alert (and its retry button) is the owner's only way back for failed parts, so it gets its
   // own retrying job, and publish-due re-sends it until post_parts.alerted_at says it went out.
-  await boss.createQueue(Q.chainAlert, { retryLimit: 5, retryDelay: 60, retryBackoff: true })
+  // Exclusive: one queued or active alert per post (singletonKey), however long Telegram is down.
+  await boss.createQueue(Q.chainAlert, {
+    policy: 'exclusive',
+    retryLimit: 5,
+    retryDelay: 60,
+    retryBackoff: true,
+  })
   await boss.createQueue(Q.refreshToken, { retryLimit: 2, retryDelay: 3600 })
 
   const tz = config.TZ_NAME
@@ -245,8 +251,11 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
 
   await boss.work<ChainAlertData>(Q.chainAlert, async ([job]) => {
     if (!job) return
-    await reviewer.notifyChainFailure(job.data.postId, job.data.error)
-    await markChainAlerted(job.data.postId)
+    // The parts may have been retried or alerted since this job was queued: send only what is due.
+    const [due] = await unalertedChainFailures(job.data.postId)
+    if (!due) return
+    await reviewer.notifyChainFailure(due.postId, due.error)
+    await markChainAlerted(due.postId)
   })
 
   await boss.work(Q.refreshToken, async () => {

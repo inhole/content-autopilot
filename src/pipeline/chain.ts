@@ -44,12 +44,18 @@ export async function dueChainPostIds(): Promise<number[]> {
   return rows.map((r) => r.id)
 }
 
-/** Posts with a FAILED part the owner has not been told about yet, with that part's error. */
-export async function unalertedChainFailures(): Promise<{ postId: number; error: string }[]> {
+/**
+ * Posts with a FAILED part the owner has not been told about yet, with that part's error; only
+ * `postId`'s when given (the alert job re-checks right before sending).
+ */
+export async function unalertedChainFailures(
+  postId?: number,
+): Promise<{ postId: number; error: string }[]> {
   const rows = await query<{ post_id: number; last_error: string | null }>(
     `select distinct on (post_id) post_id, last_error from post_parts
-     where status = 'FAILED' and alerted_at is null
+     where status = 'FAILED' and alerted_at is null and ($1::bigint is null or post_id = $1)
      order by post_id, idx`,
+    [postId ?? null],
   )
   return rows.map((r) => ({ postId: r.post_id, error: r.last_error ?? 'unknown error' }))
 }
