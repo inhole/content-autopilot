@@ -61,9 +61,27 @@ export type Status = {
   scheduled: { id: number; scheduledAt: Date; preview: string }[]
   publishedLast24h: number
   failed: { id: number; lastError: string | null }[]
+  /** Follow-up parts of published posts that need attention (see loadChainParts). */
+  chainParts: { failed: number; stuck: number }
   threads: { dryRun: boolean; tokenExpiresAt: Date | null }
   /** Absent when pg-boss could not be queried or has no run yet. */
   lastDaily?: { state: string; at: Date }
+}
+
+/** Unfinished parts that have not moved for this long are reported as stuck. */
+const CHAIN_STUCK_MINUTES = 30
+
+/** Counts FAILED parts, and PENDING/PUBLISHING parts of published posts that stopped moving. */
+export async function loadChainParts(now = new Date()): Promise<Status['chainParts']> {
+  const staleBefore = new Date(now.getTime() - CHAIN_STUCK_MINUTES * 60_000)
+  const [row] = await query<{ failed: number; stuck: number }>(
+    `select count(*) filter (where pp.status = 'FAILED') as failed,
+            count(*) filter (where pp.status in ('PENDING', 'PUBLISHING')
+                               and p.status = 'PUBLISHED' and pp.updated_at < $1) as stuck
+     from post_parts pp join posts p on p.id = pp.post_id`,
+    [staleBefore],
+  )
+  return { failed: row?.failed ?? 0, stuck: row?.stuck ?? 0 }
 }
 
 const SCHEDULED_SHOWN = 5
@@ -72,30 +90,32 @@ const FAILED_SHOWN = 5
 export async function loadStatus(now = new Date()): Promise<Status> {
   const since = new Date(now.getTime() - 24 * 3600 * 1000)
   const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000)
-  const [pending, scheduled, published, failed, account, expired, llmCost] = await Promise.all([
-    query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
-    query<{ id: number; scheduled_at: Date; text: string }>(
-      `select id, scheduled_at, left(text, 30) as text from posts
+  const [pending, scheduled, published, failed, account, expired, llmCost, chainParts] =
+    await Promise.all([
+      query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
+      query<{ id: number; scheduled_at: Date; text: string }>(
+        `select id, scheduled_at, left(text, 30) as text from posts
        where status = 'SCHEDULED' order by scheduled_at limit $1`,
-      [SCHEDULED_SHOWN],
-    ),
-    query<{ n: number }>(
-      "select count(*) as n from posts where status = 'PUBLISHED' and published_at >= $1",
-      [since],
-    ),
-    query<{ id: number; last_error: string | null }>(
-      "select id, last_error from posts where status = 'FAILED' order by id desc limit $1",
-      [FAILED_SHOWN],
-    ),
-    query<{ expires_at: Date | null }>(
-      "select expires_at from platform_accounts where platform = 'THREADS'",
-    ),
-    query<{ n: number }>(
-      "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
-      [weekAgo],
-    ),
-    fetchLlmCost(),
-  ])
+        [SCHEDULED_SHOWN],
+      ),
+      query<{ n: number }>(
+        "select count(*) as n from posts where status = 'PUBLISHED' and published_at >= $1",
+        [since],
+      ),
+      query<{ id: number; last_error: string | null }>(
+        "select id, last_error from posts where status = 'FAILED' order by id desc limit $1",
+        [FAILED_SHOWN],
+      ),
+      query<{ expires_at: Date | null }>(
+        "select expires_at from platform_accounts where platform = 'THREADS'",
+      ),
+      query<{ n: number }>(
+        "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
+        [weekAgo],
+      ),
+      fetchLlmCost(),
+      loadChainParts(now),
+    ])
 
   // pg-boss internals may change between versions, so this is best-effort.
   let lastDaily: Status['lastDaily']
@@ -119,6 +139,7 @@ export async function loadStatus(now = new Date()): Promise<Status> {
     publishedLast24h: published[0]?.n ?? 0,
     failed: failed.map((p) => ({ id: p.id, lastError: p.last_error })),
     threads: { dryRun: config.THREADS_DRY_RUN, tokenExpiresAt: account[0]?.expires_at ?? null },
+    chainParts,
     lastDaily,
     expiredLast7d: expired[0]?.n ?? 0,
     llmCost: llmCost ?? undefined,
@@ -166,6 +187,11 @@ export function formatStatus(status: Status, timeZone: string): string {
       lines.push(`- #${p.id} ${truncate((p.lastError ?? '원인 미상').replace(/\s+/g, ' '), 80)}`)
     }
   }
+  const { failed: partsFailed, stuck: partsStuck } = status.chainParts
+  if (partsFailed > 0) {
+    lines.push(`연결 글 답글 실패: ${partsFailed}건 (Telegram 알림의 재시도 버튼 사용)`)
+  }
+  if (partsStuck > 0) lines.push(`연결 글 답글 멈춤: ${partsStuck}건 (30분 넘게 진행 없음)`)
   if (status.expiredLast7d > 0) lines.push(`최근 7일 만료: ${status.expiredLast7d}건`)
   if (status.llmCost) {
     const { usd, period, limitRemaining } = status.llmCost
