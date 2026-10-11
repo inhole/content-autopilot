@@ -25,12 +25,19 @@ const REASON_GUIDANCE: Record<RejectReason, string> = {
 export type StyleContext = {
   examples: { text: string; edited: boolean }[]
   recentFirstLines: string[]
+  recentLastLines: string[]
   rejectReasons: { reason: string; count: number }[]
 }
 
 export type StyleLimits = { examples?: number; recent?: number; rejectDays?: number }
 
-const firstLine = (text: string) => (text.split('\n').find((l) => l.trim()) ?? '').trim()
+const nonEmptyLines = (text: string) => text.split('\n').filter((l) => l.trim())
+const firstLine = (text: string) => (nonEmptyLines(text)[0] ?? '').trim()
+// '' for a one-line post: its only line is already listed as a first line.
+const lastLine = (text: string) => {
+  const lines = nonEmptyLines(text)
+  return lines.length > 1 ? (lines.at(-1) ?? '').trim() : ''
+}
 
 export async function loadStyleContext(limits: StyleLimits = {}): Promise<StyleContext> {
   const { examples = 3, recent = 10, rejectDays = 30 } = limits
@@ -55,13 +62,17 @@ export async function loadStyleContext(limits: StyleLimits = {}): Promise<StyleC
   return {
     examples: ex,
     recentFirstLines: rec.map((r) => firstLine(r.text)).filter(Boolean),
+    recentLastLines: rec.map((r) => lastLine(r.text)).filter(Boolean),
     rejectReasons: rej,
   }
 }
 
 const EXAMPLE_MAX = 280
 const FIRST_LINE_MAX = 60
-const TOTAL_MAX = 1500
+const LAST_LINE_MAX = 60
+// Closing lines only need to break the most recent pattern, so fewer are sent than first lines.
+const LAST_LINE_COUNT = 5
+const TOTAL_MAX = 2200
 // A reason needs at least this many rejections to count as a pattern rather than noise.
 const MIN_REASON_COUNT = 2
 
@@ -86,6 +97,15 @@ export function buildStylePrompt(ctx: StyleContext): string {
   if (ctx.recentFirstLines.length) {
     const lines = ctx.recentFirstLines.map((l) => `- ${clip(l, FIRST_LINE_MAX)}`)
     parts.push(`## 최근 첫 줄\n아래와 비슷한 첫 줄로 시작하지 마세요.\n${lines.join('\n')}`)
+  }
+
+  if (ctx.recentLastLines.length) {
+    const lines = ctx.recentLastLines
+      .slice(0, LAST_LINE_COUNT)
+      .map((l) => `- ${clip(l, LAST_LINE_MAX)}`)
+    parts.push(
+      `## 최근 마지막 줄\n아래와 비슷한 질문이나 문장으로 끝내지 마세요. 묻는 대상과 어미도 바꾸세요.\n${lines.join('\n')}`,
+    )
   }
 
   const guidance = ctx.rejectReasons
