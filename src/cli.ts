@@ -1,5 +1,6 @@
 import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
+import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
@@ -140,7 +141,12 @@ try {
          where id = $1 and status in ('PENDING_REVIEW', 'APPROVED', 'SCHEDULED', 'FAILED')`,
         [postId],
       )
-      console.log(await publishPost(postId))
+      const outcome = await publishPost(postId)
+      console.log(outcome)
+      // Without a running worker nothing else would publish the follow-ups (or the link on them).
+      if (outcome.kind === 'published' && (await loadParts(postId)).length > 0) {
+        console.log('chain:', await publishChain(postId))
+      }
       break
     }
     case 'threads:auth-url':

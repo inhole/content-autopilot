@@ -30,6 +30,8 @@ export type ThreadsOwnPost = {
   /** Missing for media-only posts. */
   text: string | null
   timestamp: Date | null
+  /** Media id this reply answers; null for top-level posts or when the API omits it. */
+  repliedToId: string | null
 }
 
 export interface ThreadsApi {
@@ -81,6 +83,7 @@ const ownPostsResponse = z.object({
         id: z.string(),
         text: z.string().nullish(),
         timestamp: z.string().nullish(),
+        replied_to: z.object({ id: z.string() }).nullish(),
       }),
     )
     .default([]),
@@ -94,6 +97,7 @@ export function parseOwnPosts(raw: unknown): ThreadsOwnPost[] {
       id: r.id,
       text: r.text?.trim() ? r.text : null,
       timestamp: ts && !Number.isNaN(ts.getTime()) ? ts : null,
+      repliedToId: r.replied_to?.id ?? null,
     }
   })
 }
@@ -205,7 +209,10 @@ export class ThreadsClient implements ThreadsApi {
 
   async listMyReplies(): Promise<ThreadsOwnPost[]> {
     return parseOwnPosts(
-      await this.call('GET', '/me/replies', { fields: 'id,text,timestamp', limit: '25' }),
+      await this.call('GET', '/me/replies', {
+        fields: 'id,text,timestamp,replied_to',
+        limit: '25',
+      }),
     )
   }
 

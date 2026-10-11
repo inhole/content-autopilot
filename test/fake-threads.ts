@@ -51,7 +51,12 @@ export class FakeThreads implements ThreadsApi {
     if (!c) throw new Error(`unknown container ${containerId}`)
     c.status = 'PUBLISHED'
     c.mediaId = `m${++this.n}`
-    const entry = { id: c.mediaId, text: c.post.text, timestamp: new Date() }
+    const entry = {
+      id: c.mediaId,
+      text: c.post.text,
+      timestamp: new Date(),
+      repliedToId: c.post.replyToId ?? null,
+    }
     ;(c.post.replyToId ? this.replies : this.threads).unshift(entry)
     if (this.loseResponseFor.has(c.post.text)) throw new Error('fetch failed')
     return c.mediaId
@@ -70,7 +75,14 @@ export class FakeThreads implements ThreadsApi {
   /** Seeds an already-live main post (e.g. one whose id the database never learned). */
   addLiveThread(text: string): string {
     const id = `m${++this.n}`
-    this.threads.unshift({ id, text, timestamp: new Date() })
+    this.threads.unshift({ id, text, timestamp: new Date(), repliedToId: null })
+    return id
+  }
+
+  /** Seeds an unrelated live reply of ours (e.g. identical text under another post). */
+  addLiveReply(text: string, repliedToId: string | null): string {
+    const id = `m${++this.n}`
+    this.replies.unshift({ id, text, timestamp: new Date(), repliedToId })
     return id
   }
 

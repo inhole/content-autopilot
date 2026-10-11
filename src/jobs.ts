@@ -27,6 +27,7 @@ export const Q = {
   publishDue: 'publish-due',
   publish: 'publish',
   publishChain: 'publish-chain',
+  chainAlert: 'chain-alert',
   refreshToken: 'refresh-token',
   pollReplies: 'poll-replies',
 } as const
@@ -79,6 +80,7 @@ async function alertOnFinalFailure<T>(
 /** `regenerate` is absent on jobs queued before it existed; feedback implied a regeneration then. */
 type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean; seq?: number }
 type PostData = { postId: number }
+type ChainAlertData = { postId: number; error: string }
 
 export function createBoss(): PgBoss {
   const boss = new PgBoss({
@@ -118,6 +120,9 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.createQueue(Q.publish, { policy: 'exclusive', retryLimit: 0 })
   // Same model for the follow-up replies of a thread chain: the sweep re-finds unfinished parts.
   await boss.createQueue(Q.publishChain, { policy: 'exclusive', retryLimit: 0 })
+  // The failed parts are already committed and the sweep skips them, so this alert (and its retry
+  // button) is the owner's only way back: it gets its own job that retries a Telegram outage.
+  await boss.createQueue(Q.chainAlert, { retryLimit: 5, retryDelay: 60, retryBackoff: true })
   await boss.createQueue(Q.refreshToken, { retryLimit: 2, retryDelay: 3600 })
 
   const tz = config.TZ_NAME
@@ -221,12 +226,16 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     const { postId } = job.data
     const outcome = await publishChain(postId)
     if (outcome.kind === 'failed') {
-      await reviewer.notifyChainFailure(postId, outcome.error)
+      await boss.send(Q.chainAlert, { postId, error: outcome.error } satisfies ChainAlertData)
     } else if (outcome.kind === 'done' && outcome.published > 0) {
       await reviewer.notify(`🧵 #${postId} 답글 ${outcome.published}개 발행 완료`)
     } else if (outcome.kind === 'retry') {
       console.warn(`[publish-chain] #${postId} will retry: ${outcome.error}`)
     }
+  })
+
+  await boss.work<ChainAlertData>(Q.chainAlert, async ([job]) => {
+    if (job) await reviewer.notifyChainFailure(job.data.postId, job.data.error)
   })
 
   await boss.work(Q.refreshToken, async () => {

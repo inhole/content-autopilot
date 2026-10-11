@@ -124,13 +124,33 @@ describe('driveContainer with replyToId', () => {
 })
 
 describe('findMediaIdByText', () => {
-  const item = (id: string, text: string | null) => ({ id, text, timestamp: null })
-  it('returns the newest exact match, ignoring surrounding whitespace', () => {
-    const items = [item('new', 'hello\n'), item('mid', 'other'), item('old', 'hello')]
-    expect(findMediaIdByText(items, 'hello')).toBe('new')
+  const item = (
+    id: string,
+    text: string | null,
+    repliedToId: string | null = null,
+    timestamp: Date | null = null,
+  ) => ({ id, text, timestamp, repliedToId })
+  it('returns the only exact match, ignoring surrounding whitespace', () => {
+    expect(findMediaIdByText([item('a', 'hello\n'), item('b', 'other')], 'hello')).toBe('a')
   })
   it('does not match a different or text-less post', () => {
     expect(findMediaIdByText([item('a', 'hello world'), item('b', null)], 'hello')).toBeNull()
+  })
+  it('treats identical texts as unknown instead of picking one', () => {
+    expect(findMediaIdByText([item('new', 'hello'), item('old', 'hello')], 'hello')).toBeNull()
+  })
+  it('only accepts a reply to the expected parent', () => {
+    const items = [item('other', 'hello', 'p-other'), item('ours', 'hello', 'p1')]
+    expect(findMediaIdByText(items, 'hello', { repliedToId: 'p1' })).toBe('ours')
+    expect(findMediaIdByText(items, 'hello', { repliedToId: 'p2' })).toBeNull()
+  })
+  it('ignores items published before the slot', () => {
+    const items = [
+      item('old', 'hello', null, new Date('2026-10-01T00:00:00Z')),
+      item('new', 'hello', null, new Date('2026-10-11T00:00:00Z')),
+    ]
+    const notBefore = new Date('2026-10-10T00:00:00Z')
+    expect(findMediaIdByText(items, 'hello', { notBefore })).toBe('new')
   })
 })
 
@@ -149,6 +169,15 @@ describe('parseOwnPosts', () => {
       ['3', null],
     ])
     expect(parsed[1]?.timestamp).toBeNull()
+  })
+  it('reads the parent of a reply when present', () => {
+    const parsed = parseOwnPosts({
+      data: [
+        { id: '1', text: 'a', replied_to: { id: 'p1' } },
+        { id: '2', text: 'b' },
+      ],
+    })
+    expect(parsed.map((p) => p.repliedToId)).toEqual(['p1', null])
   })
   it('treats a missing data field as empty', () => {
     expect(parseOwnPosts({})).toEqual([])

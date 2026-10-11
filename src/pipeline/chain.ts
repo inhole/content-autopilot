@@ -44,10 +44,32 @@ export async function dueChainPostIds(): Promise<number[]> {
   return rows.map((r) => r.id)
 }
 
-/** Newest-first search for the item whose text is exactly what we sent. */
-export function findMediaIdByText(items: ThreadsOwnPost[], sentText: string): string | null {
+// Lost-response recovery may only look at items published after the post's slot (minus clock skew).
+const RECOVERY_SKEW_MS = 5 * 60_000
+
+/**
+ * The media id of the item whose text is exactly what we sent. Identical text can exist under
+ * another post, so a reply must answer `repliedToId` (items whose parent the API omitted stay
+ * candidates), items older than `notBefore` are ignored, and more than one candidate is treated
+ * as unknown: attaching the next part to the wrong thread is worse than a failed attempt.
+ */
+export function findMediaIdByText(
+  items: ThreadsOwnPost[],
+  sentText: string,
+  opts: { repliedToId?: string; notBefore?: Date | null } = {},
+): string | null {
   const wanted = sentText.trim()
-  return items.find((i) => i.text !== null && i.text.trim() === wanted)?.id ?? null
+  const notBefore = opts.notBefore?.getTime()
+  const candidates = items.filter(
+    (i) =>
+      i.text !== null &&
+      i.text.trim() === wanted &&
+      (notBefore === undefined || i.timestamp === null || i.timestamp.getTime() >= notBefore) &&
+      (opts.repliedToId === undefined ||
+        i.repliedToId === null ||
+        i.repliedToId === opts.repliedToId),
+  )
+  return candidates.length === 1 ? (candidates[0]?.id ?? null) : null
 }
 
 /**
@@ -59,18 +81,24 @@ type Parent = {
   id: string | null
   /** The exact text that was sent for it, CTA included. */
   text: string
-  /** Where to look: the main post is a top-level thread, follow-ups are replies. */
-  kind: 'threads' | 'replies'
+  /** The part this one replies to; null for the main post, which is a top-level thread. */
+  repliesTo: Parent | null
   label: string
   save: (id: string) => Promise<void>
 }
 
-async function resolveParentId(threads: ThreadsApi, parent: Parent): Promise<string> {
+async function resolveParentId(
+  threads: ThreadsApi,
+  parent: Parent,
+  notBefore: Date | null,
+): Promise<string> {
   if (parent.id) return parent.id
-  const items = await (parent.kind === 'threads'
-    ? threads.listMyThreads()
-    : threads.listMyReplies())
-  const id = findMediaIdByText(items, parent.text)
+  const id = parent.repliesTo
+    ? findMediaIdByText(await threads.listMyReplies(), parent.text, {
+        repliedToId: await resolveParentId(threads, parent.repliesTo, notBefore),
+        notBefore,
+      })
+    : findMediaIdByText(await threads.listMyThreads(), parent.text, { notBefore })
   // Without the parent id a reply cannot be attached, so this is a failed attempt of the part.
   if (!id) throw new Error(`cannot resolve the Threads media id of ${parent.label}`)
   await parent.save(id)
@@ -89,8 +117,10 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
     source_url: string | null
     platform_post_id: string | null
     topic_tag: string | null
+    scheduled_at: Date | null
   }>(
-    `select text, source_url, platform_post_id, generation->>'topic_tag' as topic_tag
+    `select text, source_url, platform_post_id, generation->>'topic_tag' as topic_tag,
+       scheduled_at
      from posts where id = $1 and status = 'PUBLISHED'`,
     [postId],
   )
@@ -107,6 +137,10 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
     followups: parts.map((p) => p.text),
   })
   const sentText = (i: number) => chain[i]?.text ?? ''
+  // Every part of this chain went out after the post's slot came.
+  const notBefore = post.scheduled_at
+    ? new Date(post.scheduled_at.getTime() - RECOVERY_SKEW_MS)
+    : null
 
   // Resolved lazily, inside a part's try: a missing token must be a failed attempt of that part
   // and not leave it stuck in PUBLISHING.
@@ -119,7 +153,7 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
   let parent: Parent = {
     id: post.platform_post_id,
     text: sentText(0),
-    kind: 'threads',
+    repliesTo: null,
     label: `main post #${postId}`,
     save: async (id) => {
       await query(
@@ -129,10 +163,15 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
       )
     },
   }
-  const asParent = (part: PostPart, i: number, platformPostId: string | null): Parent => ({
+  const asParent = (
+    part: PostPart,
+    i: number,
+    platformPostId: string | null,
+    repliesTo: Parent,
+  ): Parent => ({
     id: platformPostId,
     text: sentText(i + 1),
-    kind: 'replies',
+    repliesTo,
     label: `part ${part.idx} of #${postId}`,
     save: async (id) => {
       await query(
@@ -146,7 +185,7 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
   let published = 0
   for (const [i, part] of parts.entries()) {
     if (part.status === 'PUBLISHED') {
-      parent = asParent(part, i, part.platform_post_id)
+      parent = asParent(part, i, part.platform_post_id, parent)
       continue
     }
     // FAILED waits for the owner's retry; PENDING/PUBLISHING are claimed below (a fresh
@@ -186,7 +225,7 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
     let containerId = claimed.container_id
     try {
       const client = await getApi()
-      const replyToId = await resolveParentId(client, parent)
+      const replyToId = await resolveParentId(client, parent, notBefore)
       const { platformPostId } = await driveContainer(
         client,
         { ...(chain[i + 1] ?? { text: part.text }), replyToId },
@@ -207,7 +246,10 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
       // next part resolves it again when it actually needs it.
       let mediaId = platformPostId
       if (!mediaId) {
-        mediaId = findMediaIdByText(await client.listMyReplies().catch(() => []), sentText(i + 1))
+        mediaId = findMediaIdByText(await client.listMyReplies().catch(() => []), sentText(i + 1), {
+          repliedToId: replyToId,
+          notBefore,
+        })
       }
       if (
         !(await ownedUpdate(
@@ -218,7 +260,7 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
         return { kind: 'skipped' }
       }
       published++
-      parent = asParent(part, i, mediaId)
+      parent = asParent(part, i, mediaId, parent)
     } catch (err) {
       if (err instanceof LostClaimError) return { kind: 'skipped' }
       const error = (err as Error).message
@@ -239,7 +281,7 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
         )
         if (!saved) return { kind: 'skipped' }
         published++
-        parent = asParent(part, i, null)
+        parent = asParent(part, i, null, parent)
         continue
       }
       // Back to PENDING so the next sweep retries it; never leave the part PUBLISHING.

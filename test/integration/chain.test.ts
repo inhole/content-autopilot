@@ -172,6 +172,29 @@ describe('publishChain', () => {
     expect(parts[0]?.platform_post_id).toBe(liveSecond?.id)
   })
 
+  it('does not mistake an identical reply under another post for the lost part', async () => {
+    const postId = await publishedChain(['second', 'third'])
+    const api = new FakeThreads()
+    api.loseResponseFor.add('second')
+    // Same text, but answering a different post: published after ours, so it is listed first.
+    const realPublish = api.publish.bind(api)
+    let decoy: string | undefined
+    api.publish = async (id) => {
+      try {
+        return await realPublish(id)
+      } finally {
+        decoy ??= api.addLiveReply('second', 'someone-elses-post')
+      }
+    }
+
+    expect(await publishChain(postId, api)).toEqual({ kind: 'done', published: 2 })
+    const ours = (await api.listMyReplies()).find(
+      (r) => r.text === 'second' && r.id !== decoy && r.repliedToId !== 'someone-elses-post',
+    )
+    expect(api.created[1]?.post.replyToId).toBe(ours?.id)
+    expect(api.created[1]?.post.replyToId).not.toBe(decoy)
+  })
+
   it('finds the main post by text when its media id was never saved', async () => {
     const postId = await publishedChain(['second'], null)
     const api = new FakeThreads()
