@@ -53,8 +53,8 @@
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 수집 → 중복 제거 → 선정 → 초안 → Telegram 검수 → Threads 발행 | 코드 완료, dry-run 검증 |
-| 1.5 | OpenRouter / Telegram / Threads 실제 연결, 프롬프트 튜닝 | 키 대기 |
-| 2 | Railway 배포 | |
+| 1.5 | OpenRouter / Telegram / Threads 실제 연결, 프롬프트 튜닝 | OpenRouter·Telegram 완료. Threads는 발행 계정 제한으로 보류(2026-10-18 전후 재시도, setup.md 4절) |
+| 2 | Railway 배포 | 완료 (Wait for CI) |
 | 3 | Threads insights 수집 + 주간 리포트 | |
 | 4 | 클릭 추적과 랜딩 페이지 (수익 퍼널) | |
 | 5 | Instagram Reels / YouTube Shorts | |
