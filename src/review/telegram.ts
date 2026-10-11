@@ -5,6 +5,7 @@ import { urlHash } from '../lib/url.ts'
 import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
+import { retryFailedParts } from '../pipeline/parts.ts'
 import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
 import { answerReply } from '../pipeline/replies.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
@@ -90,6 +91,14 @@ export function parseScheduleAction(
   }
 }
 
+/** Callback data of the button under a chain failure alert, e.g. `chainretry:42`. */
+export const encodeChainRetry = (postId: number) => `chainretry:${postId}`
+
+export function parseChainRetry(data: string): number | null {
+  const m = /^chainretry:(\d+)$/.exec(data)
+  return m ? Number(m[1]) : null
+}
+
 const scheduleKeyboard = (postId: number, at: Date) =>
   new InlineKeyboard()
     .text('⏪ 예약 취소', encodeScheduleAction('unsched', postId, at))
@@ -104,6 +113,16 @@ export type Reviewer = {
   stop(): Promise<void>
   /** Sends text to the owner chat and returns the Telegram message id (null without Telegram). */
   notifyWithId(text: string): Promise<number | null>
+  /**
+   * Tells the owner that a published post's follow-up replies gave up, with a button that puts
+   * the failed parts back in the queue (retryFailedParts).
+   */
+  notifyChainFailure(postId: number, error: string): Promise<void>
+}
+
+export function formatChainFailure(postId: number, error: string): string {
+  const short = error.length > 300 ? `${error.slice(0, 300)}…` : error
+  return `❌ #${postId} 본 글은 발행됐지만 이어지는 답글 발행이 중단됐어요: ${short}`
 }
 
 const fmtTime = (d: Date) =>
@@ -207,6 +226,9 @@ export function createReviewer(opts: {
         console.log(`[notify] ${text}`)
         return null
       },
+      async notifyChainFailure(postId, error) {
+        console.log(`[notify] ${formatChainFailure(postId, error)}`)
+      },
     }
   }
 
@@ -271,6 +293,20 @@ export function createReviewer(opts: {
   })
 
   bot.on('callback_query:data', async (ctx) => {
+    const chainPostId = parseChainRetry(ctx.callbackQuery.data)
+    if (chainPostId !== null) {
+      try {
+        const reset = await retryFailedParts(chainPostId)
+        await ctx.editMessageReplyMarkup().catch(() => {})
+        await ctx.answerCallbackQuery(reset ? {} : { text: '다시 시도할 답글이 없어요' })
+        if (reset) await ctx.reply(`🔁 #${chainPostId} 답글 ${reset}개를 5분 안에 다시 발행해요`)
+      } catch (err) {
+        await ctx
+          .answerCallbackQuery({ text: (err as Error).message.slice(0, 180) })
+          .catch(() => {})
+      }
+      return
+    }
     const sched = parseScheduleAction(ctx.callbackQuery.data)
     if (sched) {
       try {
@@ -467,6 +503,16 @@ export function createReviewer(opts: {
         link_preview_options: { is_disabled: true },
       })
       return msg.message_id
+    },
+    async notifyChainFailure(postId, error) {
+      const text = formatChainFailure(postId, error)
+      if (!chatId) {
+        console.log(`[notify] ${text}`)
+        return
+      }
+      await bot.api.sendMessage(chatId, text, {
+        reply_markup: new InlineKeyboard().text('🔁 답글 다시 시도', encodeChainRetry(postId)),
+      })
     },
     start() {
       // A polling failure must not take the whole worker (and its jobs) down: retry instead.
