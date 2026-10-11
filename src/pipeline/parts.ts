@@ -26,12 +26,12 @@ export type PostPart = {
 const length = (text: string) => [...text].length
 
 /** What gets appended to the last follow-up: a blank line and the CTA, or nothing. */
-export function ctaSuffix(cta: string | undefined = config.THREAD_CTA_TEXT): string {
+export function ctaSuffix(cta: string | undefined): string {
   return cta ? `\n\n${cta}` : ''
 }
 
 /** Character budget for the text of the last follow-up, leaving room for the CTA. */
-export function lastFollowupLimit(cta: string | undefined = config.THREAD_CTA_TEXT): number {
+export function lastFollowupLimit(cta: string | undefined): number {
   return THREADS_TEXT_LIMIT - length(ctaSuffix(cta))
 }
 

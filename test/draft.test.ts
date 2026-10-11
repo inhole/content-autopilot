@@ -8,6 +8,7 @@ vi.mock('../src/llm/openrouter.ts', () => ({ chatJson: (...args: unknown[]) => c
 
 const { draftPost, generationSchema } = await import('../src/pipeline/generate.ts')
 const { lastFollowupLimit, MAX_FOLLOWUPS } = await import('../src/pipeline/parts.ts')
+const { config } = await import('../src/config.ts')
 const { z } = await import('zod')
 
 const draft = (text: string, followups: string[] = []) => ({
@@ -74,7 +75,7 @@ describe('draftPost chain', () => {
   })
 
   it('shortens each piece against its own limit', async () => {
-    const last = lastFollowupLimit()
+    const last = lastFollowupLimit(config.THREAD_CTA_TEXT)
     // 480 fits a middle follow-up but not the last one, which must leave room for the CTA.
     const mid = '나'.repeat(480)
     const tail = '다'.repeat(480)

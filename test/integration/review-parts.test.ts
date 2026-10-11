@@ -90,14 +90,22 @@ describe('applyReviewEdit', () => {
   })
 
   it('checks the limit of the part that becomes the last one on delete', async () => {
-    const id = await seedReview(['y'.repeat(500), 'z'])
-    const res = await applyReviewEdit(id, MSG, { kind: 'delete', idx: 3 })
-    // With a CTA configured the 500-char part no longer fits as the last reply.
-    if (lastFollowupLimit(config.THREAD_CTA_TEXT) < 500) {
-      expect(res).toMatchObject({ ok: false, reason: 'invalid' })
-      expect((await loadParts(id)).length).toBe(2)
-    } else {
-      expect(res).toEqual({ ok: true })
+    const original = config.THREAD_CTA_TEXT
+    try {
+      // With a CTA the 500-char part no longer fits as the last reply.
+      config.THREAD_CTA_TEXT = '팔로우'
+      const withCta = await seedReview(['y'.repeat(500), 'z'])
+      expect(await applyReviewEdit(withCta, MSG, { kind: 'delete', idx: 3 })).toMatchObject({
+        ok: false,
+        reason: 'invalid',
+      })
+      expect((await loadParts(withCta)).length).toBe(2)
+
+      config.THREAD_CTA_TEXT = undefined
+      const noCta = await seedReview(['y'.repeat(500), 'z'])
+      expect(await applyReviewEdit(noCta, MSG, { kind: 'delete', idx: 3 })).toEqual({ ok: true })
+    } finally {
+      config.THREAD_CTA_TEXT = original
     }
   })
 })

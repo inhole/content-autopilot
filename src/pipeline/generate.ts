@@ -80,7 +80,9 @@ export async function draftPost(
     ...raw,
     text: await fitTo(raw.text, THREADS_TEXT_LIMIT),
     followups: await Promise.all(
-      followups.map((f, i) => fitTo(f, i === lastIdx ? lastFollowupLimit() : THREADS_TEXT_LIMIT)),
+      followups.map((f, i) =>
+        fitTo(f, i === lastIdx ? lastFollowupLimit(config.THREAD_CTA_TEXT) : THREADS_TEXT_LIMIT),
+      ),
     ),
   }
 }
