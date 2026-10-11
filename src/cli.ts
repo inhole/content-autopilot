@@ -5,6 +5,7 @@ import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipe
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
+import { pollReplies } from './pipeline/replies.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
 import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts'
 import {
@@ -32,7 +33,8 @@ const USAGE = `usage: npm run cli -- <command>
   threads:check               verify the Threads token (GET /me)
   threads:refresh             refresh the Threads token if it is close to expiry
   insights                    collect Threads post insights now and print the latest numbers
-  report                      print the weekly insights report (same text as Telegram /report)`
+  report                      print the weekly insights report (same text as Telegram /report)
+  replies                     poll new Threads replies now and notify Telegram`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
 const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
@@ -187,6 +189,13 @@ try {
     case 'report':
       console.log(await weeklyReport())
       break
+    case 'replies': {
+      const fresh = await pollReplies((text) => reviewer.notifyWithId(text))
+      console.log(`${fresh.length} new reply(ies)`)
+      for (const r of fresh)
+        console.log(`- @${r.username ?? '?'} (post #${r.post_id}): ${r.text ?? '-'}`)
+      break
+    }
     default:
       console.log(USAGE)
       process.exitCode = command ? 1 : 0

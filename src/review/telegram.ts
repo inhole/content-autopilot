@@ -6,6 +6,7 @@ import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
 import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
+import { answerReply } from '../pipeline/replies.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
@@ -54,6 +55,9 @@ export const HELP_TEXT = [
   '검수 메시지에 답장하기',
   '- "수정: <새 본문>" → 본문을 그대로 교체',
   '- 그 외 답장 → 피드백으로 보고 재생성',
+  '',
+  '💬 Threads 답글 알림에 답장하기',
+  '- 답장한 내용이 그대로 Threads 답글로 달려요 (답글당 1회)',
 ].join('\n')
 
 const BOT_COMMANDS = [
@@ -98,6 +102,8 @@ export type Reviewer = {
   notify(text: string): Promise<void>
   start(): void
   stop(): Promise<void>
+  /** Sends text to the owner chat and returns the Telegram message id (null without Telegram). */
+  notifyWithId(text: string): Promise<number | null>
 }
 
 const fmtTime = (d: Date) =>
@@ -197,6 +203,10 @@ export function createReviewer(opts: {
       },
       start() {},
       async stop() {},
+      async notifyWithId(text) {
+        console.log(`[notify] ${text}`)
+        return null
+      },
     }
   }
 
@@ -346,6 +356,17 @@ export function createReviewer(opts: {
   bot.on('message:text', async (ctx) => {
     const replyTo = ctx.message.reply_to_message?.message_id
     if (!replyTo) return
+    // A reply to a Threads-reply notification is the owner's answer, not review feedback.
+    try {
+      const answered = await answerReply(replyTo, ctx.message.text)
+      if (answered) {
+        await ctx.reply(`✅ 답글을 달았어요${answered.permalink ? `\n${answered.permalink}` : ''}`)
+        return
+      }
+    } catch (err) {
+      await ctx.reply(`❌ 답글을 달지 못했어요: ${(err as Error).message}`)
+      return
+    }
     const [post] = await query<{ id: number; topic_id: number }>(
       "select id, topic_id from posts where review_message_id = $1 and status = 'PENDING_REVIEW'",
       [replyTo],
@@ -436,6 +457,16 @@ export function createReviewer(opts: {
     async notify(text) {
       if (chatId) await bot.api.sendMessage(chatId, text)
       else console.log(`[notify] ${text}`)
+    },
+    async notifyWithId(text) {
+      if (!chatId) {
+        console.log(`[notify] ${text}`)
+        return null
+      }
+      const msg = await bot.api.sendMessage(chatId, text, {
+        link_preview_options: { is_disabled: true },
+      })
+      return msg.message_id
     },
     start() {
       // A polling failure must not take the whole worker (and its jobs) down: retry instead.

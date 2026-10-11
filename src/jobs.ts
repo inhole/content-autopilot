@@ -12,6 +12,7 @@ import { collectInsights, weeklyReport } from './pipeline/insights.ts'
 import { expireDrafts, loadPendingDrafts, runReviewMaintenance } from './pipeline/maintenance.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
+import { pollReplies } from './pipeline/replies.ts'
 import type { Reviewer } from './review/telegram.ts'
 import { refreshThreadsTokenIfNeeded, threadsTokenExpiry } from './threads/account.ts'
 
@@ -24,6 +25,7 @@ export const Q = {
   publishDue: 'publish-due',
   publish: 'publish',
   refreshToken: 'refresh-token',
+  pollReplies: 'poll-replies',
 } as const
 
 /** Queue name from before the policy change; still drained so in-flight jobs are not lost. */
@@ -252,5 +254,13 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
       console.error('[weekly-report] collecting insights failed', err)
     }
     await reviewer.notify(await weeklyReport())
+  })
+
+  // Every 5 minutes: forward new replies on recent posts to Telegram. The next tick is the retry.
+  await boss.createQueue(Q.pollReplies, { policy: 'singleton', retryLimit: 0 })
+  await boss.schedule(Q.pollReplies, '*/5 * * * *', null, { tz })
+  await boss.work(Q.pollReplies, async () => {
+    const fresh = await pollReplies((text) => reviewer.notifyWithId(text))
+    if (fresh.length) console.log('[poll-replies]', { notified: fresh.length })
   })
 }

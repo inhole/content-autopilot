@@ -14,6 +14,8 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 | 승인 메시지의 ⏪ 예약 취소 | 예약을 풀고 검수 대기로 되돌린다. 새 검수 메시지가 온다. |
 | 승인 메시지의 🚀 지금 발행 | 발행 시각을 지금으로 당긴다. 다음 발행 확인 주기(5분 이내)에 나간다. |
 
+**Threads 답글 알림:** 발행한 글에 달린 새 답글은 5분 안에 `💬 @user 답글 · 글 #12 "첫 줄…"` 메시지로 온다. 이 메시지에 답장하면 그 내용이 그대로 Threads 답글로 달리고 `✅ 답글을 달았어요`가 온다. 답글 하나에는 한 번만 달 수 있고, 500자를 넘으면 거절한다. 실패하면 ❌ 메시지가 오고 같은 알림에 다시 답장하면 된다. 발행 후 48시간이 지난 글의 답글은 확인하지 않는다.
+
 두 버튼은 버튼이 만들어진 그 예약에만 동작한다. 이미 발행됐거나 다시 승인해서 시간이 바뀌었으면 "이미 처리된 예약이에요"라고 답한다.
 
 **검수를 놓쳤을 때:** 48시간 동안 손대지 않은 초안은 `EXPIRED`로 만료되고 ⌛ 알림이 온다(매시 정각 확인). 09:00과 18:00에 검수 대기가 있으면 📝 리마인더가 온다.
@@ -47,6 +49,7 @@ npm run cli -- threads:check         # 토큰 확인
 npm run cli -- threads:refresh       # 토큰 수동 갱신
 npm run cli -- insights              # 발행 글의 성과를 지금 수집하고 글별 최신 숫자 출력
 npm run cli -- report                # 주간 리포트 본문 출력 (/report와 같음)
+npm run cli -- replies               # 새 Threads 답글을 지금 확인하고 Telegram으로 알림
 ```
 
 CLI는 Telegram 봇을 polling하지 않는다. 그래서 워커가 실행 중일 때 같이 써도 된다.
@@ -77,6 +80,8 @@ update sources set enabled = false where name = '이름';   -- 끄기
 | HN 피드 `Status code 429` | 짧은 시간에 여러 번 요청해서 그렇다. 하루 한 번 수집에서는 보통 생기지 않는다. |
 | 초안이 0개 | `npm run cli -- list`로 확인한다. topics가 모두 `DUPLICATE`나 `SKIPPED`면 `score_reason`과 `duplicate_of`를 보고 순위 프롬프트(`src/pipeline/prompts.ts`)를 조정한다. |
 | 글이 `FAILED` | `select id, last_error from posts where status = 'FAILED'`로 원인을 보고, 고친 뒤 `publish-now <id>`로 다시 시도한다. |
+| 답글 알림이 안 온다 / 로그에 `[replies] post #N failed` | 토큰에 `threads_read_replies`, `threads_manage_replies` 권한이 있어야 한다. 권한을 추가했다면 [setup.md](setup.md)대로 토큰을 다시 발급한다. `THREADS_DRY_RUN=true`이거나 `dry-` 글이면 답글을 확인하지 않는다. `npm run cli -- replies`로 바로 확인해 볼 수 있다. |
+| 답글 달기가 `❌ 답글을 달지 못했어요` | 메시지에 이유가 나온다. 권한 부족이면 위 항목, 이미 달았으면 한 번만 가능하다는 뜻이다. |
 | 토큰 만료 | [setup.md 4-3](setup.md#4-3-장기-토큰-발급-처음-한-번)대로 다시 발급한다. 그다음 `delete from platform_accounts where platform='THREADS'`로 지우고 워커를 재시작하면 env의 새 토큰을 다시 읽는다. |
 
 job 상태는 `pgboss.job` 테이블에서 볼 수 있다.

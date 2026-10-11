@@ -16,6 +16,7 @@
                review-maintenance (매시) ──▶ 초안 만료 + 리마인더        │
                collect-insights (05:00) ──▶ 게시물 성과 스냅샷           │
                weekly-report (월 09:00) ──▶ 주간 리포트 Telegram        │
+               poll-replies (5분마다) ──▶ 새 답글을 Telegram으로 알림    │
                     └──────────────────────────────────────────────────┘
                                        │
                                Supabase Postgres
@@ -34,6 +35,7 @@
 | review | `src/review/telegram.ts` | 초안, 관점, 확인할 점, 출처를 Telegram으로 보낸다. 버튼은 승인 / 재생성 / 폐기. 버튼은 그 글의 **최신 검수 메시지**에서, 그 메시지가 보여준 본문 버전(`review_revision = revision`)일 때만 동작한다. 재생성이나 `수정:`으로 본문이 바뀌면 `revision`이 올라가서 이전 메시지의 버튼은 무효가 된다. 메시지를 보내는 사이에 본문이 바뀌면 그 메시지는 등록하지 않는다. 새 검수 메시지를 보내면 이전 메시지의 버튼은 지운다. |
 | approve | `src/pipeline/publish.ts` | `PUBLISH_SLOTS` 중 아직 비어 있는 가장 빠른 시간을 `scheduled_at`으로 정한다. 같은 시간대는 DB unique 인덱스(`003_unique_publish_slot.sql`)로 한 글만 가질 수 있다. 동시 승인으로 충돌하면 다른 시간대로 다시 고른다. Telegram 승인은 검수자가 본 `revision`을 함께 넘기고, 그 사이 본문이 바뀌었으면 승인이 거부된다. |
 | publish | `src/pipeline/publish.ts` | 컨테이너 생성 → `FINISHED` 대기 → `threads_publish`. 출처 URL은 `link_attachment`로 붙인다. |
+| replies | `src/pipeline/replies.ts` | `poll-replies` job(5분마다, policy `singleton`, `retryLimit: 0`)이 최근 48시간 안에 발행된 글(`dry-` id 제외)의 최상위 답글을 `GET /{media-id}/replies`로 가져온다. 내가 쓴 답글과 숨김 처리된 답글은 건너뛴다. 답글 id가 primary key인 `threads_replies`(`010`)에 `on conflict do nothing`으로 넣으므로 새 답글만 알림 대상이 된다. 알림은 `notified_at`을 먼저 원자적으로 선점한 뒤 보내고, 전송에 실패하면 되돌려서 다음 주기에 다시 보낸다. 보낸 메시지의 id는 `telegram_message_id`에 저장한다. 사람이 그 알림 메시지에 **답장**하면 `message:text` 핸들러가 검수 로직보다 먼저 `answerReply`를 호출한다. `answer_state`를 `null → ANSWERING`으로 원자적으로 선점해서 더블 탭이나 재시도로 같은 답글에 두 번 달지 않는다(답글당 1회). Threads 호출이 실패하면 선점을 풀어서 다시 시도할 수 있다. 답글은 `reply_to_id`가 붙은 일반 텍스트 발행이고 500자 제한을 받는다. 토큰에 `threads_read_replies`, `threads_manage_replies` 권한이 필요하다. |
 
 ## 상태
 

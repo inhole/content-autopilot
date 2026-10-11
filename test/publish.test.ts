@@ -11,6 +11,8 @@ function fakeApi(statuses: ContainerStatus[]) {
     refreshToken: vi.fn(),
     me: vi.fn(),
     getInsights: vi.fn(),
+    listReplies: vi.fn(),
+    replyTo: vi.fn(),
   } satisfies ThreadsApi
 }
 

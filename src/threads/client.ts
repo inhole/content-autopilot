@@ -5,7 +5,24 @@ export const THREADS_TEXT_LIMIT = 500
 
 export type ContainerStatus = 'IN_PROGRESS' | 'FINISHED' | 'PUBLISHED' | 'ERROR' | 'EXPIRED'
 
-export type TextPost = { text: string; linkAttachment?: string | null; topicTag?: string | null }
+export type TextPost = {
+  text: string
+  linkAttachment?: string | null
+  topicTag?: string | null
+  /** Makes the post a reply to this Threads media id. */
+  replyToId?: string | null
+}
+
+export type ThreadsReply = {
+  id: string
+  /** Missing for media-only replies. */
+  text: string | null
+  username: string | null
+  timestamp: Date | null
+  permalink: string | null
+  isOwnedByMe: boolean
+  hidden: boolean
+}
 
 export interface ThreadsApi {
   createTextContainer(post: TextPost): Promise<string>
@@ -15,6 +32,11 @@ export interface ThreadsApi {
   me(): Promise<{ id: string; username: string }>
   // Insights
   getInsights(mediaId: string): Promise<Insights>
+  // Replies
+  /** Top-level replies of a published post (first page only). */
+  listReplies(mediaId: string): Promise<ThreadsReply[]>
+  /** Publishes a text reply to a reply and returns the new media id. */
+  replyTo(replyId: string, text: string): Promise<string>
 }
 
 const idResponse = z.object({ id: z.string() })
@@ -24,6 +46,41 @@ const statusResponse = z.object({
 })
 const tokenResponse = z.object({ access_token: z.string(), expires_in: z.number() })
 const meResponse = z.object({ id: z.string(), username: z.string() })
+
+const repliesResponse = z.object({
+  data: z
+    .array(
+      z.object({
+        id: z.string(),
+        text: z.string().nullish(),
+        username: z.string().nullish(),
+        timestamp: z.string().nullish(),
+        permalink: z.string().nullish(),
+        is_reply_owned_by_me: z.boolean().nullish(),
+        hide_status: z.string().nullish(),
+      }),
+    )
+    .default([]),
+})
+
+/** Hide statuses that mean the reply is visible to everyone. */
+const VISIBLE_HIDE_STATUSES = new Set(['NOT_HUSHED', 'UNHUSHED'])
+
+/** Parses a `/replies` response defensively: optional fields may be missing or null. */
+export function parseReplies(raw: unknown): ThreadsReply[] {
+  return repliesResponse.parse(raw).data.map((r) => {
+    const ts = r.timestamp ? new Date(r.timestamp) : null
+    return {
+      id: r.id,
+      text: r.text?.trim() ? r.text : null,
+      username: r.username ?? null,
+      timestamp: ts && !Number.isNaN(ts.getTime()) ? ts : null,
+      permalink: r.permalink ?? null,
+      isOwnedByMe: r.is_reply_owned_by_me === true,
+      hidden: r.hide_status != null && !VISIBLE_HIDE_STATUSES.has(r.hide_status),
+    }
+  })
+}
 
 export class ThreadsApiError extends Error {
   constructor(
@@ -49,6 +106,7 @@ export class ThreadsClient implements ThreadsApi {
     const params: Record<string, string> = { media_type: 'TEXT', text: post.text }
     if (post.linkAttachment) params.link_attachment = post.linkAttachment
     if (post.topicTag) params.topic_tag = post.topicTag
+    if (post.replyToId) params.reply_to_id = post.replyToId
     return idResponse.parse(await this.call('POST', `/${this.opts.userId}/threads`, params)).id
   }
 
@@ -90,6 +148,26 @@ export class ThreadsClient implements ThreadsApi {
         metric: 'views,likes,replies,reposts,quotes,shares',
       }),
     )
+  }
+
+  // Replies
+  async listReplies(mediaId: string): Promise<ThreadsReply[]> {
+    return parseReplies(
+      await this.call('GET', `/${mediaId}/replies`, {
+        fields: 'id,text,username,timestamp,permalink,is_reply_owned_by_me,hide_status',
+        reverse: 'false',
+      }),
+    )
+  }
+
+  async replyTo(replyId: string, text: string): Promise<string> {
+    const containerId = await this.createTextContainer({ text, replyToId: replyId })
+    // Text containers are normally FINISHED at once; check once instead of polling.
+    const { status, error } = await this.getContainerStatus(containerId)
+    if (status === 'ERROR' || status === 'EXPIRED') {
+      throw new Error(`reply container ${containerId} ${status}: ${error ?? 'no detail'}`)
+    }
+    return this.publish(containerId)
   }
 
   private async call(
@@ -139,5 +217,14 @@ export class DryRunThreadsClient implements ThreadsApi {
   /** Dry-run posts never exist on Threads, so every metric is unknown (null), not zero. */
   async getInsights(): Promise<Insights> {
     return emptyInsights()
+  }
+
+  // Replies
+  async listReplies(): Promise<ThreadsReply[]> {
+    return []
+  }
+  async replyTo(replyId: string, text: string) {
+    console.log(`[threads dry-run] reply to ${replyId}: ${text.length} chars`)
+    return `dry-reply-${Date.now()}-${++this.n}`
   }
 }
