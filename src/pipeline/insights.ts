@@ -9,7 +9,12 @@ const REPORT_WINDOW_DAYS = 7
 const TOP_SHOWN = 3
 const PREVIEW_CHARS = 28
 
-export type CollectResult = { collected: number; failed: { postId: number; error: string }[] }
+export type CollectResult = {
+  collected: number
+  /** Posts whose response had no known metric; nothing is stored for them. */
+  empty: number
+  failed: { postId: number; error: string }[]
+}
 
 /** Posts published in dry-run mode carry `dry-` ids and do not exist on Threads. */
 export const isDryRunId = (platformPostId: string) => platformPostId.startsWith('dry-')
@@ -24,13 +29,19 @@ export async function collectInsights(now = new Date(), api?: ThreadsApi): Promi
     [since],
   )
   const targets = posts.filter((p) => !isDryRunId(p.platform_post_id))
-  const result: CollectResult = { collected: 0, failed: [] }
+  const result: CollectResult = { collected: 0, empty: 0, failed: [] }
   if (targets.length === 0) return result
 
   const threads = api ?? (await getThreadsApi())
   for (const p of targets) {
     try {
       const m = await threads.getInsights(p.platform_post_id)
+      // An all-unknown snapshot (dry-run client, empty response) carries no information and,
+      // being the latest, would hide the last real numbers from the report.
+      if (Object.values(m).every((v) => v === null)) {
+        result.empty++
+        continue
+      }
       await query(
         `insert into post_insights (post_id, views, likes, replies, reposts, quotes, shares)
          values ($1, $2, $3, $4, $5, $6, $7)`,
@@ -109,31 +120,42 @@ export function buildWeeklyReport(rows: InsightRow[]): string {
     return `${header}\n\n발행 ${rows.length}개, 아직 수집된 성과 숫자가 없어요. (npm run cli -- insights)`
   }
 
-  const sum = (k: keyof Insights) => measured.reduce((a, r) => a + n(r.metrics?.[k]), 0)
-  const views = sum('views')
-  const replies = sum('replies')
-  const avg = (v: number) => Math.round(v / measured.length)
+  // A null metric is unknown, not zero: each total and average uses only the posts that report it.
+  const has = (k: keyof Insights) => measured.filter((r) => r.metrics?.[k] != null)
+  const total = (rs: InsightRow[], k: keyof Insights) =>
+    rs.reduce((a, r) => a + n(r.metrics?.[k]), 0)
+  const stat = (label: string, k: keyof Insights) => {
+    const rs = has(k)
+    if (rs.length === 0) return `${label} -`
+    const t = total(rs, k)
+    return `${label} ${t} (평균 ${Math.round(t / rs.length)})`
+  }
+  const rated = has('views').filter((r) => r.metrics?.replies != null)
+  const ratedViews = total(rated, 'views')
   const out = [
     header,
     '',
     `발행 ${rows.length}개${measured.length < rows.length ? ` (집계 ${measured.length}개)` : ''}`,
-    `조회 ${views} (평균 ${avg(views)})`,
-    `좋아요 ${sum('likes')} (평균 ${avg(sum('likes'))})`,
-    `답글 ${replies} (평균 ${avg(replies)})`,
-    `리포스트 ${sum('reposts')} (평균 ${avg(sum('reposts'))})`,
-    views > 0
-      ? `답글률 ${((replies / views) * 1000).toFixed(1)} (조회 1000당 답글)`
-      : '답글률 계산 불가 (조회 0)',
+    stat('조회', 'views'),
+    stat('좋아요', 'likes'),
+    stat('답글', 'replies'),
+    stat('리포스트', 'reposts'),
+    ratedViews > 0
+      ? `답글률 ${((total(rated, 'replies') / ratedViews) * 1000).toFixed(1)} (조회 1000당 답글)`
+      : '답글률 계산 불가 (조회 0 또는 미집계)',
   ]
 
-  const byReplies = [...measured].sort(
+  const byReplies = has('replies').sort(
     (a, b) =>
       n(b.metrics?.replies) - n(a.metrics?.replies) || n(b.metrics?.views) - n(a.metrics?.views),
   )
-  out.push('', '💬 답글 많은 글', ...byReplies.slice(0, TOP_SHOWN).map(line))
+  if (byReplies.length) {
+    out.push('', '💬 답글 많은 글', ...byReplies.slice(0, TOP_SHOWN).map(line))
+  }
 
-  if (measured.length > 1) {
-    const worst = [...measured].sort((a, b) => n(a.metrics?.views) - n(b.metrics?.views))[0]
+  const withViews = has('views')
+  if (withViews.length > 1) {
+    const worst = withViews.sort((a, b) => n(a.metrics?.views) - n(b.metrics?.views))[0]
     if (worst) out.push('', '📉 조회 가장 적은 글', line(worst))
   }
   return out.join('\n')

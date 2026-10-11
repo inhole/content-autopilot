@@ -116,6 +116,20 @@ describe('buildWeeklyReport', () => {
     const out = buildWeeklyReport([row(1, 'a', m(null, null, null)), row(2, 'b', null)])
     expect(out).toContain('발행 2개 (집계 1개)')
     expect(out).toContain('답글률 계산 불가')
-    expect(out).toContain('👁 -')
+    expect(out).toContain('조회 -')
+  })
+
+  it('averages and ranks each metric over the posts that report it', () => {
+    const out = buildWeeklyReport([
+      row(1, 'known', m(100, 2)),
+      row(2, 'unknown views', m(null, 1)),
+      row(3, 'low', m(40, null)),
+    ])
+    expect(out).toContain('조회 140 (평균 70)')
+    expect(out).toContain('답글 3 (평균 2)')
+    // Only post 1 has both views and replies: 2 / 100 * 1000.
+    expect(out).toContain('답글률 20.0')
+    expect(out.split('📉')[1]).toContain('#3')
+    expect(out.split('📉')[1]).not.toContain('#2')
   })
 })

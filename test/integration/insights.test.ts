@@ -48,6 +48,17 @@ describe('collectInsights', () => {
     )
     expect(rows).toEqual([{ post_id: a, views: 100 }])
   })
+
+  it('stores nothing for an all-unknown response so the last real numbers stay latest', async () => {
+    const a = await publishedPost('media-a')
+    await query('insert into post_insights (post_id, views) values ($1, 70)', [a])
+
+    const result = await collectInsights(new Date(), apiReturning(emptyInsights()))
+
+    expect(result).toMatchObject({ collected: 0, empty: 1, failed: [] })
+    const [latest] = await loadInsightRows()
+    expect(latest?.metrics?.views).toBe(70)
+  })
 })
 
 describe('loadInsightRows', () => {
