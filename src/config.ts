@@ -38,7 +38,7 @@ const schema = z.object({
   // Local times (TZ_NAME) at which approved posts go out, one post per slot.
   PUBLISH_SLOTS: z
     .string()
-    .default('08:00,12:30,19:00')
+    .default('08:00,12:30,21:00')
     .transform((s) => s.split(',').map((t) => t.trim())),
 })
 
