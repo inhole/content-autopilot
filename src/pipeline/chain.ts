@@ -44,14 +44,34 @@ export async function dueChainPostIds(): Promise<number[]> {
   return rows.map((r) => r.id)
 }
 
+/** Posts with a FAILED part the owner has not been told about yet, with that part's error. */
+export async function unalertedChainFailures(): Promise<{ postId: number; error: string }[]> {
+  const rows = await query<{ post_id: number; last_error: string | null }>(
+    `select distinct on (post_id) post_id, last_error from post_parts
+     where status = 'FAILED' and alerted_at is null
+     order by post_id, idx`,
+  )
+  return rows.map((r) => ({ postId: r.post_id, error: r.last_error ?? 'unknown error' }))
+}
+
+/** Records that the owner was alerted about the post's FAILED parts (after the send succeeded). */
+export async function markChainAlerted(postId: number): Promise<void> {
+  await query(
+    `update post_parts set alerted_at = now()
+     where post_id = $1 and status = 'FAILED' and alerted_at is null`,
+    [postId],
+  )
+}
+
 // Lost-response recovery may only look at items published after the post's slot (minus clock skew).
 const RECOVERY_SKEW_MS = 5 * 60_000
 
 /**
  * The media id of the item whose text is exactly what we sent. Identical text can exist under
- * another post, so a reply must answer `repliedToId` (items whose parent the API omitted stay
- * candidates), items older than `notBefore` are ignored, and more than one candidate is treated
- * as unknown: attaching the next part to the wrong thread is worse than a failed attempt.
+ * another post, so a reply must answer `repliedToId` and items older than `notBefore` are
+ * ignored. An item whose parent or timestamp the API omitted cannot be verified and is never
+ * matched, and more than one candidate is treated as unknown: attaching the next part to the
+ * wrong thread is worse than a failed attempt.
  */
 export function findMediaIdByText(
   items: ThreadsOwnPost[],
@@ -64,10 +84,8 @@ export function findMediaIdByText(
     (i) =>
       i.text !== null &&
       i.text.trim() === wanted &&
-      (notBefore === undefined || i.timestamp === null || i.timestamp.getTime() >= notBefore) &&
-      (opts.repliedToId === undefined ||
-        i.repliedToId === null ||
-        i.repliedToId === opts.repliedToId),
+      (notBefore === undefined || (i.timestamp !== null && i.timestamp.getTime() >= notBefore)) &&
+      (opts.repliedToId === undefined || i.repliedToId === opts.repliedToId),
   )
   return candidates.length === 1 ? (candidates[0]?.id ?? null) : null
 }

@@ -1,7 +1,12 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
 import { dbSsl } from './db/pool.ts'
-import { dueChainPostIds, publishChain } from './pipeline/chain.ts'
+import {
+  dueChainPostIds,
+  markChainAlerted,
+  publishChain,
+  unalertedChainFailures,
+} from './pipeline/chain.ts'
 import { collectAll } from './pipeline/collect.ts'
 import {
   generatePost,
@@ -120,8 +125,8 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.createQueue(Q.publish, { policy: 'exclusive', retryLimit: 0 })
   // Same model for the follow-up replies of a thread chain: the sweep re-finds unfinished parts.
   await boss.createQueue(Q.publishChain, { policy: 'exclusive', retryLimit: 0 })
-  // The failed parts are already committed and the sweep skips them, so this alert (and its retry
-  // button) is the owner's only way back: it gets its own job that retries a Telegram outage.
+  // The alert (and its retry button) is the owner's only way back for failed parts, so it gets its
+  // own retrying job, and publish-due re-sends it until post_parts.alerted_at says it went out.
   await boss.createQueue(Q.chainAlert, { retryLimit: 5, retryDelay: 60, retryBackoff: true })
   await boss.createQueue(Q.refreshToken, { retryLimit: 2, retryDelay: 3600 })
 
@@ -200,11 +205,15 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   const enqueueChain = (postId: number) =>
     boss.send(Q.publishChain, { postId } satisfies PostData, { singletonKey: `chain-${postId}` })
 
+  const enqueueChainAlert = (data: ChainAlertData) =>
+    boss.send(Q.chainAlert, data, { singletonKey: `chain-alert-${data.postId}` })
+
   await boss.work(Q.publishDue, async () => {
     for (const postId of await duePostIds()) {
       await boss.send(Q.publish, { postId } satisfies PostData, { singletonKey: `post-${postId}` })
     }
     for (const postId of await dueChainPostIds()) await enqueueChain(postId)
+    for (const alert of await unalertedChainFailures()) await enqueueChainAlert(alert)
   })
 
   await boss.work<PostData>(Q.publish, async ([job]) => {
@@ -226,7 +235,7 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     const { postId } = job.data
     const outcome = await publishChain(postId)
     if (outcome.kind === 'failed') {
-      await boss.send(Q.chainAlert, { postId, error: outcome.error } satisfies ChainAlertData)
+      await enqueueChainAlert({ postId, error: outcome.error })
     } else if (outcome.kind === 'done' && outcome.published > 0) {
       await reviewer.notify(`🧵 #${postId} 답글 ${outcome.published}개 발행 완료`)
     } else if (outcome.kind === 'retry') {
@@ -235,7 +244,9 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   })
 
   await boss.work<ChainAlertData>(Q.chainAlert, async ([job]) => {
-    if (job) await reviewer.notifyChainFailure(job.data.postId, job.data.error)
+    if (!job) return
+    await reviewer.notifyChainFailure(job.data.postId, job.data.error)
+    await markChainAlerted(job.data.postId)
   })
 
   await boss.work(Q.refreshToken, async () => {

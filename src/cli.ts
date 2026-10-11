@@ -4,7 +4,7 @@ import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
-import { loadParts } from './pipeline/parts.ts'
+import { loadParts, retryFailedParts } from './pipeline/parts.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
@@ -143,8 +143,10 @@ try {
       )
       const outcome = await publishPost(postId)
       console.log(outcome)
-      // Without a running worker nothing else would publish the follow-ups (or the link on them).
-      if (outcome.kind === 'published' && (await loadParts(postId)).length > 0) {
+      // Without a running worker nothing else publishes the follow-ups (or the link on them). This
+      // also resumes a chain whose main post is already up, with a fresh budget for FAILED parts.
+      if ((await loadParts(postId)).length > 0) {
+        await retryFailedParts(postId)
         console.log('chain:', await publishChain(postId))
       }
       break

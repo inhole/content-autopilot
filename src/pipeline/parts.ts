@@ -96,7 +96,7 @@ export async function replaceParts(q: Query, postId: number, texts: string[]): P
 export async function retryFailedParts(postId: number): Promise<number> {
   const rows = await query(
     `update post_parts pp set status = 'PENDING', attempts = 0, last_error = null,
-       updated_at = now()
+       alerted_at = null, updated_at = now()
      from posts p
      where p.id = pp.post_id and pp.post_id = $1 and pp.status = 'FAILED'
        and p.status = 'PUBLISHED'

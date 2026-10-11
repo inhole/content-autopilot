@@ -144,6 +144,11 @@ describe('findMediaIdByText', () => {
     expect(findMediaIdByText(items, 'hello', { repliedToId: 'p1' })).toBe('ours')
     expect(findMediaIdByText(items, 'hello', { repliedToId: 'p2' })).toBeNull()
   })
+  it('never matches an item whose parent or timestamp cannot be verified', () => {
+    expect(findMediaIdByText([item('a', 'hello', null)], 'hello', { repliedToId: 'p1' })).toBeNull()
+    const notBefore = new Date('2026-10-10T00:00:00Z')
+    expect(findMediaIdByText([item('a', 'hello', null, null)], 'hello', { notBefore })).toBeNull()
+  })
   it('ignores items published before the slot', () => {
     const items = [
       item('old', 'hello', null, new Date('2026-10-01T00:00:00Z')),

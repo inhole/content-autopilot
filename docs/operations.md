@@ -52,7 +52,7 @@ npm run cli -- show <postId>         # 초안 보기
 npm run cli -- review [postId]       # 초안을 Telegram으로 (다시) 보내기. id가 없으면 검수 대기 전부
 npm run cli -- approve <postId>      # 승인 (다음 발행 시간 배정)
 npm run cli -- reject <postId>
-npm run cli -- publish-now <postId>  # 즉시 발행 (FAILED 글 재시도에도 사용, 연결 글이면 답글까지)
+npm run cli -- publish-now <postId>  # 즉시 발행 (FAILED 글 재시도에도 사용). 연결 글이면 답글까지 올리고, 본 글이 이미 올라간 글은 남은 답글만 이어서 올린다(FAILED 답글도 다시 시도)
 npm run cli -- threads:check         # 토큰 확인
 npm run cli -- threads:refresh       # 토큰 수동 갱신
 npm run cli -- insights              # 발행 글의 성과를 지금 수집하고 글별 최신 숫자 출력

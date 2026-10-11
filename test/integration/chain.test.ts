@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { config } from '../../src/config.ts'
 import { query } from '../../src/db/pool.ts'
-import { dueChainPostIds, publishChain } from '../../src/pipeline/chain.ts'
+import {
+  dueChainPostIds,
+  markChainAlerted,
+  publishChain,
+  unalertedChainFailures,
+} from '../../src/pipeline/chain.ts'
 import { retryFailedParts } from '../../src/pipeline/parts.ts'
 import { publishPost } from '../../src/pipeline/publish.ts'
 import { FakeThreads } from '../fake-threads.ts'
@@ -266,6 +271,25 @@ describe('dueChainPostIds', () => {
     expect(noParts).toBeGreaterThan(0)
 
     expect(await dueChainPostIds()).toEqual([pending, stale])
+  })
+})
+
+describe('chain failure alerts', () => {
+  it('stay due until marked sent, and come back after a retry fails again', async () => {
+    const postId = await publishedChain(['a', 'b'])
+    await query(
+      "update post_parts set status = 'FAILED', last_error = 'boom' where post_id = $1 and idx = 2",
+      [postId],
+    )
+    expect(await unalertedChainFailures()).toEqual([{ postId, error: 'boom' }])
+    // A crash before the alert went out: the next sweep still finds it.
+    expect(await unalertedChainFailures()).toHaveLength(1)
+    await markChainAlerted(postId)
+    expect(await unalertedChainFailures()).toEqual([])
+
+    expect(await retryFailedParts(postId)).toBe(1)
+    await query("update post_parts set status = 'FAILED' where post_id = $1 and idx = 2", [postId])
+    expect(await unalertedChainFailures()).toHaveLength(1)
   })
 })
 
