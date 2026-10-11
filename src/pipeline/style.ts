@@ -79,7 +79,7 @@ export function buildStylePrompt(ctx: StyleContext): string {
       (e, i) => `[예시 ${i + 1}${e.edited ? ' · 직접 수정함' : ''}]\n${clip(e.text, EXAMPLE_MAX)}`,
     )
     parts.push(
-      `## 문체 참고\n아래는 승인된 과거 글이에요. 말투와 구조만 참고하고, 문장이나 사실을 그대로 가져오지 마세요.\n\n${items.join('\n\n')}`,
+      `## 문체 참고\n아래는 승인된 과거 글이에요. 말투만 참고하세요. 첫 줄과 마무리 같은 구성은 작성 규칙을 따르고, 문장이나 사실을 그대로 가져오지 마세요.\n\n${items.join('\n\n')}`,
     )
   }
 

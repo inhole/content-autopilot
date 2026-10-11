@@ -22,7 +22,7 @@ const shortenSchema = z.object({ text: z.string().min(50).max(THREADS_TEXT_LIMIT
 const SHORTEN_TARGET = 450
 
 export const shortenPrompt = (text: string) =>
-  `아래 Threads 글을 공백 포함 ${SHORTEN_TARGET}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
+  `아래 Threads 글을 공백 포함 ${SHORTEN_TARGET}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅, 마지막 질문은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
 
 export const charCount = (text: string) => [...text].length
 
