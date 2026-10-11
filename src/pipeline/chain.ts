@@ -8,6 +8,7 @@ import {
   LostClaimError,
   STALE_PUBLISHING_MINUTES,
 } from './publish.ts'
+import { REPLY_POLL_WINDOW_HOURS } from './replies.ts'
 
 // Publishes the follow-up parts of a thread chain (docs/decisions.md 8) after the main post is up.
 // The safety model is publishPost's, applied per part: the post_parts row is the source of truth,
@@ -23,13 +24,15 @@ export type ChainOutcome =
 /**
  * Published posts that still have follow-ups to publish: a PENDING part, or one stuck in
  * PUBLISHING by a crashed worker. Parts behind a FAILED part are left out: the chain stops there
- * until the owner retries, and listing them would enqueue a no-op job every sweep.
+ * until the owner retries, and listing them would enqueue a no-op job every sweep. Also posts
+ * with a published part whose media id is still unknown (lost response), while replies on it are
+ * polled: publishChain recovers that id, and without it the part's replies are never read.
  */
 export async function dueChainPostIds(): Promise<number[]> {
   const rows = await query<{ id: number }>(
     `select p.id from posts p
      where p.status = 'PUBLISHED'
-       and exists (
+       and (exists (
          select 1 from post_parts pp
          where pp.post_id = p.id
            and (pp.status = 'PENDING'
@@ -38,8 +41,12 @@ export async function dueChainPostIds(): Promise<number[]> {
            and not exists (
              select 1 from post_parts f
              where f.post_id = pp.post_id and f.idx < pp.idx and f.status = 'FAILED'))
+         or exists (
+           select 1 from post_parts pp
+           where pp.post_id = p.id and pp.status = 'PUBLISHED' and pp.platform_post_id is null
+             and coalesce(pp.published_at, p.published_at) > now() - make_interval(hours => $2)))
      order by p.id`,
-    [STALE_PUBLISHING_MINUTES],
+    [STALE_PUBLISHING_MINUTES, REPLY_POLL_WINDOW_HOURS],
   )
   return rows.map((r) => r.id)
 }
@@ -206,118 +213,138 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
     },
   })
 
-  let published = 0
-  for (const [i, part] of parts.entries()) {
-    if (part.status === 'PUBLISHED') {
-      parent = asParent(part, i, part.platform_post_id, parent)
-      continue
-    }
-    // FAILED waits for the owner's retry; PENDING/PUBLISHING are claimed below (a fresh
-    // PUBLISHING part belongs to a live worker and the claim just fails).
-    if (part.status === 'FAILED') return { kind: 'skipped' }
+  const publishParts = async (): Promise<ChainOutcome> => {
+    let published = 0
+    for (const [i, part] of parts.entries()) {
+      if (part.status === 'PUBLISHED') {
+        parent = asParent(part, i, part.platform_post_id, parent)
+        continue
+      }
+      // FAILED waits for the owner's retry; PENDING/PUBLISHING are claimed below (a fresh
+      // PUBLISHING part belongs to a live worker and the claim just fails).
+      if (part.status === 'FAILED') return { kind: 'skipped' }
 
-    const [claimed] = await query<{
-      container_id: string | null
-      attempts: number
-      claim_seq: number
-    }>(
-      `update post_parts set status = 'PUBLISHING', attempts = attempts + 1,
+      const [claimed] = await query<{
+        container_id: string | null
+        attempts: number
+        claim_seq: number
+      }>(
+        `update post_parts set status = 'PUBLISHING', attempts = attempts + 1,
          claim_seq = claim_seq + 1, updated_at = now()
        where post_id = $1 and idx = $2
          and (status = 'PENDING'
               or (status = 'PUBLISHING' and updated_at < now() - make_interval(mins => $3)))
        returning container_id, attempts, claim_seq`,
-      [postId, part.idx, STALE_PUBLISHING_MINUTES],
-    )
-    if (!claimed) return { kind: 'skipped' }
+        [postId, part.idx, STALE_PUBLISHING_MINUTES],
+      )
+      if (!claimed) return { kind: 'skipped' }
 
-    // claim_seq is bumped by every claim and never reset, so it identifies this claim: if the
-    // stale-claim sweep re-claimed the part, the token no longer matches and our writes must not
-    // land. Ownership-checked update; false means the claim was lost. $1 = post, $2 = idx,
-    // $3 = token, extras from $4.
-    const token = claimed.claim_seq
-    const ownedUpdate = async (set: string, params: unknown[] = []): Promise<boolean> => {
-      const rows = await query(
-        `update post_parts set ${set}, updated_at = now()
+      // claim_seq is bumped by every claim and never reset, so it identifies this claim: if the
+      // stale-claim sweep re-claimed the part, the token no longer matches and our writes must not
+      // land. Ownership-checked update; false means the claim was lost. $1 = post, $2 = idx,
+      // $3 = token, extras from $4.
+      const token = claimed.claim_seq
+      const ownedUpdate = async (set: string, params: unknown[] = []): Promise<boolean> => {
+        const rows = await query(
+          `update post_parts set ${set}, updated_at = now()
          where post_id = $1 and idx = $2 and status = 'PUBLISHING' and claim_seq = $3
          returning idx`,
-        [postId, part.idx, token, ...params],
-      )
-      return rows.length > 0
-    }
+          [postId, part.idx, token, ...params],
+        )
+        return rows.length > 0
+      }
 
-    let containerId = claimed.container_id
-    try {
-      const client = await getApi()
-      const replyToId = await resolveParentId(client, parent, notBefore)
-      const { platformPostId } = await driveContainer(
-        client,
-        { ...(chain[i + 1] ?? { text: part.text }), replyToId },
-        claimed.container_id,
-        async (id) => {
-          containerId = id
-          if (!(await ownedUpdate('container_id = $4', [id]))) throw new LostClaimError()
-        },
-        {
-          // Doubles as a heartbeat: bumps updated_at so a slow but live worker is not reclaimed.
-          beforePublish: async () => {
-            if (!(await ownedUpdate('status = status'))) throw new LostClaimError()
+      let containerId = claimed.container_id
+      try {
+        const client = await getApi()
+        const replyToId = await resolveParentId(client, parent, notBefore)
+        const { platformPostId } = await driveContainer(
+          client,
+          { ...(chain[i + 1] ?? { text: part.text }), replyToId },
+          claimed.container_id,
+          async (id) => {
+            containerId = id
+            if (!(await ownedUpdate('container_id = $4', [id]))) throw new LostClaimError()
           },
-        },
-      )
-      // A null id means the container was already PUBLISHED (lost response). The part is live,
-      // so recover its id when possible, but never fail a published part over the lookup: the
-      // next part resolves it again when it actually needs it.
-      let mediaId = platformPostId
-      if (!mediaId) {
-        mediaId = findMediaIdByText(await client.listMyReplies().catch(() => []), sentText(i + 1), {
-          repliedToId: replyToId,
-          notBefore,
-        })
-      }
-      if (
-        !(await ownedUpdate(
-          `status = 'PUBLISHED', platform_post_id = $4, published_at = now(), last_error = null`,
-          [mediaId],
-        ))
-      ) {
-        return { kind: 'skipped' }
-      }
-      published++
-      parent = asParent(part, i, mediaId, parent)
-    } catch (err) {
-      if (err instanceof LostClaimError) return { kind: 'skipped' }
-      const error = (err as Error).message
-      let containerStatus: string | null = null
-      if (containerId) {
-        try {
-          if (!threads) throw new Error('Threads client unavailable')
-          containerStatus = (await threads.getContainerStatus(containerId)).status
-        } catch {
-          containerStatus = 'unknown'
+          {
+            // Doubles as a heartbeat: bumps updated_at so a slow but live worker is not reclaimed.
+            beforePublish: async () => {
+              if (!(await ownedUpdate('status = status'))) throw new LostClaimError()
+            },
+          },
+        )
+        // A null id means the container was already PUBLISHED (lost response). The part is live,
+        // so recover its id when possible, but never fail a published part over the lookup: the
+        // next part resolves it again when it actually needs it.
+        let mediaId = platformPostId
+        if (!mediaId) {
+          mediaId = findMediaIdByText(
+            await client.listMyReplies().catch(() => []),
+            sentText(i + 1),
+            {
+              repliedToId: replyToId,
+              notBefore,
+            },
+          )
         }
-      }
-      const decision = decideAfterFailure({ attempts: claimed.attempts, containerStatus })
-      if (decision === 'published') {
-        // The response was lost after Threads published; keep going, the id is resolved later.
+        if (
+          !(await ownedUpdate(
+            `status = 'PUBLISHED', platform_post_id = $4, published_at = now(), last_error = null`,
+            [mediaId],
+          ))
+        ) {
+          return { kind: 'skipped' }
+        }
+        published++
+        parent = asParent(part, i, mediaId, parent)
+      } catch (err) {
+        if (err instanceof LostClaimError) return { kind: 'skipped' }
+        const error = (err as Error).message
+        let containerStatus: string | null = null
+        if (containerId) {
+          try {
+            if (!threads) throw new Error('Threads client unavailable')
+            containerStatus = (await threads.getContainerStatus(containerId)).status
+          } catch {
+            containerStatus = 'unknown'
+          }
+        }
+        const decision = decideAfterFailure({ attempts: claimed.attempts, containerStatus })
+        if (decision === 'published') {
+          // The response was lost after Threads published; keep going, the id is resolved later.
+          const saved = await ownedUpdate(
+            `status = 'PUBLISHED', published_at = now(), last_error = null`,
+          )
+          if (!saved) return { kind: 'skipped' }
+          published++
+          parent = asParent(part, i, null, parent)
+          continue
+        }
+        // Back to PENDING so the next sweep retries it; never leave the part PUBLISHING.
         const saved = await ownedUpdate(
-          `status = 'PUBLISHED', published_at = now(), last_error = null`,
+          `status = '${decision === 'failed' ? 'FAILED' : 'PENDING'}', last_error = $4`,
+          [error],
         )
         if (!saved) return { kind: 'skipped' }
-        published++
-        parent = asParent(part, i, null, parent)
-        continue
+        return decision === 'failed'
+          ? { kind: 'failed', error, idx: part.idx }
+          : { kind: 'retry', error }
       }
-      // Back to PENDING so the next sweep retries it; never leave the part PUBLISHING.
-      const saved = await ownedUpdate(
-        `status = '${decision === 'failed' ? 'FAILED' : 'PENDING'}', last_error = $4`,
-        [error],
-      )
-      if (!saved) return { kind: 'skipped' }
-      return decision === 'failed'
-        ? { kind: 'failed', error, idx: part.idx }
-        : { kind: 'retry', error }
+    }
+    return { kind: 'done', published }
+  }
+
+  const outcome = await publishParts()
+  // Only a following part ever looks up a missing media id, so the last published part (where
+  // the chain ended or stopped) would keep an unknown id after a lost response, and its replies
+  // would never be polled. Recovering it also recovers the parts before it. Best effort: while
+  // an id is missing, dueChainPostIds brings the post back.
+  if (parent.id === null && parent.repliesTo !== null) {
+    try {
+      await resolveParentId(await getApi(), parent, notBefore)
+    } catch (err) {
+      console.warn(`[publish-chain] #${postId}: ${(err as Error).message}`)
     }
   }
-  return { kind: 'done', published }
+  return outcome
 }

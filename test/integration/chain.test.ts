@@ -177,6 +177,31 @@ describe('publishChain', () => {
     expect(parts[0]?.platform_post_id).toBe(liveSecond?.id)
   })
 
+  it('recovers the media id of the last part after a lost response', async () => {
+    const postId = await publishedChain(['second', 'third'])
+    const api = new FakeThreads()
+    api.loseResponseFor.add(lastText)
+    expect(await publishChain(postId, api)).toEqual({ kind: 'done', published: 2 })
+    const live = (await api.listMyReplies()).find((r) => r.text === lastText)
+    expect((await getParts(postId))[1]?.platform_post_id).toBe(live?.id)
+    expect(await dueChainPostIds()).toEqual([])
+  })
+
+  it('recovers the last published part of a chain that stopped at a failed one', async () => {
+    const postId = await publishedChain(['second', 'third'])
+    const api = new FakeThreads()
+    // Part 2 went out but its id was lost; part 3 already gave up, so nothing would look it up.
+    const liveSecond = api.addLiveReply('second', 'main-id')
+    await query(
+      `update post_parts set status = case idx when 2 then 'PUBLISHED' else 'FAILED' end,
+         published_at = now() where post_id = $1`,
+      [postId],
+    )
+    expect(await publishChain(postId, api)).toEqual({ kind: 'skipped' })
+    expect((await getParts(postId))[0]?.platform_post_id).toBe(liveSecond)
+    expect(api.created).toHaveLength(0)
+  })
+
   it('does not mistake an identical reply under another post for the lost part', async () => {
     const postId = await publishedChain(['second', 'third'])
     const api = new FakeThreads()
@@ -271,6 +296,21 @@ describe('dueChainPostIds', () => {
     expect(noParts).toBeGreaterThan(0)
 
     expect(await dueChainPostIds()).toEqual([pending, stale])
+  })
+
+  it('brings back a recent post whose published part has no media id yet', async () => {
+    const recent = await publishedChain(['a'])
+    const old = await publishedChain(['a'])
+    await query(
+      "update post_parts set status = 'PUBLISHED', platform_post_id = null, published_at = now() where post_id = $1",
+      [recent],
+    )
+    await query(
+      `update post_parts set status = 'PUBLISHED', platform_post_id = null,
+         published_at = now() - interval '3 days' where post_id = $1`,
+      [old],
+    )
+    expect(await dueChainPostIds()).toEqual([recent])
   })
 })
 
