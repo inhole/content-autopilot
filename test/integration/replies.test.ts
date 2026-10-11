@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { query } from '../../src/db/pool.ts'
 import { answerReply, pollReplies } from '../../src/pipeline/replies.ts'
-import { DryRunThreadsClient, type ThreadsReply } from '../../src/threads/client.ts'
+import {
+  type ContainerStatus,
+  DryRunThreadsClient,
+  type ThreadsReply,
+} from '../../src/threads/client.ts'
 import { seedPost, seedTopic } from './helpers.ts'
 
 const reply = (id: string, over: Partial<ThreadsReply> = {}): ThreadsReply => ({
@@ -24,10 +28,12 @@ async function publishedPost(platformPostId = 'media-1') {
   return postId
 }
 
-function apiWith(replies: ThreadsReply[], replyTo = vi.fn(async () => 'answer-1')) {
+function apiWith(replies: ThreadsReply[]) {
   return Object.assign(new DryRunThreadsClient(), {
     listReplies: vi.fn(async () => replies),
-    replyTo,
+    createTextContainer: vi.fn(async () => 'container-1'),
+    getContainerStatus: vi.fn(async () => ({ status: 'FINISHED' as ContainerStatus })),
+    publish: vi.fn(async () => 'answer-1'),
   })
 }
 
@@ -72,6 +78,19 @@ describe('pollReplies', () => {
     const fresh = await pollReplies(async () => 1, api)
     expect(fresh.map((r) => r.id)).toEqual(['r1'])
   })
+
+  it('re-notifies a reply whose claim was left behind by a crash', async () => {
+    await publishedPost()
+    const api = apiWith([reply('r1')])
+    await pollReplies(async () => {
+      throw new Error('first send fails')
+    }, api)
+    // Simulate a process that claimed the reply and died before sending.
+    await query(
+      "update threads_replies set notify_claimed_at = now() - interval '1 hour' where id = 'r1'",
+    )
+    expect((await pollReplies(async () => 8, api)).map((r) => r.id)).toEqual(['r1'])
+  })
 })
 
 describe('answerReply', () => {
@@ -90,9 +109,9 @@ describe('answerReply', () => {
     const api = await notified()
     const done = await answerReply(900, '고마워요', api)
     expect(done?.permalink).toBe('https://threads.net/p/r1')
-    expect(api.replyTo).toHaveBeenCalledWith('r1', '고마워요')
+    expect(api.createTextContainer).toHaveBeenCalledWith({ text: '고마워요', replyToId: 'r1' })
     await expect(answerReply(900, 'again', api)).rejects.toThrow(/이미/)
-    expect(api.replyTo).toHaveBeenCalledTimes(1)
+    expect(api.publish).toHaveBeenCalledTimes(1)
     const [row] = await query<{ answer_state: string; answer_media_id: string }>(
       "select answer_state, answer_media_id from threads_replies where id = 'r1'",
     )
@@ -106,14 +125,48 @@ describe('answerReply', () => {
       answerReply(900, 'b', api),
     ])
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
-    expect(api.replyTo).toHaveBeenCalledTimes(1)
+    expect(api.publish).toHaveBeenCalledTimes(1)
   })
 
-  it('releases the claim when Threads fails so the owner can retry', async () => {
+  it('releases the claim when Threads fails without publishing so the owner can retry', async () => {
     const api = await notified()
-    api.replyTo.mockRejectedValueOnce(new Error('threads down'))
+    api.publish.mockRejectedValueOnce(new Error('threads down'))
     await expect(answerReply(900, 'a', api)).rejects.toThrow('threads down')
     expect(await answerReply(900, 'a', api)).not.toBeNull()
+  })
+
+  it('treats a lost publish response as answered instead of posting again', async () => {
+    const api = await notified()
+    api.publish.mockRejectedValueOnce(new Error('socket hang up'))
+    // The status poll before publishing sees FINISHED; the check after the failure sees PUBLISHED.
+    api.getContainerStatus
+      .mockResolvedValueOnce({ status: 'FINISHED' })
+      .mockResolvedValueOnce({ status: 'PUBLISHED' })
+    expect(await answerReply(900, 'a', api)).not.toBeNull()
+    await expect(answerReply(900, 'a', api)).rejects.toThrow(/이미/)
+    expect(api.publish).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the claim when the outcome is unknown, then reconciles it once stale', async () => {
+    const api = await notified()
+    api.publish.mockRejectedValueOnce(new Error('timeout'))
+    api.getContainerStatus
+      .mockResolvedValueOnce({ status: 'FINISHED' })
+      .mockRejectedValueOnce(new Error('lookup failed'))
+    await expect(answerReply(900, 'a', api)).rejects.toThrow('timeout')
+    await expect(answerReply(900, 'a', api)).rejects.toThrow(/이미/)
+
+    // Ten minutes later the claim is stale; the saved container turns out to be published.
+    await query(
+      "update threads_replies set answer_claimed_at = now() - interval '1 hour' where id = 'r1'",
+    )
+    api.getContainerStatus.mockResolvedValueOnce({ status: 'PUBLISHED' })
+    expect(await answerReply(900, 'a', api)).not.toBeNull()
+    expect(api.publish).toHaveBeenCalledTimes(1)
+    const [row] = await query<{ answer_state: string }>(
+      "select answer_state from threads_replies where id = 'r1'",
+    )
+    expect(row?.answer_state).toBe('ANSWERED')
   })
 
   it('rejects over-limit text before claiming', async () => {

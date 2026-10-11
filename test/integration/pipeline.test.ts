@@ -64,7 +64,6 @@ describe('publishPost', () => {
       me: () => base.me(),
       getInsights: () => base.getInsights(),
       listReplies: () => base.listReplies(),
-      replyTo: (id, text) => base.replyTo(id, text),
     }
     const outcome = await publishPost(postId, api)
     expect(outcome.kind).toBe('skipped')

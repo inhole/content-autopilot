@@ -1,11 +1,14 @@
 import { query } from '../db/pool.ts'
 import { getThreadsApi } from '../threads/account.ts'
 import { THREADS_TEXT_LIMIT, type ThreadsApi, type ThreadsReply } from '../threads/client.ts'
+import { driveContainer } from './publish.ts'
 
 /** Replies matter most early, and older posts would only add API calls. */
 export const REPLY_POLL_WINDOW_HOURS = 48
 /** A reply whose notification failed is retried for this long, then dropped. */
 const NOTIFY_RETRY_HOURS = 24
+/** A notify/answer claim older than this was left by a crashed process and may be taken over. */
+const STALE_CLAIM_MINUTES = 10
 
 export type NewReply = {
   id: string
@@ -92,29 +95,33 @@ export async function pollReplies(send: SendNotification, api?: ThreadsApi): Pro
     `select r.id, r.post_id, r.username, r.text, r.permalink, p.text as post_text
      from threads_replies r join posts p on p.id = r.post_id
      where r.notified_at is null and r.created_at > now() - make_interval(hours => $1)
+       and (r.notify_claimed_at is null or r.notify_claimed_at < now() - make_interval(mins => $2))
      order by r.replied_at nulls last, r.created_at`,
-    [NOTIFY_RETRY_HOURS],
+    [NOTIFY_RETRY_HOURS, STALE_CLAIM_MINUTES],
   )
   const notified: NewReply[] = []
   for (const r of pending) {
     // Claimed first so a concurrent poll (CLI and worker) cannot notify the same reply twice.
+    // notified_at is set only once the message id is saved; a claim left by a crash expires, so
+    // the reply is notified again rather than never (a duplicate beats a lost notification).
     const claimed = await query(
-      'update threads_replies set notified_at = now() where id = $1 and notified_at is null returning id',
-      [r.id],
+      `update threads_replies set notify_claimed_at = now()
+       where id = $1 and notified_at is null
+         and (notify_claimed_at is null or notify_claimed_at < now() - make_interval(mins => $2))
+       returning id`,
+      [r.id, STALE_CLAIM_MINUTES],
     )
     if (claimed.length === 0) continue
     try {
       const messageId = await send(formatReplyNotification(r))
-      if (messageId != null) {
-        await query('update threads_replies set telegram_message_id = $2 where id = $1', [
-          r.id,
-          messageId,
-        ])
-      }
+      await query(
+        'update threads_replies set notified_at = now(), telegram_message_id = $2 where id = $1',
+        [r.id, messageId],
+      )
       notified.push(r)
     } catch (err) {
       console.warn(`[replies] notify ${r.id} failed: ${(err as Error).message}`)
-      await query('update threads_replies set notified_at = null where id = $1', [r.id])
+      await query('update threads_replies set notify_claimed_at = null where id = $1', [r.id])
     }
   }
   return notified
@@ -127,11 +134,19 @@ async function isReplyNotification(telegramMessageId: number): Promise<boolean> 
   return rows.length > 0
 }
 
+const containerStatus = (api: ThreadsApi, id: string) =>
+  api.getContainerStatus(id).then(
+    (s) => s.status as string,
+    () => 'unknown',
+  )
+
 /**
- * Posts the owner's answer to the Threads reply behind a Telegram notification. Each reply can be
- * answered once: the atomic claim means a double send or a retry never posts twice. On failure the
- * claim is released so the owner can try again. Returns null when the message is not a reply
- * notification.
+ * Posts the owner's answer to the Threads reply behind a Telegram notification. Each reply is
+ * answered once: the atomic claim stops a double send, and the container id saved before
+ * publishing lets a later attempt see that a "failed" one was in fact published (lost response)
+ * instead of posting again. A failure that is known not to have published releases the claim so
+ * the owner can retry; an unclear one keeps it until it goes stale and the next attempt re-checks.
+ * Returns null when the message is not a reply notification.
  */
 export async function answerReply(
   telegramMessageId: number,
@@ -140,26 +155,68 @@ export async function answerReply(
 ): Promise<{ permalink: string | null } | null> {
   if (!(await isReplyNotification(telegramMessageId))) return null
   const answer = validateAnswer(text)
-  const [claimed] = await query<{ id: string; permalink: string | null }>(
-    `update threads_replies set answer_state = 'ANSWERING', answer_text = $2
-     where telegram_message_id = $1 and answer_state is null
-     returning id, permalink`,
-    [telegramMessageId, answer],
+  const [claimed] = await query<{
+    id: string
+    permalink: string | null
+    answer_container_id: string | null
+  }>(
+    `update threads_replies
+     set answer_state = 'ANSWERING', answer_text = $2, answer_claimed_at = now()
+     where telegram_message_id = $1
+       and (answer_state is null
+         or (answer_state = 'ANSWERING' and answer_claimed_at < now() - make_interval(mins => $3)))
+     returning id, permalink, answer_container_id`,
+    [telegramMessageId, answer, STALE_CLAIM_MINUTES],
   )
   if (!claimed) throw new Error('이미 답글을 달았거나 달고 있는 답글이에요.')
-  try {
-    const mediaId = await (api ?? (await getThreadsApi())).replyTo(claimed.id, answer)
-    await query(
+
+  const threads = api ?? (await getThreadsApi())
+  const done = { permalink: claimed.permalink }
+  const markAnswered = (mediaId: string | null) =>
+    query(
       `update threads_replies set answer_state = 'ANSWERED', answer_media_id = $2 where id = $1`,
       [claimed.id, mediaId],
     )
+
+  // A previous attempt may have published and then lost the response or crashed.
+  if (
+    claimed.answer_container_id &&
+    (await containerStatus(threads, claimed.answer_container_id)) === 'PUBLISHED'
+  ) {
+    await markAnswered(null)
+    return done
+  }
+
+  let containerId: string | null = null
+  try {
+    // Always a fresh container: an unpublished old one may carry an earlier answer text.
+    const { platformPostId } = await driveContainer(
+      threads,
+      { text: answer, replyToId: claimed.id },
+      null,
+      async (id) => {
+        containerId = id
+        await query('update threads_replies set answer_container_id = $2 where id = $1', [
+          claimed.id,
+          id,
+        ])
+      },
+    )
+    await markAnswered(platformPostId)
+    return done
   } catch (err) {
-    await query(
-      `update threads_replies set answer_state = null, answer_text = null
-       where id = $1 and answer_state = 'ANSWERING'`,
-      [claimed.id],
-    ).catch(() => {})
+    const status = containerId ? await containerStatus(threads, containerId) : null
+    if (status === 'PUBLISHED') {
+      await markAnswered(null).catch(() => {})
+      return done
+    }
+    if (status !== 'unknown') {
+      await query(
+        `update threads_replies set answer_state = null, answer_text = null
+         where id = $1 and answer_state = 'ANSWERING'`,
+        [claimed.id],
+      ).catch(() => {})
+    }
     throw err
   }
-  return { permalink: claimed.permalink }
 }

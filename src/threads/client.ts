@@ -33,10 +33,8 @@ export interface ThreadsApi {
   // Insights
   getInsights(mediaId: string): Promise<Insights>
   // Replies
-  /** Top-level replies of a published post (first page only). */
+  /** Top-level replies of a published post, newest first (first page only). */
   listReplies(mediaId: string): Promise<ThreadsReply[]>
-  /** Publishes a text reply to a reply and returns the new media id. */
-  replyTo(replyId: string, text: string): Promise<string>
 }
 
 const idResponse = z.object({ id: z.string() })
@@ -155,19 +153,10 @@ export class ThreadsClient implements ThreadsApi {
     return parseReplies(
       await this.call('GET', `/${mediaId}/replies`, {
         fields: 'id,text,username,timestamp,permalink,is_reply_owned_by_me,hide_status',
-        reverse: 'false',
+        // Newest first: only the first page is read, and new replies must not fall off it.
+        reverse: 'true',
       }),
     )
-  }
-
-  async replyTo(replyId: string, text: string): Promise<string> {
-    const containerId = await this.createTextContainer({ text, replyToId: replyId })
-    // Text containers are normally FINISHED at once; check once instead of polling.
-    const { status, error } = await this.getContainerStatus(containerId)
-    if (status === 'ERROR' || status === 'EXPIRED') {
-      throw new Error(`reply container ${containerId} ${status}: ${error ?? 'no detail'}`)
-    }
-    return this.publish(containerId)
   }
 
   private async call(
@@ -222,9 +211,5 @@ export class DryRunThreadsClient implements ThreadsApi {
   // Replies
   async listReplies(): Promise<ThreadsReply[]> {
     return []
-  }
-  async replyTo(replyId: string, text: string) {
-    console.log(`[threads dry-run] reply to ${replyId}: ${text.length} chars`)
-    return `dry-reply-${Date.now()}-${++this.n}`
   }
 }

@@ -90,9 +90,7 @@ describe('validateAnswer', () => {
 })
 
 describe('DryRunThreadsClient replies', () => {
-  it('lists nothing and fakes the reply id', async () => {
-    const api = new DryRunThreadsClient()
-    expect(await api.listReplies()).toEqual([])
-    expect(await api.replyTo('r1', 'hi')).toMatch(/^dry-/)
+  it('lists nothing', async () => {
+    expect(await new DryRunThreadsClient().listReplies()).toEqual([])
   })
 })
