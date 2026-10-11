@@ -6,7 +6,7 @@ import {
   DryRunThreadsClient,
   type ThreadsReply,
 } from '../../src/threads/client.ts'
-import { seedPost, seedTopic } from './helpers.ts'
+import { seedParts, seedPost, seedTopic } from './helpers.ts'
 
 const reply = (id: string, over: Partial<ThreadsReply> = {}): ThreadsReply => ({
   id,
@@ -38,6 +38,36 @@ function apiWith(replies: ThreadsReply[]) {
 }
 
 describe('pollReplies', () => {
+  it('also polls published chain parts and says where the reply was left', async () => {
+    const postId = await publishedPost('main-media')
+    await seedParts(postId, ['second', 'third'])
+    await query(
+      `update post_parts set status = 'PUBLISHED', platform_post_id = 'part-media-' || idx
+       where post_id = $1 and idx = 2`,
+      [postId],
+    )
+    const byMedia: Record<string, ThreadsReply[]> = {
+      'main-media': [reply('r-main')],
+      'part-media-2': [reply('r-part'), reply('own', { isOwnedByMe: true })],
+    }
+    const api = Object.assign(new DryRunThreadsClient(), {
+      listReplies: vi.fn(async (mediaId: string) => byMedia[mediaId] ?? []),
+    })
+    const sent: string[] = []
+    const fresh = await pollReplies(async (text) => {
+      sent.push(text)
+      return sent.length
+    }, api)
+
+    // Part 3 is not published yet, so only the main post and part 2 are read.
+    expect(api.listReplies.mock.calls.map(([id]) => id)).toEqual(['main-media', 'part-media-2'])
+    expect(fresh.map((r) => [r.id, r.part_idx, r.chain_length])).toEqual([
+      ['r-main', null, 3],
+      ['r-part', 2, 3],
+    ])
+    expect(sent[1]).toContain(`글 #${postId} [2/3] "second"`)
+  })
+
   it('notifies a new reply once and skips owned, hidden and dry-run posts', async () => {
     await publishedPost()
     await publishedPost('dry-post-1')
