@@ -27,6 +27,36 @@ export async function seedPost(
   return row.id
 }
 
+/** Adds follow-up parts (idx 2, 3) to a post. */
+export async function seedParts(
+  postId: number,
+  texts: string[],
+  opts: { status?: string; attempts?: number } = {},
+): Promise<void> {
+  for (const [i, text] of texts.entries()) {
+    await query(
+      'insert into post_parts (post_id, idx, text, status, attempts) values ($1, $2, $3, $4, $5)',
+      [postId, i + 2, text, opts.status ?? 'PENDING', opts.attempts ?? 0],
+    )
+  }
+}
+
+export async function getParts(postId: number) {
+  return query<{
+    idx: number
+    status: string
+    container_id: string | null
+    platform_post_id: string | null
+    attempts: number
+    claim_seq: number
+    last_error: string | null
+  }>(
+    `select idx, status, container_id, platform_post_id, attempts, claim_seq, last_error
+     from post_parts where post_id = $1 order by idx`,
+    [postId],
+  )
+}
+
 export async function getPost(id: number) {
   const [row] = await query<{
     status: string

@@ -1,6 +1,12 @@
 import { PgBoss } from 'pg-boss'
 import { config } from './config.ts'
 import { dbSsl } from './db/pool.ts'
+import {
+  dueChainPostIds,
+  markChainAlerted,
+  publishChain,
+  unalertedChainFailures,
+} from './pipeline/chain.ts'
 import { collectAll } from './pipeline/collect.ts'
 import {
   generatePost,
@@ -10,6 +16,7 @@ import {
 } from './pipeline/generate.ts'
 import { collectInsights, weeklyReport } from './pipeline/insights.ts'
 import { expireDrafts, loadPendingDrafts, runReviewMaintenance } from './pipeline/maintenance.ts'
+import { loadParts } from './pipeline/parts.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
@@ -24,6 +31,8 @@ export const Q = {
   review: 'review',
   publishDue: 'publish-due',
   publish: 'publish',
+  publishChain: 'publish-chain',
+  chainAlert: 'chain-alert',
   refreshToken: 'refresh-token',
   pollReplies: 'poll-replies',
 } as const
@@ -76,6 +85,7 @@ async function alertOnFinalFailure<T>(
 /** `regenerate` is absent on jobs queued before it existed; feedback implied a regeneration then. */
 type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean; seq?: number }
 type PostData = { postId: number }
+type ChainAlertData = { postId: number; error: string }
 
 export function createBoss(): PgBoss {
   const boss = new PgBoss({
@@ -113,6 +123,17 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.createQueue(Q.publishDue, { policy: 'singleton', retryLimit: 0 })
   // Retries come from publish-due re-finding the post, so the job itself never retries.
   await boss.createQueue(Q.publish, { policy: 'exclusive', retryLimit: 0 })
+  // Same model for the follow-up replies of a thread chain: the sweep re-finds unfinished parts.
+  await boss.createQueue(Q.publishChain, { policy: 'exclusive', retryLimit: 0 })
+  // The alert (and its retry button) is the owner's only way back for failed parts, so it gets its
+  // own retrying job, and publish-due re-sends it until post_parts.alerted_at says it went out.
+  // Exclusive: one queued or active alert per post (singletonKey), however long Telegram is down.
+  await boss.createQueue(Q.chainAlert, {
+    policy: 'exclusive',
+    retryLimit: 5,
+    retryDelay: 60,
+    retryBackoff: true,
+  })
   await boss.createQueue(Q.refreshToken, { retryLimit: 2, retryDelay: 3600 })
 
   const tz = config.TZ_NAME
@@ -187,10 +208,18 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     )
   })
 
+  const enqueueChain = (postId: number) =>
+    boss.send(Q.publishChain, { postId } satisfies PostData, { singletonKey: `chain-${postId}` })
+
+  const enqueueChainAlert = (data: ChainAlertData) =>
+    boss.send(Q.chainAlert, data, { singletonKey: `chain-alert-${data.postId}` })
+
   await boss.work(Q.publishDue, async () => {
     for (const postId of await duePostIds()) {
       await boss.send(Q.publish, { postId } satisfies PostData, { singletonKey: `post-${postId}` })
     }
+    for (const postId of await dueChainPostIds()) await enqueueChain(postId)
+    for (const alert of await unalertedChainFailures()) await enqueueChainAlert(alert)
   })
 
   await boss.work<PostData>(Q.publish, async ([job]) => {
@@ -198,11 +227,35 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     const outcome = await publishPost(job.data.postId)
     if (outcome.kind === 'published') {
       await reviewer.notify(`🚀 #${job.data.postId} Threads 발행 완료`)
+      // Start the replies right away instead of waiting for the next publish-due sweep.
+      if ((await loadParts(job.data.postId)).length > 0) await enqueueChain(job.data.postId)
     } else if (outcome.kind === 'failed') {
       await reviewer.notify(`❌ #${job.data.postId} 발행 실패 (재시도 중단): ${outcome.error}`)
     } else if (outcome.kind === 'retry') {
       console.warn(`[publish] #${job.data.postId} will retry: ${outcome.error}`)
     }
+  })
+
+  await boss.work<PostData>(Q.publishChain, async ([job]) => {
+    if (!job) return
+    const { postId } = job.data
+    const outcome = await publishChain(postId)
+    if (outcome.kind === 'failed') {
+      await enqueueChainAlert({ postId, error: outcome.error })
+    } else if (outcome.kind === 'done' && outcome.published > 0) {
+      await reviewer.notify(`🧵 #${postId} 답글 ${outcome.published}개 발행 완료`)
+    } else if (outcome.kind === 'retry') {
+      console.warn(`[publish-chain] #${postId} will retry: ${outcome.error}`)
+    }
+  })
+
+  await boss.work<ChainAlertData>(Q.chainAlert, async ([job]) => {
+    if (!job) return
+    // The parts may have been retried or alerted since this job was queued: send only what is due.
+    const [due] = await unalertedChainFailures(job.data.postId)
+    if (!due) return
+    await reviewer.notifyChainFailure(due.postId, due.error)
+    await markChainAlerted(due.postId)
   })
 
   await boss.work(Q.refreshToken, async () => {

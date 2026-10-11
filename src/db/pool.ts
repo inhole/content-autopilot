@@ -27,3 +27,23 @@ export async function query<T extends pg.QueryResultRow>(
   const result = await pool.query<T>(text, values)
   return result.rows
 }
+
+/** `query` bound to one client, for statements that must share a transaction. */
+export type Query = <T extends pg.QueryResultRow>(text: string, values?: unknown[]) => Promise<T[]>
+
+/** Runs `fn` in a transaction on one pooled client; rolls back if it throws. */
+export async function transaction<R>(fn: (q: Query) => Promise<R>): Promise<R> {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const q: Query = async (text, values) => (await client.query(text, values)).rows
+    const result = await fn(q)
+    await client.query('commit')
+    return result
+  } catch (err) {
+    await client.query('rollback').catch(() => {})
+    throw err
+  } finally {
+    client.release()
+  }
+}

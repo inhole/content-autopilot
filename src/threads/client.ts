@@ -24,6 +24,16 @@ export type ThreadsReply = {
   hidden: boolean
 }
 
+/** One of the owner's own posts or replies, as listed by `/me/threads` and `/me/replies`. */
+export type ThreadsOwnPost = {
+  id: string
+  /** Missing for media-only posts. */
+  text: string | null
+  timestamp: Date | null
+  /** Media id this reply answers; null for top-level posts or when the API omits it. */
+  repliedToId: string | null
+}
+
 export interface ThreadsApi {
   createTextContainer(post: TextPost): Promise<string>
   getContainerStatus(containerId: string): Promise<{ status: ContainerStatus; error?: string }>
@@ -35,6 +45,11 @@ export interface ThreadsApi {
   // Replies
   /** Top-level replies of a published post, newest first (first page only). */
   listReplies(mediaId: string): Promise<ThreadsReply[]>
+  // Own posts (used to recover a media id when the publish response was lost)
+  /** The owner's recent top-level posts, newest first (first page only). */
+  listMyThreads(): Promise<ThreadsOwnPost[]>
+  /** The owner's recent replies, newest first (first page only). */
+  listMyReplies(): Promise<ThreadsOwnPost[]>
 }
 
 const idResponse = z.object({ id: z.string() })
@@ -60,6 +75,32 @@ const repliesResponse = z.object({
     )
     .default([]),
 })
+
+const ownPostsResponse = z.object({
+  data: z
+    .array(
+      z.object({
+        id: z.string(),
+        text: z.string().nullish(),
+        timestamp: z.string().nullish(),
+        replied_to: z.object({ id: z.string() }).nullish(),
+      }),
+    )
+    .default([]),
+})
+
+/** Parses a `/me/threads` or `/me/replies` response defensively, keeping the API's order. */
+export function parseOwnPosts(raw: unknown): ThreadsOwnPost[] {
+  return ownPostsResponse.parse(raw).data.map((r) => {
+    const ts = r.timestamp ? new Date(r.timestamp) : null
+    return {
+      id: r.id,
+      text: r.text?.trim() ? r.text : null,
+      timestamp: ts && !Number.isNaN(ts.getTime()) ? ts : null,
+      repliedToId: r.replied_to?.id ?? null,
+    }
+  })
+}
 
 /** Hide statuses that mean the reply is visible to everyone. */
 const VISIBLE_HIDE_STATUSES = new Set(['NOT_HUSHED', 'UNHUSHED'])
@@ -159,6 +200,22 @@ export class ThreadsClient implements ThreadsApi {
     )
   }
 
+  // Own posts
+  async listMyThreads(): Promise<ThreadsOwnPost[]> {
+    return parseOwnPosts(
+      await this.call('GET', '/me/threads', { fields: 'id,text,timestamp', limit: '25' }),
+    )
+  }
+
+  async listMyReplies(): Promise<ThreadsOwnPost[]> {
+    return parseOwnPosts(
+      await this.call('GET', '/me/replies', {
+        fields: 'id,text,timestamp,replied_to',
+        limit: '25',
+      }),
+    )
+  }
+
   private async call(
     method: 'GET' | 'POST',
     path: string,
@@ -184,7 +241,7 @@ export class DryRunThreadsClient implements ThreadsApi {
   private n = 0
   async createTextContainer(post: TextPost) {
     console.log(
-      `[threads dry-run] container: ${post.text.length} chars, link=${post.linkAttachment}`,
+      `[threads dry-run] container: ${post.text.length} chars, link=${post.linkAttachment}, replyTo=${post.replyToId}`,
     )
     return `dry-container-${Date.now()}-${++this.n}`
   }
@@ -210,6 +267,15 @@ export class DryRunThreadsClient implements ThreadsApi {
 
   // Replies
   async listReplies(): Promise<ThreadsReply[]> {
+    return []
+  }
+
+  // Own posts
+  /** Dry-run ids come straight from publish, so they never need to be looked up. */
+  async listMyThreads(): Promise<ThreadsOwnPost[]> {
+    return []
+  }
+  async listMyReplies(): Promise<ThreadsOwnPost[]> {
     return []
   }
 }

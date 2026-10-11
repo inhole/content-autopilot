@@ -1,14 +1,17 @@
 import { z } from 'zod'
 import { config } from '../config.ts'
-import { query } from '../db/pool.ts'
+import { type Query, query, transaction } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
-import { GENERATE_SYSTEM } from './prompts.ts'
+import { lastFollowupLimit, loadParts, MAX_FOLLOWUPS, replaceParts } from './parts.ts'
+import { CHAIN_RULES, GENERATE_SYSTEM } from './prompts.ts'
 import { gatherSources } from './sources.ts'
 import { buildStylePrompt, loadStyleContext } from './style.ts'
 
 export const generationSchema = z.object({
   text: z.string().min(50).max(THREADS_TEXT_LIMIT),
+  /** Follow-up replies continuing the main post; empty for a single post. */
+  followups: z.array(z.string().max(THREADS_TEXT_LIMIT)).max(MAX_FOLLOWUPS),
   angle: z.string(),
   topic_tag: z.string().max(50),
   caveats: z.array(z.string()),
@@ -16,35 +19,72 @@ export const generationSchema = z.object({
 export type Generation = z.infer<typeof generationSchema>
 
 // Providers do not reliably enforce maxLength in structured output (Opus routinely writes 500+
-// chars), so the first pass accepts long text and an over-limit draft is shortened once.
-const draftSchema = generationSchema.extend({ text: z.string().min(50).max(4000) })
-const shortenSchema = z.object({ text: z.string().min(50).max(THREADS_TEXT_LIMIT) })
-const SHORTEN_TARGET = 450
+// chars), so the first pass accepts long text and an over-limit piece is shortened once. The
+// follow-up count is capped in code for the same reason.
+const draftSchema = generationSchema.extend({
+  text: z.string().min(50).max(4000),
+  followups: z.array(z.string().max(4000)),
+})
+// With the chain disabled the model is not asked for follow-ups at all.
+const singleDraftSchema = draftSchema.omit({ followups: true })
+const shortenSchema = (limit: number) => z.object({ text: z.string().min(1).max(limit) })
+const SHORTEN_MARGIN = 50
 
-export const shortenPrompt = (text: string) =>
-  `아래 Threads 글을 공백 포함 ${SHORTEN_TARGET}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅, 마지막 질문은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
+export const shortenPrompt = (text: string, target = THREADS_TEXT_LIMIT - SHORTEN_MARGIN) =>
+  `아래 Threads 글을 공백 포함 ${target}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅, 마지막 질문은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
 
 export const charCount = (text: string) => [...text].length
 
-/** One LLM draft for an assembled user prompt, shortened once if it exceeds the Threads limit. */
-export async function draftPost(user: string, model = config.LLM_MODEL): Promise<Generation> {
-  const draft = await chatJson({
-    model,
-    system: GENERATE_SYSTEM,
-    user,
-    schema: draftSchema,
-    schemaName: 'threads_post',
-  })
-  if (charCount(draft.text) <= THREADS_TEXT_LIMIT) return draft
-  const { text } = await chatJson({
-    model,
-    system: GENERATE_SYSTEM,
-    user: shortenPrompt(draft.text),
-    schema: shortenSchema,
-    schemaName: 'threads_post_shortened',
-    temperature: 0.3,
-  })
-  return { ...draft, text }
+/**
+ * One LLM draft for an assembled user prompt. Every piece over its limit is shortened once: the
+ * main post and non-last follow-ups to the Threads limit, the last follow-up to leave room for
+ * the CTA that is appended at publish time. Empty follow-ups are dropped.
+ */
+export async function draftPost(
+  user: string,
+  model = config.LLM_MODEL,
+  chain = config.THREAD_CHAIN_ENABLED,
+): Promise<Generation> {
+  const system = chain ? `${GENERATE_SYSTEM}\n\n${CHAIN_RULES}` : GENERATE_SYSTEM
+  const raw = chain
+    ? await chatJson({ model, system, user, schema: draftSchema, schemaName: 'threads_chain' })
+    : {
+        ...(await chatJson({
+          model,
+          system,
+          user,
+          schema: singleDraftSchema,
+          schemaName: 'threads_post',
+        })),
+        followups: [] as string[],
+      }
+  const followups = raw.followups
+    .map((f) => f.trim())
+    .filter(Boolean)
+    .slice(0, MAX_FOLLOWUPS)
+
+  const fitTo = async (text: string, limit: number): Promise<string> => {
+    if (charCount(text) <= limit) return text
+    const shortened = await chatJson({
+      model,
+      system,
+      user: shortenPrompt(text, limit - SHORTEN_MARGIN),
+      schema: shortenSchema(limit),
+      schemaName: 'threads_post_shortened',
+      temperature: 0.3,
+    })
+    return shortened.text
+  }
+  const lastIdx = followups.length - 1
+  return {
+    ...raw,
+    text: await fitTo(raw.text, THREADS_TEXT_LIMIT),
+    followups: await Promise.all(
+      followups.map((f, i) =>
+        fitTo(f, i === lastIdx ? lastFollowupLimit(config.THREAD_CTA_TEXT) : THREADS_TEXT_LIMIT),
+      ),
+    ),
+  }
 }
 
 type Topic = {
@@ -67,6 +107,8 @@ export type GenerateOptions = {
    * request exists, so a retried older request never overwrites a newer result.
    */
   seq?: number
+  /** Generate follow-up replies too; defaults to THREAD_CHAIN_ENABLED. */
+  chain?: boolean
 }
 
 const markUsed = (topicId: number) =>
@@ -107,7 +149,7 @@ export async function generatePost(
   topicId: number,
   options: GenerateOptions = {},
 ): Promise<number | null> {
-  const { regenerate = false, feedback, seq } = options
+  const { regenerate = false, feedback, seq, chain = config.THREAD_CHAIN_ENABLED } = options
   const [topic] = await query<Topic>(
     'select id, title, url, discussion_url, feed_summary, note from topics where id = $1',
     [topicId],
@@ -132,9 +174,14 @@ export async function generatePost(
     throw new SkipTopicError(`topic ${topicId}: no readable article body`)
   }
 
+  // The previous follow-ups are shown too, so feedback can refer to them.
+  const previousFollowups =
+    existing && feedback
+      ? (await loadParts(existing.id)).map((p, i) => `\n\n이전 답글 ${i + 1}:\n${p.text}`).join('')
+      : ''
   const revisionPrompt =
     existing && feedback
-      ? `\n\n이전 초안:\n${existing.text}\n\n검수자 피드백: ${feedback}\n피드백을 반영해 새로 써라.`
+      ? `\n\n이전 초안:\n${existing.text}${previousFollowups}\n\n검수자 피드백: ${feedback}\n피드백을 반영해 새로 써라.`
       : ''
 
   // The note is the owner's opinion (the angle), never a source of facts.
@@ -157,27 +204,37 @@ export async function generatePost(
     ...(stylePrompt ? [stylePrompt] : []),
   ]
 
-  const gen = await draftPost(`${parts.join('\n\n')}${notePrompt}${revisionPrompt}`)
+  const gen = await draftPost(
+    `${parts.join('\n\n')}${notePrompt}${revisionPrompt}`,
+    config.LLM_MODEL,
+    chain,
+  )
 
   // An initial generation never overwrites: if another job created the draft meanwhile, that
   // draft (and any edit made to it) wins and that job sends it to review.
   // A regeneration only replaces a draft still under review (a reject/approve may have landed
   // while the LLM ran) and only if it is still the latest request.
-  const [post] = existing
-    ? await query<{ id: number }>(
-        `update posts set text = $2, angle = $3, generation = $4, revision = revision + 1,
-           updated_at = now()
-         where id = $1 and status = 'PENDING_REVIEW' and ($5::int is null or regen_seq = $5)
-         returning id`,
-        [existing.id, gen.text, gen.angle, JSON.stringify(gen), seq ?? null],
-      )
-    : await query<{ id: number }>(
-        `insert into posts (topic_id, text, angle, source_url, generation, status)
-         values ($1, $2, $3, $4, $5, 'PENDING_REVIEW')
-         on conflict (topic_id, platform) do nothing
-         returning id`,
-        [topic.id, gen.text, gen.angle, sources.sourceUrl, JSON.stringify(gen)],
-      )
+  // The post row and its follow-ups are written together, and the parts only when the post write
+  // actually took effect.
+  const post = await transaction(async (q: Query) => {
+    const [row] = existing
+      ? await q<{ id: number }>(
+          `update posts set text = $2, angle = $3, generation = $4, revision = revision + 1,
+             updated_at = now()
+           where id = $1 and status = 'PENDING_REVIEW' and ($5::int is null or regen_seq = $5)
+           returning id`,
+          [existing.id, gen.text, gen.angle, JSON.stringify(gen), seq ?? null],
+        )
+      : await q<{ id: number }>(
+          `insert into posts (topic_id, text, angle, source_url, generation, status)
+           values ($1, $2, $3, $4, $5, 'PENDING_REVIEW')
+           on conflict (topic_id, platform) do nothing
+           returning id`,
+          [topic.id, gen.text, gen.angle, sources.sourceUrl, JSON.stringify(gen)],
+        )
+    if (row) await replaceParts(q, row.id, gen.followups)
+    return row
+  })
   if (!post) return null
   await markUsed(topicId)
   return post.id

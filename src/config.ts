@@ -40,6 +40,17 @@ const schema = z.object({
     .string()
     .default('08:00,12:30,21:00')
     .transform((s) => s.split(',').map((t) => t.trim())),
+
+  // Thread chains (docs/decisions.md 8): drafts get up to two follow-up replies. Only affects
+  // generation; a post that already has parts is published as a chain either way.
+  THREAD_CHAIN_ENABLED: bool,
+  // Fixed text appended to the last follow-up of a chain, never to a single post. `\n` in the
+  // value becomes a line break. Unset: no CTA.
+  THREAD_CTA_TEXT: z
+    .string()
+    .max(200)
+    .optional()
+    .transform((s) => s?.replace(/\\n/g, '\n').trim() || undefined),
 })
 
 export type Config = z.infer<typeof schema>

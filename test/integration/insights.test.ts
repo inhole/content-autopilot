@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { query } from '../../src/db/pool.ts'
-import { collectInsights, loadInsightRows } from '../../src/pipeline/insights.ts'
+import { buildWeeklyReport, collectInsights, loadInsightRows } from '../../src/pipeline/insights.ts'
+import { loadChainParts } from '../../src/pipeline/status.ts'
 import { DryRunThreadsClient } from '../../src/threads/client.ts'
 import { emptyInsights, type Insights } from '../../src/threads/insights.ts'
 import { seedPost, seedTopic } from './helpers.ts'
@@ -76,5 +77,44 @@ describe('loadInsightRows', () => {
     expect(rows.map((r) => r.postId)).toEqual([a, b])
     expect(rows[0]?.metrics).toMatchObject({ views: 50, replies: 4, likes: null })
     expect(rows[1]?.metrics).toBeNull()
+  })
+})
+
+describe('chain data in reports and status', () => {
+  const addPart = (postId: number, idx: number, status: string, minutesAgo = 0) =>
+    query(
+      `insert into post_parts (post_id, idx, text, status, updated_at)
+       values ($1, $2, 'part', $3, now() - make_interval(mins => $4))`,
+      [postId, idx, status, minutesAgo],
+    )
+
+  it('flags posts with parts and compares them with single posts', async () => {
+    const chain = await publishedPost('media-chain')
+    const single = await publishedPost('media-single')
+    await addPart(chain, 2, 'PUBLISHED')
+    await query(
+      'insert into post_insights (post_id, views, replies) values ($1, 400, 6), ($2, 100, 0)',
+      [chain, single],
+    )
+
+    const rows = await loadInsightRows()
+
+    expect(rows.map((r) => [r.postId, r.hasParts])).toEqual([
+      [chain, true],
+      [single, false],
+    ])
+    const report = buildWeeklyReport(rows)
+    expect(report).toContain('연결 글 1개 — 평균 조회 400 · 평균 답글 6')
+    expect(report).toContain('단일 글 1개 — 평균 조회 100 · 평균 답글 0')
+  })
+
+  it('counts failed parts and stale unfinished parts of published posts', async () => {
+    const live = await publishedPost('media-live')
+    await addPart(live, 2, 'FAILED')
+    await addPart(live, 3, 'PENDING', 60)
+    const fresh = await publishedPost('media-fresh')
+    await addPart(fresh, 2, 'PUBLISHING', 2)
+
+    expect(await loadChainParts()).toEqual({ failed: 1, stuck: 1 })
   })
 })
