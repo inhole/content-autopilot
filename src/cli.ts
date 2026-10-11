@@ -2,6 +2,7 @@ import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
+import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
@@ -29,7 +30,9 @@ const USAGE = `usage: npm run cli -- <command>
   threads:token <code|url>    exchange the code for a long-lived token and save it to .env
   threads:fill-user-id        look up the owner of THREADS_ACCESS_TOKEN and save THREADS_USER_ID
   threads:check               verify the Threads token (GET /me)
-  threads:refresh             refresh the Threads token if it is close to expiry`
+  threads:refresh             refresh the Threads token if it is close to expiry
+  insights                    collect Threads post insights now and print the latest numbers
+  report                      print the weekly insights report (same text as Telegram /report)`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
 const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
@@ -168,6 +171,21 @@ try {
       break
     case 'threads:refresh':
       console.log(await refreshThreadsTokenIfNeeded())
+      break
+    case 'insights': {
+      console.log(await collectInsights())
+      console.table(
+        (await loadInsightRows()).map((r) => ({
+          id: r.postId,
+          published: r.publishedAt.toISOString().slice(0, 16),
+          text: r.text.slice(0, 24),
+          ...(r.metrics ?? {}),
+        })),
+      )
+      break
+    }
+    case 'report':
+      console.log(await weeklyReport())
       break
     default:
       console.log(USAGE)

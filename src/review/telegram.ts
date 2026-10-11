@@ -4,6 +4,7 @@ import { query } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
 import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
+import { weeklyReport } from '../pipeline/insights.ts'
 import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
@@ -47,6 +48,7 @@ export const HELP_TEXT = [
   '📖 사용법',
   '/status — 현재 현황',
   '/add <url> [의견] — 기사 URL로 초안 만들기',
+  '/report — 주간 성과 리포트',
   '/help — 이 도움말',
   '',
   '검수 메시지에 답장하기',
@@ -58,6 +60,7 @@ const BOT_COMMANDS = [
   { command: 'status', description: '현재 현황 보기' },
   { command: 'add', description: '기사 URL로 초안 만들기: /add <url> [의견]' },
   { command: 'help', description: '사용법 보기' },
+  { command: 'report', description: '주간 성과 리포트 보기' },
 ]
 
 type ScheduleAction = 'unsched' | 'pubnow'
@@ -222,6 +225,15 @@ export function createReviewer(opts: {
   // Commands must be registered before the message:text handler, which ends the chain for every
   // non-reply text message (commands included).
   bot.command('help', (ctx) => ctx.reply(HELP_TEXT))
+
+  bot.command('report', async (ctx) => {
+    try {
+      await ctx.reply(await weeklyReport())
+    } catch (err) {
+      console.error('[telegram] /report failed', err)
+      await ctx.reply('리포트를 만들지 못했어요. 로그를 확인해 주세요.')
+    }
+  })
 
   bot.command('add', async (ctx) => {
     const parsed = parseAddCommand(ctx.message?.text ?? '')

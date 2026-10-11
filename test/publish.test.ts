@@ -10,6 +10,7 @@ function fakeApi(statuses: ContainerStatus[]) {
     publish: vi.fn(async (id: string) => `post-of-${id}`),
     refreshToken: vi.fn(),
     me: vi.fn(),
+    getInsights: vi.fn(),
   } satisfies ThreadsApi
 }
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { emptyInsights, type Insights, parseInsights } from './insights.ts'
 
 export const THREADS_TEXT_LIMIT = 500
 
@@ -12,6 +13,8 @@ export interface ThreadsApi {
   publish(containerId: string): Promise<string>
   refreshToken(): Promise<{ accessToken: string; expiresInSeconds: number }>
   me(): Promise<{ id: string; username: string }>
+  // Insights
+  getInsights(mediaId: string): Promise<Insights>
 }
 
 const idResponse = z.object({ id: z.string() })
@@ -80,6 +83,15 @@ export class ThreadsClient implements ThreadsApi {
     return meResponse.parse(await this.call('GET', '/me', { fields: 'id,username' }))
   }
 
+  // Insights
+  async getInsights(mediaId: string): Promise<Insights> {
+    return parseInsights(
+      await this.call('GET', `/${mediaId}/insights`, {
+        metric: 'views,likes,replies,reposts,quotes,shares',
+      }),
+    )
+  }
+
   private async call(
     method: 'GET' | 'POST',
     path: string,
@@ -121,5 +133,11 @@ export class DryRunThreadsClient implements ThreadsApi {
   }
   async me() {
     return { id: 'dry-run', username: 'dry-run' }
+  }
+
+  // Insights
+  /** Dry-run posts never exist on Threads, so every metric is unknown (null), not zero. */
+  async getInsights(): Promise<Insights> {
+    return emptyInsights()
   }
 }

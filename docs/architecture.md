@@ -14,6 +14,8 @@
                publish-due (5분마다) ──▶ publish ──▶ Threads API          │
                refresh-token (04:00) ──▶ Threads 토큰 갱신               │
                review-maintenance (매시) ──▶ 초안 만료 + 리마인더        │
+               collect-insights (05:00) ──▶ 게시물 성과 스냅샷           │
+               weekly-report (월 09:00) ──▶ 주간 리포트 Telegram        │
                     └──────────────────────────────────────────────────┘
                                        │
                                Supabase Postgres
@@ -80,6 +82,7 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 | `topics` | 수집한 글, 점수, 중복 대상(`duplicate_of`), 상태. `/add`로 넣은 주제는 작성자 의견(`note`)을 가진다(`005`). HN 항목은 토론 링크(`discussion_url`, `007`)를 가진다. |
 | `posts` | 초안과 발행 상태. `(topic_id, platform)`이 unique라 재생성하면 같은 행이 갱신된다. `revision`(본문 버전)·`review_revision`(검수 메시지가 보여준 버전), `regen_seq`(최근 재생성 요청 순번), `claim_seq`(발행 소유 토큰)는 경합을 막기 위한 컬럼이다(`004_post_revisions.sql`). `reject_reason`은 폐기 사유이고 문체 학습에 쓰인다(`008`). |
 | `platform_accounts` | Threads 토큰과 만료 시각 |
+| `post_insights` | 발행한 글의 Threads 성과 스냅샷(조회·좋아요·답글·리포스트·인용·공유). 수집할 때마다 행이 쌓이고 리포트는 글별 최신 행을 쓴다. 값이 null이면 Threads가 주지 않은 지표다(`009`). |
 | `pgboss.*` | pg-boss가 관리하는 큐와 스케줄 |
 
 ## 프롬프트

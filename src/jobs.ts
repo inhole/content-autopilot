@@ -8,6 +8,7 @@ import {
   requestRegeneration,
   SkipTopicError,
 } from './pipeline/generate.ts'
+import { collectInsights, weeklyReport } from './pipeline/insights.ts'
 import { expireDrafts, loadPendingDrafts, runReviewMaintenance } from './pipeline/maintenance.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
@@ -231,5 +232,25 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
       tz,
     )
     console.log('[review-maintenance]', result)
+  })
+
+  // Insights: snapshot numbers daily before the 06:00 pipeline; report every Monday morning.
+  const insightsQueue = 'collect-insights'
+  const reportQueue = 'weekly-report'
+  await boss.createQueue(insightsQueue, { policy: 'singleton', retryLimit: 1, retryDelay: 600 })
+  await boss.createQueue(reportQueue, { policy: 'singleton', retryLimit: 1, retryDelay: 600 })
+  await boss.schedule(insightsQueue, '0 5 * * *', null, { tz })
+  await boss.schedule(reportQueue, '0 9 * * 1', null, { tz })
+  await boss.work(insightsQueue, async () => {
+    console.log('[collect-insights]', await collectInsights())
+  })
+  await boss.work(reportQueue, async () => {
+    // Fresh numbers first; a failed collection still leaves the last snapshots to report on.
+    try {
+      await collectInsights()
+    } catch (err) {
+      console.error('[weekly-report] collecting insights failed', err)
+    }
+    await reviewer.notify(await weeklyReport())
   })
 }

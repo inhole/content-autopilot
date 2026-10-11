@@ -1,0 +1,143 @@
+import { query } from '../db/pool.ts'
+import { getThreadsApi } from '../threads/account.ts'
+import type { ThreadsApi } from '../threads/client.ts'
+import type { Insights } from '../threads/insights.ts'
+
+/** Counts keep moving for a while after publishing; older posts are no longer worth polling. */
+const COLLECT_WINDOW_DAYS = 14
+const REPORT_WINDOW_DAYS = 7
+const TOP_SHOWN = 3
+const PREVIEW_CHARS = 28
+
+export type CollectResult = { collected: number; failed: { postId: number; error: string }[] }
+
+/** Posts published in dry-run mode carry `dry-` ids and do not exist on Threads. */
+export const isDryRunId = (platformPostId: string) => platformPostId.startsWith('dry-')
+
+/** Stores one snapshot per recent published post. A failing post is logged and skipped. */
+export async function collectInsights(now = new Date(), api?: ThreadsApi): Promise<CollectResult> {
+  const since = new Date(now.getTime() - COLLECT_WINDOW_DAYS * 86_400_000)
+  const posts = await query<{ id: number; platform_post_id: string }>(
+    `select id, platform_post_id from posts
+     where status = 'PUBLISHED' and platform_post_id is not null and published_at >= $1
+     order by id`,
+    [since],
+  )
+  const targets = posts.filter((p) => !isDryRunId(p.platform_post_id))
+  const result: CollectResult = { collected: 0, failed: [] }
+  if (targets.length === 0) return result
+
+  const threads = api ?? (await getThreadsApi())
+  for (const p of targets) {
+    try {
+      const m = await threads.getInsights(p.platform_post_id)
+      await query(
+        `insert into post_insights (post_id, views, likes, replies, reposts, quotes, shares)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [p.id, m.views, m.likes, m.replies, m.reposts, m.quotes, m.shares],
+      )
+      result.collected++
+    } catch (err) {
+      const error = (err as Error).message
+      console.error(`[insights] post ${p.id} failed: ${error}`)
+      result.failed.push({ postId: p.id, error })
+    }
+  }
+  return result
+}
+
+export type InsightRow = {
+  postId: number
+  text: string
+  publishedAt: Date
+  /** Null when no snapshot has been collected for the post yet. */
+  metrics: Insights | null
+}
+
+/** Published posts of the last 7 days (non-dry) with their latest snapshot. */
+export async function loadInsightRows(now = new Date()): Promise<InsightRow[]> {
+  const since = new Date(now.getTime() - REPORT_WINDOW_DAYS * 86_400_000)
+  const rows = await query<
+    { id: number; text: string; published_at: Date; has_snapshot: boolean } & Insights
+  >(
+    `select p.id, p.text, p.published_at, (i.id is not null) as has_snapshot,
+            i.views, i.likes, i.replies, i.reposts, i.quotes, i.shares
+     from posts p
+     left join lateral (
+       select * from post_insights where post_id = p.id order by collected_at desc, id desc limit 1
+     ) i on true
+     where p.status = 'PUBLISHED' and p.published_at >= $1
+       and p.platform_post_id is not null and p.platform_post_id not like 'dry-%'
+     order by p.published_at`,
+    [since],
+  )
+  return rows.map((r) => ({
+    postId: r.id,
+    text: r.text,
+    publishedAt: r.published_at,
+    metrics: r.has_snapshot
+      ? {
+          views: r.views,
+          likes: r.likes,
+          replies: r.replies,
+          reposts: r.reposts,
+          quotes: r.quotes,
+          shares: r.shares,
+        }
+      : null,
+  }))
+}
+
+const n = (v: number | null | undefined) => v ?? 0
+const show = (v: number | null) => (v === null ? '-' : String(v))
+
+function preview(text: string): string {
+  const first = (text.split('\n').find((l) => l.trim()) ?? '').replace(/\s+/g, ' ').trim()
+  return first.length > PREVIEW_CHARS ? `${first.slice(0, PREVIEW_CHARS)}…` : first
+}
+
+const line = (r: InsightRow) =>
+  `#${r.postId} "${preview(r.text)}" — 👁 ${show(r.metrics?.views ?? null)} · 💬 ${show(r.metrics?.replies ?? null)} · ❤️ ${show(r.metrics?.likes ?? null)}`
+
+/** Builds the Telegram text for the last 7 days from rows (latest snapshot per post). */
+export function buildWeeklyReport(rows: InsightRow[]): string {
+  const header = '📊 주간 Threads 리포트 (최근 7일)'
+  if (rows.length === 0) return `${header}\n\n이번 주에 발행된 글이 없어요.`
+
+  const measured = rows.filter((r) => r.metrics !== null)
+  if (measured.length === 0) {
+    return `${header}\n\n발행 ${rows.length}개, 아직 수집된 성과 숫자가 없어요. (npm run cli -- insights)`
+  }
+
+  const sum = (k: keyof Insights) => measured.reduce((a, r) => a + n(r.metrics?.[k]), 0)
+  const views = sum('views')
+  const replies = sum('replies')
+  const avg = (v: number) => Math.round(v / measured.length)
+  const out = [
+    header,
+    '',
+    `발행 ${rows.length}개${measured.length < rows.length ? ` (집계 ${measured.length}개)` : ''}`,
+    `조회 ${views} (평균 ${avg(views)})`,
+    `좋아요 ${sum('likes')} (평균 ${avg(sum('likes'))})`,
+    `답글 ${replies} (평균 ${avg(replies)})`,
+    `리포스트 ${sum('reposts')} (평균 ${avg(sum('reposts'))})`,
+    views > 0
+      ? `답글률 ${((replies / views) * 1000).toFixed(1)} (조회 1000당 답글)`
+      : '답글률 계산 불가 (조회 0)',
+  ]
+
+  const byReplies = [...measured].sort(
+    (a, b) =>
+      n(b.metrics?.replies) - n(a.metrics?.replies) || n(b.metrics?.views) - n(a.metrics?.views),
+  )
+  out.push('', '💬 답글 많은 글', ...byReplies.slice(0, TOP_SHOWN).map(line))
+
+  if (measured.length > 1) {
+    const worst = [...measured].sort((a, b) => n(a.metrics?.views) - n(b.metrics?.views))[0]
+    if (worst) out.push('', '📉 조회 가장 적은 글', line(worst))
+  }
+  return out.join('\n')
+}
+
+export const weeklyReport = async (now = new Date()) =>
+  buildWeeklyReport(await loadInsightRows(now))

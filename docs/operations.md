@@ -27,6 +27,7 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 | `/status` | 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 최근 7일 만료 수, 토큰 만료일, 마지막 수집 실행 결과, 이번 달 LLM 비용(OpenRouter)을 보여준다 |
 | `/help` | 명령과 답장 규칙을 보여준다. 입력창에 `/`를 치면 명령 메뉴도 뜬다. |
 | `/add <url> [한 줄 의견]` | 직접 고른 기사로 초안을 만든다. 의견을 붙이면 그 의견을 글의 관점으로 삼는다. 의견은 관점일 뿐이고, 사실은 기사 본문에서만 가져온다. 이미 다룬 기사면 알려주기만 하고 새로 만들지 않는다. |
+| `/report` | 최근 7일 성과 리포트(발행 수, 조회·좋아요·답글·리포스트 합계와 평균, 답글률, 답글 많은 글 3개, 조회 가장 적은 글)를 보여준다. 매주 월요일 09:00에도 자동으로 온다. |
 | `/start` | chat id를 알려준다 (처음 설정할 때) |
 
 ## CLI
@@ -44,6 +45,8 @@ npm run cli -- reject <postId>
 npm run cli -- publish-now <postId>  # 즉시 발행 (FAILED 글 재시도에도 사용)
 npm run cli -- threads:check         # 토큰 확인
 npm run cli -- threads:refresh       # 토큰 수동 갱신
+npm run cli -- insights              # 발행 글의 성과를 지금 수집하고 글별 최신 숫자 출력
+npm run cli -- report                # 주간 리포트 본문 출력 (/report와 같음)
 ```
 
 CLI는 Telegram 봇을 polling하지 않는다. 그래서 워커가 실행 중일 때 같이 써도 된다.

@@ -45,6 +45,8 @@ publish-due (*/5 cron)    → enqueue publish for due posts (singletonKey per po
 publish {postId}          → Threads container → wait FINISHED → threads_publish
 refresh-token (daily)     → refresh the Threads long-lived token (60 days) near expiry
 review-maintenance (hourly) → expire PENDING_REVIEW drafts untouched 48h (EXPIRED) + 09/18h reminders
+collect-insights (daily 05:00) → snapshot Threads insights of recent published posts (post_insights)
+weekly-report (Mon 09:00) → collect fresh insights, then send the weekly report to Telegram (also /report)
 ```
 
 Key design points that span several files:

@@ -62,6 +62,7 @@ describe('publishPost', () => {
       },
       refreshToken: () => base.refreshToken(),
       me: () => base.me(),
+      getInsights: () => base.getInsights(),
     }
     const outcome = await publishPost(postId, api)
     expect(outcome.kind).toBe('skipped')
