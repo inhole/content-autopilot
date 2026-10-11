@@ -15,6 +15,12 @@ describe('status extras', () => {
       'LLM 누적 비용: $5.00',
     )
   })
+  it('shows chain part problems only when nonzero', () => {
+    expect(formatStatus(base, 'Asia/Seoul')).not.toContain('연결 글')
+    const out = formatStatus({ ...base, chainParts: { failed: 2, stuck: 1 } }, 'Asia/Seoul')
+    expect(out).toContain('연결 글 답글 실패: 2건')
+    expect(out).toContain('연결 글 답글 멈춤: 1건')
+  })
   it('parses key info, preferring monthly usage', () => {
     expect(parseLlmCost({ data: { usage: 9, usage_monthly: 2, limit: null } })).toEqual({
       usd: 2,
@@ -52,6 +58,7 @@ const base: Status = {
   publishedLast24h: 3,
   expiredLast7d: 0,
   failed: [],
+  chainParts: { failed: 0, stuck: 0 },
   threads: { dryRun: true, tokenExpiresAt: new Date('2026-12-01T00:00:00Z') },
   lastDaily: { state: 'completed', at: new Date('2026-10-08T21:05:00Z') },
 }

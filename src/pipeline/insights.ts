@@ -63,15 +63,24 @@ export type InsightRow = {
   publishedAt: Date
   /** Null when no snapshot has been collected for the post yet. */
   metrics: Insights | null
+  /** True when the post has follow-up parts (a thread chain); insights cover the main post only. */
+  hasParts?: boolean
 }
 
 /** Published posts of the last 7 days (non-dry) with their latest snapshot. */
 export async function loadInsightRows(now = new Date()): Promise<InsightRow[]> {
   const since = new Date(now.getTime() - REPORT_WINDOW_DAYS * 86_400_000)
   const rows = await query<
-    { id: number; text: string; published_at: Date; has_snapshot: boolean } & Insights
+    {
+      id: number
+      text: string
+      published_at: Date
+      has_snapshot: boolean
+      has_parts: boolean
+    } & Insights
   >(
     `select p.id, p.text, p.published_at, (i.id is not null) as has_snapshot,
+            exists (select 1 from post_parts pp where pp.post_id = p.id) as has_parts,
             i.views, i.likes, i.replies, i.reposts, i.quotes, i.shares
      from posts p
      left join lateral (
@@ -86,6 +95,7 @@ export async function loadInsightRows(now = new Date()): Promise<InsightRow[]> {
     postId: r.id,
     text: r.text,
     publishedAt: r.published_at,
+    hasParts: r.has_parts,
     metrics: r.has_snapshot
       ? {
           views: r.views,
@@ -109,6 +119,35 @@ function preview(text: string): string {
 
 const line = (r: InsightRow) =>
   `#${r.postId} "${preview(r.text)}" — 👁 ${show(r.metrics?.views ?? null)} · 💬 ${show(r.metrics?.replies ?? null)} · ❤️ ${show(r.metrics?.likes ?? null)}`
+
+/** Average of a metric over the rows that report it; null when none does (unknown, not zero). */
+function average(rows: InsightRow[], k: keyof Insights): number | null {
+  const rs = rows.filter((r) => r.metrics?.[k] != null)
+  if (rs.length === 0) return null
+  return rs.reduce((a, r) => a + n(r.metrics?.[k]), 0) / rs.length
+}
+
+function chainLine(label: string, rows: InsightRow[]): string {
+  const avg = (k: keyof Insights) => {
+    const v = average(rows, k)
+    return v === null ? '-' : String(Math.round(v))
+  }
+  return `${label} ${rows.length}개 — 평균 조회 ${avg('views')} · 평균 답글 ${avg('replies')}`
+}
+
+/** Chain vs single comparison over the main posts; empty when there is nothing to compare. */
+export function chainComparison(rows: InsightRow[]): string[] {
+  const chain = rows.filter((r) => r.hasParts)
+  if (chain.length === 0) return []
+  const single = rows.filter((r) => !r.hasParts)
+  return [
+    '',
+    '🔗 연결 글 vs 단일 글 (본글 기준)',
+    chainLine('연결 글', chain),
+    single.length ? chainLine('단일 글', single) : '단일 글 없음',
+    '표본이 작아 참고용이에요.',
+  ]
+}
 
 /** Builds the Telegram text for the last 7 days from rows (latest snapshot per post). */
 export function buildWeeklyReport(rows: InsightRow[]): string {
@@ -144,6 +183,8 @@ export function buildWeeklyReport(rows: InsightRow[]): string {
       ? `답글률 ${((total(rated, 'replies') / ratedViews) * 1000).toFixed(1)} (조회 1000당 답글)`
       : '답글률 계산 불가 (조회 0 또는 미집계)',
   ]
+
+  out.push(...chainComparison(rows))
 
   const byReplies = has('replies').sort(
     (a, b) =>

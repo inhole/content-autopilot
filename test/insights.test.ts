@@ -119,6 +119,26 @@ describe('buildWeeklyReport', () => {
     expect(out).toContain('조회 -')
   })
 
+  it('omits the chain comparison when no post has parts', () => {
+    expect(buildWeeklyReport([row(1, 'a', m(10, 1))])).not.toContain('연결 글')
+  })
+
+  it('compares chain and single posts using only known metrics', () => {
+    const out = buildWeeklyReport([
+      { ...row(1, 'chain a', m(300, 4)), hasParts: true },
+      { ...row(2, 'chain b', m(null, 2)), hasParts: true },
+      row(3, 'single', m(100, 0)),
+    ])
+    expect(out).toContain('연결 글 2개 — 평균 조회 300 · 평균 답글 3')
+    expect(out).toContain('단일 글 1개 — 평균 조회 100 · 평균 답글 0')
+    expect(out).toContain('표본이 작아')
+  })
+
+  it('states when there are no single posts to compare', () => {
+    const out = buildWeeklyReport([{ ...row(1, 'chain', m(300, 4)), hasParts: true }])
+    expect(out).toContain('단일 글 없음')
+  })
+
   it('averages and ranks each metric over the posts that report it', () => {
     const out = buildWeeklyReport([
       row(1, 'known', m(100, 2)),
