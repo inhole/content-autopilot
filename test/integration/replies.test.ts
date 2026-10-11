@@ -38,6 +38,22 @@ function apiWith(replies: ThreadsReply[]) {
 }
 
 describe('pollReplies', () => {
+  it('gives a part retried later its own polling window', async () => {
+    const postId = await publishedPost('old-main')
+    await query("update posts set published_at = now() - interval '3 days' where id = $1", [postId])
+    await seedParts(postId, ['late part'])
+    await query(
+      `update post_parts set status = 'PUBLISHED', platform_post_id = 'late-part', published_at = now()
+       where post_id = $1`,
+      [postId],
+    )
+    const api = Object.assign(new DryRunThreadsClient(), {
+      listReplies: vi.fn(async (_mediaId: string) => [] as ThreadsReply[]),
+    })
+    await pollReplies(async () => 1, api)
+    expect(api.listReplies.mock.calls.map(([id]) => id)).toEqual(['late-part'])
+  })
+
   it('also polls published chain parts and says where the reply was left', async () => {
     const postId = await publishedPost('main-media')
     await seedParts(postId, ['second', 'third'])

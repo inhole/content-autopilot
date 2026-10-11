@@ -84,7 +84,8 @@ async function insertNewReplies(
  * next poll because `notified_at` stays null. Returns the replies notified in this run.
  */
 export async function pollReplies(send: SendNotification, api?: ThreadsApi): Promise<NewReply[]> {
-  // The window follows the main post: a chain's parts go out right after it.
+  // Each post and part gets its own window: a part retried later (chainretry, publish-now) can
+  // go out long after its main post.
   const targets = await query<{ post_id: number; part_idx: number | null; media_id: string }>(
     `select p.id as post_id, null::smallint as part_idx, p.platform_post_id as media_id
      from posts p
@@ -96,7 +97,7 @@ export async function pollReplies(send: SendNotification, api?: ThreadsApi): Pro
      from post_parts pp join posts p on p.id = pp.post_id
      where p.status = 'PUBLISHED' and pp.status = 'PUBLISHED' and pp.platform_post_id is not null
        and pp.platform_post_id not like 'dry-%'
-       and p.published_at > now() - make_interval(hours => $1)
+       and coalesce(pp.published_at, p.published_at) > now() - make_interval(hours => $1)
      order by post_id, part_idx nulls first`,
     [REPLY_POLL_WINDOW_HOURS],
   )
