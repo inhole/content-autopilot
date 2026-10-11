@@ -1,18 +1,27 @@
 import { Bot, GrammyError, InlineKeyboard } from 'grammy'
 import { config } from '../config.ts'
-import { query } from '../db/pool.ts'
+import { query, transaction } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
 import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
-import { retryFailedParts } from '../pipeline/parts.ts'
+import {
+  ctaSuffix,
+  FIRST_FOLLOWUP_IDX,
+  lastFollowupLimit,
+  loadParts,
+  replaceParts,
+  retryFailedParts,
+} from '../pipeline/parts.ts'
 import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
 import { answerReply } from '../pipeline/replies.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
-const EDIT_PREFIX = /^수정\s*[:：]\s*/
+// `수정:` / `수정1:` edit the main text, `수정2:` / `수정3:` a follow-up; `삭제2` removes one.
+const EDIT_REPLY = /^수정\s*(\d*)\s*[:：]\s*/
+const DELETE_REPLY = /^삭제\s*(\d+)\s*$/
 // Another poller (e.g. the previous instance during a Railway redeploy) causes 409 until it exits.
 const POLL_RETRY_MS = 30_000
 
@@ -55,6 +64,8 @@ export const HELP_TEXT = [
   '',
   '검수 메시지에 답장하기',
   '- "수정: <새 본문>" → 본문을 그대로 교체',
+  '- "수정2: <새 내용>" → 연결 글의 2번째 조각을 그대로 교체 (3번째는 "수정3:")',
+  '- "삭제2" → 연결 글의 2번째 조각을 지움 (뒤 조각은 번호가 당겨져요, 본 글은 지울 수 없어요)',
   '- 그 외 답장 → 피드백으로 보고 재생성',
   '',
   '💬 Threads 답글 알림에 답장하기',
@@ -134,21 +145,140 @@ const fmtTime = (d: Date) =>
     minute: '2-digit',
   })
 
-export function formatReview(p: ReviewPost): string {
-  const lines = [
-    `📝 초안 #${p.id}${p.score != null ? ` · 점수 ${p.score}` : ''} · ${[...p.text].length}/${THREADS_TEXT_LIMIT}자`,
-    '',
-    p.text,
-    '',
-    `관점: ${p.angle ?? '-'}`,
-  ]
+export type ReviewReply =
+  | { kind: 'edit'; idx: number; text: string }
+  | { kind: 'delete'; idx: number }
+  | { kind: 'feedback' }
+
+/** Classifies the text of a reply to a review message. Part numbers are 1-based like the message. */
+export function parseReviewReply(input: string): ReviewReply {
+  const edit = EDIT_REPLY.exec(input)
+  if (edit) {
+    const idx = edit[1] ? Number(edit[1]) : 1
+    return { kind: 'edit', idx, text: input.slice(edit[0].length).trim() }
+  }
+  const del = DELETE_REPLY.exec(input.trim())
+  if (del) return { kind: 'delete', idx: Number(del[1]) }
+  return { kind: 'feedback' }
+}
+
+const len = (text: string) => [...text].length
+
+/**
+ * Pure: `parts` are the follow-up texts and `cta` the configured CTA (the caller reads them), so
+ * the bot and the CLI render the same text. Without parts it is the single-post format.
+ */
+export function formatReview(
+  p: ReviewPost,
+  opts: { parts?: string[]; cta?: string | undefined } = {},
+): string {
+  const parts = opts.parts ?? []
+  const cta = opts.cta || undefined
+  const score = p.score != null ? ` · 점수 ${p.score}` : ''
+  const lines: string[] = []
+  if (parts.length === 0) {
+    lines.push(`📝 초안 #${p.id}${score} · ${len(p.text)}/${THREADS_TEXT_LIMIT}자`, '', p.text)
+  } else {
+    const total = parts.length + 1
+    const lastLimit = THREADS_TEXT_LIMIT - len(ctaSuffix(cta ?? ''))
+    lines.push(
+      `📝 초안 #${p.id}${score} · 연결 글 ${total}개`,
+      `[1/${total}] 본 글 (${len(p.text)}/${THREADS_TEXT_LIMIT}자)`,
+      p.text,
+    )
+    parts.forEach((text, i) => {
+      const last = i === parts.length - 1
+      const extras = last ? [cta ? 'CTA' : '', p.source_url ? '링크' : ''].filter(Boolean) : []
+      const limit = last ? lastLimit : THREADS_TEXT_LIMIT
+      lines.push(
+        `[${i + 2}/${total}] 답글 (${len(text)}/${limit}자)${extras.length ? ` + ${extras.join('·')}` : ''}`,
+        text,
+      )
+    })
+    if (cta) lines.push(`— CTA: ${cta}`)
+  }
+  lines.push('', `관점: ${p.angle ?? '-'}`)
   if (p.caveats?.length) lines.push(`확인 필요: ${p.caveats.join(' / ')}`)
   lines.push(`출처: ${p.source_url ?? '(직접 입력)'}`)
   lines.push(
     '',
-    '이 메시지에 답장: "수정: <새 본문>"은 그대로 교체, 그 외 답장은 피드백으로 재생성',
+    parts.length === 0
+      ? '이 메시지에 답장: "수정: <새 본문>"은 그대로 교체, 그 외 답장은 피드백으로 재생성'
+      : '이 메시지에 답장: "수정: <새 본문>"·"수정2: <새 내용>"은 그 조각만 교체, "삭제2"는 그 조각 삭제, 그 외 답장은 피드백으로 재생성',
   )
   return lines.join('\n')
+}
+
+export type ReviewEdit =
+  | { kind: 'edit'; idx: number; text: string }
+  | { kind: 'delete'; idx: number }
+
+export type ReviewEditResult =
+  | { ok: true }
+  | { ok: false; reason: 'stale' | 'invalid'; message: string }
+
+const STALE_MESSAGE = '이미 처리됐거나 최신 초안이 아니라서 수정하지 못했어요.'
+
+/**
+ * Applies an edit/delete from a reply to the review message `replyTo`. The post row is locked
+ * with the review guards first, so the parts that get validated and rewritten are the ones the
+ * revision bump covers. Validation failures change nothing. On `ok` the caller re-sends the review.
+ */
+export async function applyReviewEdit(
+  postId: number,
+  replyTo: number,
+  op: ReviewEdit,
+): Promise<ReviewEditResult> {
+  const invalid = (message: string): ReviewEditResult => ({ ok: false, reason: 'invalid', message })
+  return transaction(async (q) => {
+    const [post] = await q<{ text: string }>(
+      `select text from posts
+       where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $2
+         and review_revision = revision
+       for update`,
+      [postId, replyTo],
+    )
+    if (!post) return { ok: false, reason: 'stale', message: STALE_MESSAGE }
+    const followups = (await loadParts(postId, q)).map((p) => p.text)
+    const total = followups.length + 1
+    const lastLimit = lastFollowupLimit(config.THREAD_CTA_TEXT)
+    let text = post.text
+
+    if (op.kind === 'edit') {
+      if (op.idx < 1 || op.idx > total) {
+        return invalid(`${op.idx}번 조각이 없어요. 이 초안은 ${total}개 조각이에요.`)
+      }
+      if (!op.text) return invalid('바꿀 내용이 비어 있어요.')
+      const limit = op.idx === total && total > 1 ? lastLimit : THREADS_TEXT_LIMIT
+      if (len(op.text) > limit) {
+        const hint = limit < THREADS_TEXT_LIMIT ? ' (마지막 답글은 CTA 자리를 남겨둬요)' : ''
+        return invalid(`${op.idx}번 조각은 ${limit}자를 넘을 수 없어요: ${len(op.text)}자${hint}`)
+      }
+      if (op.idx === 1) text = op.text
+      else followups[op.idx - FIRST_FOLLOWUP_IDX] = op.text
+    } else {
+      if (op.idx === 1) {
+        return invalid('본 글(1번)은 지울 수 없어요. 내용을 바꾸려면 "수정: <새 본문>"을 쓰세요.')
+      }
+      if (op.idx < FIRST_FOLLOWUP_IDX || op.idx > total) {
+        return invalid(`${op.idx}번 조각이 없어요. 이 초안은 ${total}개 조각이에요.`)
+      }
+      followups.splice(op.idx - FIRST_FOLLOWUP_IDX, 1)
+      const newLast = followups[followups.length - 1]
+      if (newLast !== undefined && len(newLast) > lastLimit) {
+        return invalid(
+          `지우면 ${followups.length + 1}번 조각이 마지막 답글이 되는데 ${lastLimit}자를 넘어요 (${len(newLast)}자). 먼저 "수정${followups.length + 1}:"로 줄여주세요.`,
+        )
+      }
+    }
+
+    await q(
+      'update posts set text = $2, revision = revision + 1, updated_at = now() where id = $1',
+      [postId, text],
+    )
+    await replaceParts(q, postId, followups)
+    return { ok: true }
+  })
 }
 
 /**
@@ -412,29 +542,19 @@ export function createReviewer(opts: {
       return
     }
     const input = ctx.message.text
-    if (EDIT_PREFIX.test(input)) {
-      const text = input.replace(EDIT_PREFIX, '').trim()
-      if ([...text].length > THREADS_TEXT_LIMIT) {
-        await ctx.reply(`${THREADS_TEXT_LIMIT}자를 넘어요 (${[...text].length}자).`)
-        return
-      }
-      // Conditioned on status and message id so it cannot race with an approval or a newer draft.
-      const updated = await query(
-        `update posts set text = $2, revision = revision + 1, updated_at = now()
-         where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $3
-           and review_revision = revision
-         returning id`,
-        [post.id, text, replyTo],
-      )
-      if (updated.length === 0) {
-        await ctx.reply('이미 처리됐거나 최신 초안이 아니라서 수정하지 못했어요.')
-        return
-      }
-      await reviewer.sendForReview(post.id)
-    } else {
+    const parsed = parseReviewReply(input)
+    if (parsed.kind === 'feedback') {
       await ctx.reply(`🔁 #${post.id} 피드백 반영해서 재생성 중…`)
       await opts.onRegenerate(post.topic_id, input)
+      return
     }
+    // Conditioned on status and message id so it cannot race with an approval or a newer draft.
+    const result = await applyReviewEdit(post.id, replyTo, parsed)
+    if (!result.ok) {
+      await ctx.reply(result.message)
+      return
+    }
+    await reviewer.sendForReview(post.id)
   })
 
   bot.catch((err) => console.error('[telegram]', err.error))
@@ -453,10 +573,12 @@ export function createReviewer(opts: {
         review_chat_id: number | null
         review_message_id: number | null
       }>('select review_chat_id, review_message_id from posts where id = $1', [postId])
-      const msg = await bot.api.sendMessage(chatId, formatReview(post), {
-        reply_markup: keyboard(postId),
-        link_preview_options: { is_disabled: true },
-      })
+      const parts = (await loadParts(postId)).map((p) => p.text)
+      const msg = await bot.api.sendMessage(
+        chatId,
+        formatReview(post, { parts, cta: config.THREAD_CTA_TEXT }),
+        { reply_markup: keyboard(postId), link_preview_options: { is_disabled: true } },
+      )
       // Register the message only if the text is still the revision it shows. Otherwise a newer
       // revision was written while sending, its own review message is on the way, and this one
       // must not carry buttons.

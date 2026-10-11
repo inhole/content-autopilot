@@ -3,6 +3,7 @@ import { pool, query } from './db/pool.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
+import { loadParts } from './pipeline/parts.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
@@ -52,7 +53,8 @@ async function show(postId: number) {
     [postId],
   )
   if (!post) throw new Error(`post ${postId} not found`)
-  console.log(`[${post.status}]\n${formatReview(post)}\n`)
+  const parts = (await loadParts(postId)).map((p) => p.text)
+  console.log(`[${post.status}]\n${formatReview(post, { parts, cta: config.THREAD_CTA_TEXT })}\n`)
 }
 
 const [command, ...args] = process.argv.slice(2)

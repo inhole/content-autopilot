@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   encodeScheduleAction,
+  formatReview,
   HELP_TEXT,
   isCurrentReviewAction,
   parseCallback,
+  parseReviewReply,
   parseScheduleAction,
 } from '../src/review/telegram.ts'
 
@@ -28,7 +30,8 @@ describe('schedule action callback data', () => {
 
 describe('HELP_TEXT', () => {
   it('lists the commands and reply conventions', () => {
-    for (const s of ['/status', '/add', '/help', '수정:', '피드백']) expect(HELP_TEXT).toContain(s)
+    for (const s of ['/status', '/add', '/help', '수정:', '수정2:', '삭제2', '피드백'])
+      expect(HELP_TEXT).toContain(s)
   })
 })
 
@@ -64,5 +67,60 @@ describe('parseCallback', () => {
   })
   it('stays under the 64-byte callback limit', () => {
     expect(new TextEncoder().encode('rr:9999999999:boring').length).toBeLessThan(64)
+  })
+})
+
+describe('parseReviewReply', () => {
+  it('treats 수정: and 수정1: as a main text edit', () => {
+    expect(parseReviewReply('수정: 새 본문')).toEqual({ kind: 'edit', idx: 1, text: '새 본문' })
+    expect(parseReviewReply('수정1：새 본문')).toEqual({ kind: 'edit', idx: 1, text: '새 본문' })
+  })
+  it('parses follow-up edits with optional spaces and a full-width colon', () => {
+    expect(parseReviewReply('수정2: a\nb')).toEqual({ kind: 'edit', idx: 2, text: 'a\nb' })
+    expect(parseReviewReply('수정 3 ： c')).toEqual({ kind: 'edit', idx: 3, text: 'c' })
+    expect(parseReviewReply('수정2:')).toEqual({ kind: 'edit', idx: 2, text: '' })
+  })
+  it('parses deletes', () => {
+    expect(parseReviewReply('삭제2')).toEqual({ kind: 'delete', idx: 2 })
+    expect(parseReviewReply(' 삭제 3 ')).toEqual({ kind: 'delete', idx: 3 })
+  })
+  it('treats everything else as feedback', () => {
+    for (const s of ['더 짧게', '삭제', '삭제2번 해줘', '수정해줘', '수정2 내용']) {
+      expect(parseReviewReply(s)).toEqual({ kind: 'feedback' })
+    }
+  })
+})
+
+describe('formatReview', () => {
+  const post = {
+    id: 12,
+    topic_id: 1,
+    revision: 1,
+    text: 'main',
+    angle: '관점',
+    source_url: 'https://example.com/a',
+    caveats: null,
+    score: 8,
+  }
+  it('keeps the single post format without parts', () => {
+    const out = formatReview(post, { cta: '팔로우' })
+    expect(out).toContain('📝 초안 #12 · 점수 8 · 4/500자\n\nmain\n\n관점: 관점')
+    expect(out).not.toContain('CTA')
+    expect(out).toContain('답장: "수정: <새 본문>"은 그대로 교체')
+  })
+  it('numbers a chain and shows the CTA budget on the last part', () => {
+    const out = formatReview(post, { parts: ['one', 'two'], cta: '팔로우' })
+    expect(out).toContain('연결 글 3개')
+    expect(out).toContain('[1/3] 본 글 (4/500자)\nmain')
+    expect(out).toContain('[2/3] 답글 (3/500자)\none')
+    expect(out).toContain('[3/3] 답글 (3/495자) + CTA·링크\ntwo')
+    expect(out).toContain('— CTA: 팔로우')
+    expect(out).toContain('삭제2')
+  })
+  it('omits CTA and link markers when absent', () => {
+    const out = formatReview({ ...post, source_url: null }, { parts: ['one'] })
+    expect(out).toContain('[2/2] 답글 (3/500자)\none')
+    expect(out).not.toContain('CTA')
+    expect(out).not.toContain('+ ')
   })
 })
