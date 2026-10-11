@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { nextFreeSlot } from '../lib/time.ts'
@@ -125,9 +126,19 @@ export class LostClaimError extends Error {
   }
 }
 
+/** Identifies the content a container was created for; see posts.container_fingerprint. */
+export function containerFingerprint(post: TextPost): string {
+  const { text, linkAttachment = null, topicTag = null, replyToId = null } = post
+  return createHash('sha256')
+    .update(JSON.stringify([text, linkAttachment, topicTag, replyToId]))
+    .digest('hex')
+}
+
 /**
  * Drives one Threads post from container to published. Reuses `containerId` when a previous
- * attempt already created one, so a retry never creates a second post.
+ * attempt already created one, so a retry never creates a second post. With `reuse: false` the
+ * old container was made for other content: it only counts if it already went out (a lost
+ * response), and otherwise a fresh container is created for `post`.
  */
 export async function driveContainer(
   api: ThreadsApi,
@@ -140,6 +151,7 @@ export async function driveContainer(
     maxPolls?: number
     /** Runs right before the irreversible publish call; throws LostClaimError if not the owner. */
     beforePublish?: () => Promise<void>
+    reuse?: boolean
   } = {},
 ): Promise<{ platformPostId: string | null }> {
   const wait = opts.sleep ?? sleep
@@ -148,7 +160,7 @@ export async function driveContainer(
     const { status } = await api.getContainerStatus(id)
     // The previous attempt published but crashed before saving the result.
     if (status === 'PUBLISHED') return { platformPostId: null }
-    if (status === 'ERROR' || status === 'EXPIRED') id = null
+    if (status === 'ERROR' || status === 'EXPIRED' || opts.reuse === false) id = null
   }
   if (!id) {
     id = await api.createTextContainer(post)
@@ -201,6 +213,7 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
     text: string
     source_url: string | null
     container_id: string | null
+    container_fingerprint: string | null
     attempts: number
     claim_seq: number
     topic_tag: string | null
@@ -210,7 +223,7 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
      where id = $1
        and (status = 'SCHEDULED'
             or (status = 'PUBLISHING' and updated_at < now() - make_interval(mins => $2)))
-     returning text, source_url, container_id, attempts, claim_seq,
+     returning text, source_url, container_id, container_fingerprint, attempts, claim_seq,
        generation->>'topic_tag' as topic_tag`,
     [postId, STALE_PUBLISHING_MINUTES],
   )
@@ -247,15 +260,23 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
       followups,
     })
     if (!mainPost) throw new Error('composeChain returned no main post')
+    // The draft may have changed since the last attempt made its container (un-scheduled and
+    // edited, or its follow-ups changed where the link goes): never publish the old content.
+    const fingerprint = containerFingerprint(mainPost)
     const { platformPostId } = await driveContainer(
       threads,
       mainPost,
       post.container_id,
       async (id) => {
         containerId = id
-        if (!(await ownedUpdate('container_id = $3', [id]))) throw new LostClaimError()
+        if (
+          !(await ownedUpdate('container_id = $3, container_fingerprint = $4', [id, fingerprint]))
+        ) {
+          throw new LostClaimError()
+        }
       },
       {
+        reuse: post.container_fingerprint === fingerprint,
         // Doubles as a heartbeat: bumps updated_at so a slow but live worker is not reclaimed.
         beforePublish: async () => {
           if (!(await ownedUpdate('status = status'))) throw new LostClaimError()

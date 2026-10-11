@@ -61,7 +61,7 @@ posts:   PENDING_REVIEW ─▶ SCHEDULED ─▶ PUBLISHING ─▶ PUBLISHED
 1. **행을 선점한다.** `publishPost`는 `UPDATE … SET status='PUBLISHING', attempts = attempts + 1, claim_seq = claim_seq + 1 WHERE status='SCHEDULED'`로 행을 잡는다. 이 업데이트에 성공한 워커만 진행한다.
 2. **선점마다 소유 토큰을 쓴다.** 선점할 때 증가한 `claim_seq` 값이 토큰이다. `attempts`는 `publish-now`가 0으로 되돌리기 때문에 토큰으로 쓰지 않는다. 이후의 모든 UPDATE(컨테이너 저장, 완료, 실패)는 `status='PUBLISHING' and claim_seq = 토큰` 조건을 단다. 멈춰 있던 워커가 10분 뒤 깨어나 보니 다른 워커가 행을 이어받았다면, 토큰이 맞지 않아 아무것도 쓰지 못하고 발행도 하지 않는다.
 3. **컨테이너 ID를 먼저 저장한다.** 컨테이너를 만들자마자 `container_id`를 저장하고, publish 직전에 소유권을 한 번 더 확인한다. 이 확인은 heartbeat 역할도 한다.
-4. **재시도는 저장된 컨테이너부터 이어간다.** 컨테이너 상태가 `PUBLISHED`면 이미 올라간 것으로 보고 끝낸다. `EXPIRED`나 `ERROR`면 새 컨테이너를 만든다.
+4. **재시도는 저장된 컨테이너부터 이어간다.** 컨테이너 상태가 `PUBLISHED`면 이미 올라간 것으로 보고 끝낸다. `EXPIRED`나 `ERROR`면 새 컨테이너를 만든다. 컨테이너를 만들 때 보낸 내용(본문·링크·주제 태그)의 지문을 `container_fingerprint`(`012`)에 함께 저장한다. 실패한 뒤 「예약 취소」하고 고친 글처럼 지금 보낼 내용과 지문이 다르면, 예전 컨테이너는 이미 올라갔는지만 확인하고 아니면 새로 만든다. 그래서 고치기 전 글이 발행되지 않는다.
 5. **job 자체는 재시도하지 않는다.** `publish` 큐는 `retryLimit: 0`이다. 실패하면 행을 `SCHEDULED`로 되돌리고, 5분 뒤 `publish-due`가 그 행을 다시 찾아 시도한다. 3번 실패하면 `FAILED`로 바꾸고 Telegram으로 알린다.
 6. **실패로 확정하기 전에 컨테이너를 다시 본다.** 응답만 유실되고 실제로는 발행된 경우가 있어서, 실패하면 컨테이너 상태를 다시 조회한다. `PUBLISHED`면 `PUBLISHED`로 기록한다. 상태 조회까지 실패하면 결과를 알 수 없는 것으로 보고 최대 6번까지 재시도한 뒤 `FAILED`로 확정한다(`decideAfterFailure`).
 7. **멈춘 행은 이어받는다.** 워커가 죽어 `PUBLISHING`에서 10분 넘게 멈춘 행은 다음 sweep이 이어서 처리한다.
