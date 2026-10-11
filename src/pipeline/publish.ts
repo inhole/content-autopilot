@@ -3,12 +3,13 @@ import { query } from '../db/pool.ts'
 import { nextFreeSlot } from '../lib/time.ts'
 import { getThreadsApi } from '../threads/account.ts'
 import type { TextPost, ThreadsApi } from '../threads/client.ts'
+import { composeChain, loadParts } from './parts.ts'
 
-const MAX_ATTEMPTS = 3
+export const MAX_ATTEMPTS = 3
 // Extra attempts allowed when we cannot tell whether the last one actually published.
 const MAX_UNKNOWN_ATTEMPTS = MAX_ATTEMPTS * 2
 // A PUBLISHING row untouched this long belongs to a crashed worker and may be resumed.
-const STALE_PUBLISHING_MINUTES = 10
+export const STALE_PUBLISHING_MINUTES = 10
 
 const APPROVE_SLOT_RETRIES = 5
 
@@ -236,9 +237,19 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
   let containerId = post.container_id
   try {
     threads ??= await getThreadsApi()
+    // With follow-ups the source link moves to the last one, so the main post goes out without it.
+    // Parts are read after the claim: they are frozen once the post is approved.
+    const followups = (await loadParts(postId)).map((p) => p.text)
+    const [mainPost] = composeChain({
+      text: post.text,
+      topicTag: post.topic_tag,
+      sourceUrl: post.source_url,
+      followups,
+    })
+    if (!mainPost) throw new Error('composeChain returned no main post')
     const { platformPostId } = await driveContainer(
       threads,
-      { text: post.text, linkAttachment: post.source_url, topicTag: post.topic_tag },
+      mainPost,
       post.container_id,
       async (id) => {
         containerId = id

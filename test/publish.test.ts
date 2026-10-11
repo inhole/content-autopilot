@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { findMediaIdByText } from '../src/pipeline/chain.ts'
 import { decideAfterFailure, driveContainer, LostClaimError } from '../src/pipeline/publish.ts'
-import type { ContainerStatus, ThreadsApi } from '../src/threads/client.ts'
+import { type ContainerStatus, parseOwnPosts, type ThreadsApi } from '../src/threads/client.ts'
 
 function fakeApi(statuses: ContainerStatus[]) {
   const queue = [...statuses]
@@ -12,6 +13,8 @@ function fakeApi(statuses: ContainerStatus[]) {
     me: vi.fn(),
     getInsights: vi.fn(),
     listReplies: vi.fn(),
+    listMyThreads: vi.fn(),
+    listMyReplies: vi.fn(),
   } satisfies ThreadsApi
 }
 
@@ -107,5 +110,47 @@ describe('decideAfterFailure', () => {
   it('stops retrying an unknown outcome after the extra attempts run out', () => {
     expect(decideAfterFailure({ attempts: 5, containerStatus: 'unknown' })).toBe('retry')
     expect(decideAfterFailure({ attempts: 6, containerStatus: 'unknown' })).toBe('failed')
+  })
+})
+
+describe('driveContainer with replyToId', () => {
+  it('passes the parent media id through to the container', async () => {
+    const api = fakeApi(['FINISHED'])
+    await driveContainer(api, { text: 'reply', replyToId: 'parent-1' }, null, async () => {}, {
+      sleep: noSleep,
+    })
+    expect(api.createTextContainer).toHaveBeenCalledWith({ text: 'reply', replyToId: 'parent-1' })
+  })
+})
+
+describe('findMediaIdByText', () => {
+  const item = (id: string, text: string | null) => ({ id, text, timestamp: null })
+  it('returns the newest exact match, ignoring surrounding whitespace', () => {
+    const items = [item('new', 'hello\n'), item('mid', 'other'), item('old', 'hello')]
+    expect(findMediaIdByText(items, 'hello')).toBe('new')
+  })
+  it('does not match a different or text-less post', () => {
+    expect(findMediaIdByText([item('a', 'hello world'), item('b', null)], 'hello')).toBeNull()
+  })
+})
+
+describe('parseOwnPosts', () => {
+  it('keeps order and tolerates missing text and bad timestamps', () => {
+    const parsed = parseOwnPosts({
+      data: [
+        { id: '1', text: 'a', timestamp: '2026-01-02T03:04:05+0000' },
+        { id: '2', timestamp: 'garbage' },
+        { id: '3', text: '  ' },
+      ],
+    })
+    expect(parsed.map((p) => [p.id, p.text])).toEqual([
+      ['1', 'a'],
+      ['2', null],
+      ['3', null],
+    ])
+    expect(parsed[1]?.timestamp).toBeNull()
+  })
+  it('treats a missing data field as empty', () => {
+    expect(parseOwnPosts({})).toEqual([])
   })
 })
