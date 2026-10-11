@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { authorizeUrl, cleanCode, exchangeCode, upsertEnv } from '../src/threads/oauth.ts'
+import {
+  authorizeUrl,
+  cleanCode,
+  exchangeCode,
+  lookupTokenOwner,
+  upsertEnv,
+} from '../src/threads/oauth.ts'
 
 describe('threads oauth helpers', () => {
   it('builds the authorize URL', () => {
@@ -53,5 +59,18 @@ describe('threads oauth helpers', () => {
       'DATABASE_URL=x\nTHREADS_USER_ID=1\nTHREADS_ACCESS_TOKEN=t\n',
     )
     expect(upsertEnv('A=1', { B: '2' })).toBe('A=1\nB=2\n')
+  })
+})
+
+describe('lookupTokenOwner', () => {
+  it('reads id and username from /me, keeping a long id exact', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"id":"17841400123456789","username":"devbrief.kr"}'))
+    const out = await lookupTokenOwner('tok', { fetchFn })
+    expect(out).toEqual({ id: '17841400123456789', username: 'devbrief.kr' })
+    const url = new URL(String(fetchFn.mock.calls[0]?.[0]))
+    expect(url.pathname).toBe('/v1.0/me')
+    expect(url.searchParams.get('fields')).toBe('id,username')
   })
 })

@@ -6,7 +6,13 @@ import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
 import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts'
-import { authorizeUrl, cleanCode, exchangeCode, writeEnv } from './threads/oauth.ts'
+import {
+  authorizeUrl,
+  cleanCode,
+  exchangeCode,
+  lookupTokenOwner,
+  writeEnv,
+} from './threads/oauth.ts'
 
 const USAGE = `usage: npm run cli -- <command>
 
@@ -21,6 +27,7 @@ const USAGE = `usage: npm run cli -- <command>
   publish-now <postId>        approve (if needed) and publish immediately
   threads:auth-url            print the Threads authorize URL (needs THREADS_APP_ID)
   threads:token <code|url>    exchange the code for a long-lived token and save it to .env
+  threads:fill-user-id        look up the owner of THREADS_ACCESS_TOKEN and save THREADS_USER_ID
   threads:check               verify the Threads token (GET /me)
   threads:refresh             refresh the Threads token if it is close to expiry`
 
@@ -132,6 +139,14 @@ try {
     case 'threads:auth-url':
       console.log(authorizeUrl(requireValue('THREADS_APP_ID')))
       break
+    case 'threads:fill-user-id': {
+      const owner = await lookupTokenOwner(requireValue('THREADS_ACCESS_TOKEN'), {
+        baseUrl: config.THREADS_API_BASE,
+      })
+      await writeEnv('.env', { THREADS_USER_ID: owner.id })
+      console.log(`saved to .env: THREADS_USER_ID=${owner.id} (@${owner.username})`)
+      break
+    }
     case 'threads:token': {
       if (!args[0]) throw new Error('code (or the redirected URL) is required')
       const token = await exchangeCode({

@@ -81,6 +81,22 @@ export async function exchangeCode(opts: {
   }
 }
 
+const meResponse = z.object({ id: z.string(), username: z.string() })
+
+/**
+ * Looks up the account behind a token. The dashboard's user token generator hands out a
+ * long-lived token without the user id, which publishing needs.
+ */
+export async function lookupTokenOwner(
+  accessToken: string,
+  opts: { baseUrl?: string; fetchFn?: typeof fetch } = {},
+): Promise<{ id: string; username: string }> {
+  const url = new URL(`${opts.baseUrl ?? 'https://graph.threads.net'}/v1.0/me`)
+  url.search = new URLSearchParams({ fields: 'id,username', access_token: accessToken }).toString()
+  const res = await (opts.fetchFn ?? fetch)(url, { signal: AbortSignal.timeout(30_000) })
+  return meResponse.parse(await json(res, 'token lookup'))
+}
+
 /** Sets KEY=value lines in a dotenv text, replacing existing (also empty or commented) entries. */
 export function upsertEnv(text: string, values: Record<string, string>): string {
   let out = text
