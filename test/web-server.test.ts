@@ -10,6 +10,7 @@ const auth = (pw: string) => ({
 let base = ''
 const server = createDashboardServer({
   password: PASSWORD,
+  webDist: null,
   now: () => new Date('2026-10-18T03:00:00Z'),
   loaders: {
     overview: async () => ({
@@ -28,6 +29,7 @@ const server = createDashboardServer({
       return null
     },
     posts: async () => [],
+    insights: async (days) => ({ days, daily: [], top: [] }),
   },
 })
 

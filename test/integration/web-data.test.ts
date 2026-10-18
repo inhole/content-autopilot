@@ -4,6 +4,7 @@ import { loadCampaignCounts, loadStatus } from '../../src/pipeline/status.ts'
 import {
   loadCampaignDetail,
   loadCampaignList,
+  loadInsights,
   loadOverview,
   loadRecentPosts,
   parseCampaignFilter,
@@ -201,5 +202,66 @@ describe('sources', () => {
       applied: 1,
     })
     expect(counts.bySource.find((b) => b.source === 'kakao-gift')).toMatchObject({ applied: 1 })
+  })
+})
+
+async function seedInsight(postId: number, collectedAt: Date, over: Record<string, number> = {}) {
+  await query(
+    `insert into post_insights (post_id, collected_at, views, likes, replies, reposts)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [postId, collectedAt, over.views ?? 0, over.likes ?? 0, over.replies ?? 0, over.reposts ?? 0],
+  )
+}
+
+describe('loadRecentPosts origin', () => {
+  it('returns the origin of each post', async () => {
+    await seedPost('PUBLISHED', { published_at: new Date(), origin: 'revived' })
+    await seedPost('PENDING_REVIEW')
+    const rows = await loadRecentPosts(10)
+    expect(rows.map((r) => r.origin).sort()).toEqual(['news', 'revived'])
+  })
+})
+
+describe('loadInsights', () => {
+  const now = new Date('2026-10-18T03:00:00Z')
+
+  it('uses the latest snapshot per post and sums by KST publish day', async () => {
+    // 2026-10-17T15:30Z is already 10-18 in KST; 10-17T14:00Z is still 10-17.
+    const a = await seedPost('PUBLISHED', { published_at: new Date('2026-10-17T15:30:00Z') })
+    const b = await seedPost('PUBLISHED', { published_at: new Date('2026-10-17T14:00:00Z') })
+    const c = await seedPost('PUBLISHED', { published_at: new Date('2026-10-17T01:00:00Z') })
+    await seedInsight(a, new Date('2026-10-17T20:00:00Z'), { views: 5, likes: 1 })
+    await seedInsight(a, new Date('2026-10-18T01:00:00Z'), { views: 50, likes: 4, replies: 2 })
+    await seedInsight(b, new Date('2026-10-18T01:00:00Z'), { views: 30, likes: 3 })
+    // c has no snapshot: counts as a post with zero metrics.
+    const r = await loadInsights(30, now)
+    expect(r.days).toBe(30)
+    expect(r.daily).toEqual([
+      { date: '2026-10-17', posts: 2, views: 30, likes: 3, replies: 0 },
+      { date: '2026-10-18', posts: 1, views: 50, likes: 4, replies: 2 },
+    ])
+    expect(r.top.map((t) => t.id)).toEqual([a, b, c])
+    expect(r.top[0]).toMatchObject({ views: 50, likes: 4, replies: 2, reposts: 0 })
+    expect(r.top[2]).toMatchObject({ views: null, likes: null })
+  })
+
+  it('limits to the window, published posts and the top 10', async () => {
+    await seedPost('PUBLISHED', { published_at: new Date('2026-08-01T00:00:00Z') })
+    await seedPost('SCHEDULED', { scheduled_at: new Date('2026-10-19T00:00:00Z') })
+    for (let i = 0; i < 12; i++) {
+      const id = await seedPost('PUBLISHED', {
+        published_at: new Date(Date.parse('2026-10-10T00:00:00Z') + i * 3_600_000),
+      })
+      await seedInsight(id, new Date('2026-10-11T00:00:00Z'), { views: i })
+    }
+    const r = await loadInsights(30, now)
+    expect(r.daily.reduce((n, d) => n + d.posts, 0)).toBe(12)
+    expect(r.top).toHaveLength(10)
+    expect(r.top.map((t) => t.views)).toEqual([11, 10, 9, 8, 7, 6, 5, 4, 3, 2])
+    expect((await loadInsights(7, now)).daily.length).toBe(0)
+  })
+
+  it('is empty without published posts', async () => {
+    expect(await loadInsights(30, now)).toEqual({ days: 30, daily: [], top: [] })
   })
 })
