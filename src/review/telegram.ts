@@ -1,5 +1,5 @@
 import { Bot, GrammyError, InlineKeyboard } from 'grammy'
-import { BLOG_BOT_COMMANDS, BLOG_HELP_LINES } from '../campaigns/blog-telegram.ts'
+import { REVIEW_HELP_LINES } from '../campaigns/review-telegram.ts'
 import { CAMPAIGN_BOT_COMMANDS, CAMPAIGN_HELP_LINES } from '../campaigns/telegram.ts'
 import { config } from '../config.ts'
 import { query, transaction } from '../db/pool.ts'
@@ -75,7 +75,7 @@ export const HELP_TEXT = [
   '',
   ...CAMPAIGN_HELP_LINES,
   '',
-  ...BLOG_HELP_LINES,
+  ...REVIEW_HELP_LINES,
 ].join('\n')
 
 const BOT_COMMANDS = [
@@ -84,7 +84,6 @@ const BOT_COMMANDS = [
   { command: 'help', description: '사용법 보기' },
   { command: 'report', description: '주간 성과 리포트 보기' },
   ...CAMPAIGN_BOT_COMMANDS,
-  ...BLOG_BOT_COMMANDS,
 ]
 
 type ScheduleAction = 'unsched' | 'pubnow'

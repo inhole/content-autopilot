@@ -39,7 +39,7 @@ describe('draftControlButtons', () => {
   it('binds regen and done to the revision', () => {
     const buttons = draftControlButtons({ id: 7, revision: 4 })
     expect(buttons.map((b) => b.text)).toEqual(['🔁 다시 쓰기', '✅ 리뷰 올림'])
-    const data = buttons.map((b) => encodeCampaignCallback(b.callback))
+    const data = buttons.map((b) => ('callback' in b ? encodeCampaignCallback(b.callback) : b.url))
     expect(data).toEqual(['rev:regen:7:4', 'rev:done:7:4'])
     expect(parseCampaignCallback(data[1] ?? '')?.action).toBe('done')
   })
