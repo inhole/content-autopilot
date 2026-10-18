@@ -77,7 +77,7 @@
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 수집 → 중복 제거 → 선정 → 초안 → Telegram 검수 → Threads 발행 | 코드 완료, dry-run 검증 |
-| 1.5 | OpenRouter / Telegram / Threads 실제 연결, 프롬프트 튜닝 | OpenRouter·Telegram 완료. Threads는 발행 계정 제한으로 보류(2026-10-18 전후 재시도, setup.md 4절) |
+| 1.5 | OpenRouter / Telegram / Threads 실제 연결, 프롬프트 튜닝 | OpenRouter·Telegram 완료. Threads는 devbrief.kr 연결이 막혀 본계정 @lilxnhoo로 연결(2026-10-18, setup.md 4절). 실제 첫 발행 검증 남음 |
 | 2 | Railway 배포 | 완료 (Wait for CI) |
 | 3 | Threads insights 수집 + 주간 리포트 | 코드 완료, 실제 발행 후 검증 |
 | 3.5 | 연결 글(본글 + 답글 최대 2개)과 고정 CTA | 코드 완료, 실제 발행 후 검증 (결정 8) |

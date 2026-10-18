@@ -29,6 +29,7 @@ Useful CLI commands:
 - `add-topic "<title>" [url] [note]`: create a draft from a manual topic (same as Telegram `/add`)
 - `show <postId>`, `approve <postId>`, `publish-now <postId>`
 - `threads:check`: verify the Threads token
+- `threads:probe`: read-only check of the API behaviour publishing relies on (`replied_to`, ordering, scopes), using the `.env` token without touching the DB
 
 Config is loaded from `.env` (see `.env.example`) and validated in `src/config.ts`. An empty `KEY=` line counts as unset.
 
