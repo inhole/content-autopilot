@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
 import type { CampaignDetailData, CampaignListRow, OverviewData } from '../src/web/data.ts'
-import { esc, extLink, isAllowedImageUrl, isHttpUrl } from '../src/web/html.ts'
+import { esc, extLink, IMAGE_HOSTS, isAllowedImageUrl, isHttpUrl } from '../src/web/html.ts'
 import {
   formatCompetition,
   renderCampaignDetail,
@@ -39,6 +39,7 @@ const overview = (over: Partial<OverviewData> = {}): OverviewData => ({
     lastCollectedAt: new Date('2026-10-18T02:30:00Z'),
     lastSeenCount: 42,
     postedLast30d: 4,
+    bySource: { 'kakao-gift': { PENDING_REVIEW: 2, APPLIED: 2 }, musinsa: { PENDING_REVIEW: 1 } },
   },
   ...over,
 })
@@ -61,7 +62,13 @@ describe('renderOverview', () => {
   it('handles a database that was never collected', () => {
     const html = renderOverview(
       overview({
-        campaigns: { counts: {}, lastCollectedAt: null, lastSeenCount: 0, postedLast30d: 0 },
+        campaigns: {
+          counts: {},
+          lastCollectedAt: null,
+          lastSeenCount: 0,
+          postedLast30d: 0,
+          bySource: {},
+        },
       }),
       ctx,
     )
@@ -95,6 +102,7 @@ describe('formatCompetition', () => {
 
 const listRow = (over: Partial<CampaignListRow> = {}): CampaignListRow => ({
   id: 7,
+  source: 'kakao-gift',
   title: '<i>이어폰</i> 체험',
   brand: '<b>브랜드</b>',
   status: 'PENDING_REVIEW',
@@ -281,5 +289,68 @@ describe('renderPosts', () => {
     )
     expect(html).toContain(`${'x'.repeat(80)}…`)
     expect(html).toContain('조회 10 · 좋아요 2 · 답글 -')
+  })
+})
+
+describe('sources in the dashboard', () => {
+  it('allows Musinsa image hosts, https only', () => {
+    expect(IMAGE_HOSTS).toContain('image.msscdn.net')
+    expect(isAllowedImageUrl('https://image.msscdn.net/thumbnails/images/goods_img/a.jpg')).toBe(
+      true,
+    )
+    expect(isAllowedImageUrl('http://image.msscdn.net/a.jpg')).toBe(false)
+    expect(isAllowedImageUrl('https://image.msscdn.net.evil.example/a.jpg')).toBe(false)
+  })
+  it('list shows a source column and source filter chips that keep the status', () => {
+    const html = renderCampaignList(
+      [
+        listRow(),
+        listRow({ id: 8, source: 'musinsa', recruit_count: null, application_count: null }),
+      ],
+      'APPLIED',
+      ctx,
+      'musinsa',
+    )
+    expect(html).toContain('<th>출처</th>')
+    expect(html).toContain('<td data-label="출처">선물하기</td>')
+    expect(html).toContain('<td data-label="출처">무신사</td>')
+    expect(html).toContain(
+      'href="/campaigns?status=APPLIED&amp;source=musinsa" class="on"'.replace('&amp;', '&'),
+    )
+    expect(html).toContain('href="/campaigns?status=APPLIED">모든 출처')
+    expect(html).toContain('href="/campaigns?status=APPLIED&source=kakao-gift">선물하기')
+    expect(html).toContain('href="/campaigns?status=SELECTED&source=musinsa"')
+  })
+  it('overview shows per-source counts linking to the filter', () => {
+    const html = renderOverview(overview(), ctx)
+    expect(html).toContain('href="/campaigns?source=kakao-gift"')
+    expect(html).toContain('<b>4</b><span>선물하기 진행 중 (전체 4)')
+    expect(html).toContain('<b>1</b><span>무신사 진행 중 (전체 1)')
+  })
+  it('detail shows price and review format for Musinsa, no applicant fields', () => {
+    const html = renderCampaignDetail(
+      {
+        campaign: campaign({
+          source: 'musinsa',
+          url: 'https://www.musinsa.com/preuser/events/38933',
+          image_url: 'https://image.msscdn.net/thumbnails/images/goods_img/a.jpg',
+          recruit_count: null,
+          application_count: null,
+          detail: {
+            campaignId: 38933,
+            representativeGoods: { price: 129000 },
+            goodsCount: 1,
+            contentType: 'VIDEO',
+          },
+        }),
+        reminders: [],
+      },
+      ctx,
+    )
+    expect(html).toContain('<dt>정가</dt><dd>129,000원</dd>')
+    expect(html).toContain('<dt>리뷰 형식</dt><dd>영상</dd>')
+    expect(html).toContain('무신사에서 열기')
+    expect(html).toContain('<img src="https://image.msscdn.net/')
+    expect(html).not.toContain('<dt>신청자</dt>')
   })
 })

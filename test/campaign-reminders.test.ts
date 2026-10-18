@@ -93,3 +93,24 @@ describe('review deadline reminders', () => {
     expect(at('2026-10-29T15:00:00Z', [], { status: 'APPLIED' })).not.toContain('review-d0')
   })
 })
+
+describe('source label', () => {
+  it('names the source in the reminder text', () => {
+    const [gift] = dueReminders(
+      c({ status: 'APPLIED', selected_at: null }),
+      new Set(),
+      new Date('2026-10-15T00:00:00Z'),
+      TZ,
+    )
+    expect(gift?.text).toContain('[선물하기]')
+    expect(gift?.text).toContain('카카오톡')
+    const [musinsa] = dueReminders(
+      c({ source: 'musinsa', status: 'APPLIED', selected_at: null }),
+      new Set(),
+      new Date('2026-10-15T00:00:00Z'),
+      TZ,
+    )
+    expect(musinsa?.text).toContain('[무신사]')
+    expect(musinsa?.text).toContain('무신사에서 확인')
+  })
+})

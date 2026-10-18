@@ -7,6 +7,7 @@ import {
   loadOverview,
   loadRecentPosts,
   parseCampaignFilter,
+  parseCampaignSource,
 } from '../../src/web/data.ts'
 
 let seq = 0
@@ -172,5 +173,33 @@ describe('loadRecentPosts', () => {
     )
     const [row] = await loadRecentPosts()
     expect([row?.views, row?.likes, row?.replies]).toEqual([50, 4, 2])
+  })
+})
+
+describe('sources', () => {
+  it('counts per source and filters the list by source', async () => {
+    const gift = await seedCampaign({ status: 'APPLIED' })
+    const m1 = await seedCampaign({ status: 'PENDING_REVIEW', source: 'musinsa' })
+    await seedCampaign({ status: 'APPLIED', source: 'musinsa' })
+    const o = await loadOverview()
+    expect(o.campaigns.bySource).toEqual({
+      'kakao-gift': { APPLIED: 1 },
+      musinsa: { PENDING_REVIEW: 1, APPLIED: 1 },
+    })
+    const rows = await loadCampaignList('all', 'musinsa')
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.source === 'musinsa')).toBe(true)
+    expect((await loadCampaignList('PENDING_REVIEW', 'musinsa')).map((r) => r.id)).toEqual([m1])
+    expect((await loadCampaignList('active', 'kakao-gift')).map((r) => r.id)).toEqual([gift])
+    expect(await loadCampaignList('all')).toHaveLength(3)
+    expect(parseCampaignSource('musinsa')).toBe('musinsa')
+    expect(parseCampaignSource('nope')).toBeNull()
+
+    const counts = await loadCampaignCounts()
+    expect(counts.bySource.find((b) => b.source === 'musinsa')).toMatchObject({
+      pendingReview: 1,
+      applied: 1,
+    })
+    expect(counts.bySource.find((b) => b.source === 'kakao-gift')).toMatchObject({ applied: 1 })
   })
 })

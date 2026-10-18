@@ -13,7 +13,7 @@ import {
 } from './review-draft.ts'
 import { loadCampaign } from './store.ts'
 import { type CampaignButton, clearButtons, sendCampaignMessage } from './tg.ts'
-import type { Campaign } from './types.ts'
+import { type Campaign, sourceInfo } from './types.ts'
 
 const STALE_PRESS_TEXT = '이전 메시지예요. 최신 메시지에서 눌러주세요'
 
@@ -33,14 +33,14 @@ export const intakeText = (c: Pick<Campaign, 'id' | 'title'>) =>
 
 /** The control message under the draft; the draft itself is a separate message so it copies clean. */
 export function formatDraftControl(
-  c: Pick<Campaign, 'id' | 'draft_text'>,
+  c: Pick<Campaign, 'id' | 'draft_text'> & { source?: string },
   profile: Pick<CampaignProfile, 'review'>,
 ): string {
   const { minChars, maxChars } = profile.review
   const n = chars(c.draft_text ?? '')
   const lines = [
     `📝 #${c.id} 리뷰 초안 · ${n}자 (${minChars}~${maxChars}자)`,
-    '위 메시지를 길게 눌러 복사해 선물하기 리뷰에 붙여 넣으세요.',
+    `위 메시지를 길게 눌러 복사해 ${sourceInfo(c.source).reviewPlace}에 붙여 넣으세요.`,
   ]
   if (n < minChars) lines.push(`⚠️ 권장 글자 수보다 ${minChars - n}자 짧아요.`)
   if (n > maxChars) lines.push(`⚠️ 최대 글자 수보다 ${n - maxChars}자 길어요.`)

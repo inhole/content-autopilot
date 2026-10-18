@@ -1,9 +1,13 @@
-import { daysUntil, formatDday } from '../campaigns/telegram.ts'
+import { daysUntil, formatDday, formatWon } from '../campaigns/telegram.ts'
 import {
+  CAMPAIGN_SOURCE_KEYS,
   CAMPAIGN_STATUSES,
   type Campaign,
+  type CampaignSource,
   type CampaignStatus,
   competition,
+  musinsaFacts,
+  sourceInfo,
 } from '../campaigns/types.ts'
 import {
   type CampaignDetailData,
@@ -39,6 +43,8 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
   DRAFT_REVIEW: '리뷰 초안',
   POSTED: '리뷰 완료',
 }
+
+export const sourceLabel = (source: string) => sourceInfo(source).label
 
 export const statusLabel = (status: string) => STATUS_LABELS[status as CampaignStatus] ?? status
 
@@ -87,13 +93,21 @@ export function renderOverview(data: OverviewData, ctx: RenderCtx): string {
     stat('리뷰 초안', n('DRAFT_REVIEW'), '/campaigns?status=DRAFT_REVIEW'),
     stat('최근 30일 리뷰 완료', c.postedLast30d, '/campaigns?status=POSTED'),
   ].join('')
+  const bySource = CAMPAIGN_SOURCE_KEYS.map((src) => {
+    const m = c.bySource?.[src] ?? {}
+    const total = Object.values(m).reduce((a, b) => a + (b ?? 0), 0)
+    const active =
+      (m.PENDING_REVIEW ?? 0) + (m.APPLIED ?? 0) + (m.SELECTED ?? 0) + (m.DRAFT_REVIEW ?? 0)
+    return `<a class="stat" href="/campaigns?source=${esc(src)}"><b>${active}</b><span>${esc(sourceLabel(src))} 진행 중 (전체 ${total})</span></a>`
+  }).join('')
   const collection = c.lastCollectedAt
     ? `<div class="box">마지막 수집 <b>${esc(formatDateTime(c.lastCollectedAt, ctx.tz))}</b> (${esc(formatAge(c.lastCollectedAt, ctx.now))}) · 그때 확인한 체험단 ${c.lastSeenCount}건</div>`
     : '<div class="empty">아직 수집한 체험단이 없어요.</div>'
   const body = `<h1>현황</h1>
 <h2>Threads</h2><div class="cards">${threads}</div>
 <h2>발행 예정</h2>${scheduled}
-<h2>체험단</h2><div class="cards">${campaigns}</div>${collection}
+<h2>체험단</h2><div class="cards">${campaigns}</div>
+<h2>출처별</h2><div class="cards">${bySource}</div>${collection}
 <p><a href="/campaigns">체험단 목록</a> · <a href="/posts">Threads 글 목록</a></p>
 <p class="empty">${esc(formatDateTime(ctx.now, ctx.tz))} 기준 · 60초마다 새로고침</p>`
   return layout(body, { title: '현황', refresh: true })
@@ -128,15 +142,27 @@ function deadlineCell(d: NextDeadline | null, ctx: RenderCtx): string {
   return `<span class="badge">${esc(label)}</span>${d.kind === 'apply' ? ' <small class="muted">추정</small>' : ''}`
 }
 
+const sourceQuery = (source: CampaignSource | null) => (source ? `&source=${esc(source)}` : '')
+
 export function renderCampaignList(
   rows: CampaignListRow[],
   filter: CampaignFilter,
   ctx: RenderCtx,
+  source: CampaignSource | null = null,
 ): string {
   const chips = FILTER_CHIPS.map(
     (c) =>
-      `<a href="/campaigns?status=${esc(c.value)}"${c.value === filter ? ' class="on"' : ''}>${esc(c.label)}</a>`,
+      `<a href="/campaigns?status=${esc(c.value)}${sourceQuery(source)}"${c.value === filter ? ' class="on"' : ''}>${esc(c.label)}</a>`,
   ).join('')
+  const sourceChips = [
+    { value: null, label: '모든 출처' },
+    ...CAMPAIGN_SOURCE_KEYS.map((s) => ({ value: s, label: sourceLabel(s) })),
+  ]
+    .map(
+      (c) =>
+        `<a href="/campaigns?status=${esc(filter)}${sourceQuery(c.value)}"${c.value === source ? ' class="on"' : ''}>${esc(c.label)}</a>`,
+    )
+    .join('')
   let table: string
   if (rows.length === 0) {
     table = '<div class="empty">해당하는 체험단이 없어요.</div>'
@@ -144,6 +170,7 @@ export function renderCampaignList(
     const trs = rows
       .map(
         (c) => `<tr>
+<td data-label="출처">${esc(sourceLabel(c.source))}</td>
 <td data-label="제목"><a href="/campaigns/${c.id}">#${c.id} ${esc(c.title || '(제목 없음)')}</a></td>
 <td data-label="브랜드">${esc(c.brand ?? '-')}</td>
 <td data-label="상태"><span class="badge">${esc(statusLabel(c.status))}</span></td>
@@ -152,10 +179,10 @@ export function renderCampaignList(
 <td data-label="점수">${c.score != null ? esc(c.score) : '-'}</td></tr>`,
       )
       .join('')
-    table = `<div class="scroll"><table class="cards-m"><thead><tr><th>제목</th><th>브랜드</th><th>상태</th><th>경쟁률</th><th>마감</th><th>점수</th></tr></thead><tbody>${trs}</tbody></table></div>`
+    table = `<div class="scroll"><table class="cards-m"><thead><tr><th>출처</th><th>제목</th><th>브랜드</th><th>상태</th><th>경쟁률</th><th>마감</th><th>점수</th></tr></thead><tbody>${trs}</tbody></table></div>`
   }
   return layout(
-    `<h1>체험단 <small class="badge">${rows.length}</small></h1><div class="chips">${chips}</div>${table}`,
+    `<h1>체험단 <small class="badge">${rows.length}</small></h1><div class="chips">${sourceChips}</div><div class="chips">${chips}</div>${table}`,
     { title: '체험단', refresh: true },
   )
 }
@@ -173,12 +200,25 @@ export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): 
   const thumb = isAllowedImageUrl(c.image_url)
     ? `<p><img src="${esc(c.image_url)}" alt="" width="160" referrerpolicy="no-referrer" loading="lazy" style="max-width:160px;border-radius:8px"></p>`
     : ''
+  const m = musinsaFacts(c)
+  const sourceFields = m
+    ? [
+        field('정가', m.price != null ? esc(formatWon(m.price)) : '-'),
+        field('상품 수', m.goodsCount != null ? esc(m.goodsCount) : '-'),
+        field(
+          '리뷰 형식',
+          m.contentType === 'VIDEO' ? '영상' : m.contentType === 'IMAGE' ? '사진' : '-',
+        ),
+      ]
+    : []
   const listing = [
+    field('출처', esc(sourceLabel(c.source))),
     field('브랜드', text(c.brand)),
+    ...sourceFields,
     field('상품 ID', c.product_id != null ? esc(c.product_id) : '-'),
-    field('모집 인원', count(c.recruit_count)),
-    field('신청자', count(c.application_count)),
-    field('경쟁률', esc(formatCompetition(c))),
+    ...(m ? [] : [field('모집 인원', count(c.recruit_count))]),
+    ...(m ? [] : [field('신청자', count(c.application_count))]),
+    ...(m ? [] : [field('경쟁률', esc(formatCompetition(c)))]),
     field('남은 일수', c.remaining_days != null ? `${esc(c.remaining_days)}일` : '-'),
     field('신청 마감 (추정)', dateWithDday(c.apply_deadline, ctx)),
     field('처음 본 시각', t(c.first_seen_at)),
@@ -207,7 +247,7 @@ export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): 
   ].join('')
   const body = `<p><a href="/campaigns">← 목록</a></p>
 <h1>#${c.id} ${esc(c.title || '(제목 없음)')} <span class="badge">${esc(statusLabel(c.status))}</span></h1>
-${thumb}<div class="box"><dl>${field('링크', extLink(c.url, '선물하기에서 열기'))}</dl></div>
+${thumb}<div class="box"><dl>${field('링크', extLink(c.url, `${sourceLabel(c.source)}에서 열기`))}</dl></div>
 <h2>공고</h2><div class="box"><dl>${listing}</dl></div>
 <h2>평가</h2><div class="box"><dl>${ranking}</dl></div>
 <h2>진행 상태</h2><div class="box"><dl>${progress}</dl></div>

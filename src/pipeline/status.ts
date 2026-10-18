@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sourceInfo } from '../campaigns/types.ts'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 
@@ -77,6 +78,18 @@ export type CampaignCounts = {
   selected: number
   draftReview: number
   postedLast30d: number
+  /** Active campaigns per source (sources without rows are left out). */
+  bySource: SourceCampaignCounts[]
+}
+
+export type SourceCampaignCounts = {
+  source: string
+  /** Newest last_seen_at of this source's campaigns. */
+  lastCollectedAt: Date | null
+  pendingReview: number
+  applied: number
+  selected: number
+  draftReview: number
 }
 
 export async function loadCampaignCounts(now = new Date()): Promise<CampaignCounts> {
@@ -99,7 +112,30 @@ export async function loadCampaignCounts(now = new Date()): Promise<CampaignCoun
        from campaigns`,
     [monthAgo],
   )
+  const sourceRows = await query<{
+    source: string
+    last_collected_at: Date | null
+    pending_review: number
+    applied: number
+    selected: number
+    draft_review: number
+  }>(
+    `select source, max(last_seen_at) as last_collected_at,
+            count(*) filter (where status = 'PENDING_REVIEW') as pending_review,
+            count(*) filter (where status = 'APPLIED') as applied,
+            count(*) filter (where status = 'SELECTED') as selected,
+            count(*) filter (where status = 'DRAFT_REVIEW') as draft_review
+       from campaigns group by source order by source`,
+  )
   return {
+    bySource: sourceRows.map((r) => ({
+      source: r.source,
+      lastCollectedAt: r.last_collected_at ?? null,
+      pendingReview: Number(r.pending_review),
+      applied: Number(r.applied),
+      selected: Number(r.selected),
+      draftReview: Number(r.draft_review),
+    })),
     lastCollectedAt: row?.last_collected_at ?? null,
     pendingReview: row?.pending_review ?? 0,
     applied: row?.applied ?? 0,
@@ -256,5 +292,19 @@ export function formatStatus(status: Status, timeZone: string): string {
     `체험단 마지막 수집: ${c.lastCollectedAt ? fmt(c.lastCollectedAt, timeZone) : '기록 없음'}`,
   )
   for (const [label, n] of campaignLines) if (n > 0) lines.push(`${label}: ${n}건`)
+  for (const b of c.bySource ?? []) {
+    const parts = (
+      [
+        ['검수 대기', b.pendingReview],
+        ['신청함', b.applied],
+        ['선정', b.selected],
+        ['초안', b.draftReview],
+      ] as const
+    )
+      .filter(([, n]) => n > 0)
+      .map(([label, n]) => `${label} ${n}`)
+    const seen = b.lastCollectedAt ? ` · 마지막 수집 ${fmt(b.lastCollectedAt, timeZone)}` : ''
+    lines.push(`  [${sourceInfo(b.source).label}] ${parts.join(' · ') || '진행 중 없음'}${seen}`)
+  }
   return lines.join('\n')
 }

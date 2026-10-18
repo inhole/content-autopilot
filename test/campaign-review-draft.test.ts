@@ -138,3 +138,21 @@ describe('prompts', () => {
     expect(user).toContain('더 짧게')
   })
 })
+
+describe('review prompts per source', () => {
+  it('names where the review goes', () => {
+    expect(reviewSystem(profile(), { min: 100, max: 500 })).toContain('선물하기 상품 리뷰')
+    const musinsa = reviewSystem(profile(), { min: 100, max: 500 }, { source: 'musinsa' })
+    expect(musinsa).toContain('무신사 상품 후기')
+    expect(musinsa).not.toContain('영상 리뷰를 요구')
+  })
+  it('tells the model the text accompanies a video for VIDEO campaigns', () => {
+    const sys = reviewSystem(
+      profile(),
+      { min: 100, max: 500 },
+      { source: 'musinsa', contentType: 'VIDEO' },
+    )
+    expect(sys).toContain('영상 리뷰를 요구')
+    expect(sys).toContain('영상과 함께 올리는 글')
+  })
+})

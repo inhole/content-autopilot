@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
+import type { CampaignSource } from '../campaigns/types.ts'
 import { config } from '../config.ts'
 import {
   type CampaignDetailData,
@@ -12,6 +13,7 @@ import {
   type OverviewData,
   type PostRow,
   parseCampaignFilter,
+  parseCampaignSource,
 } from './data.ts'
 import { IMAGE_HOSTS } from './html.ts'
 import {
@@ -25,7 +27,7 @@ import {
 
 export type DashboardLoaders = {
   overview(): Promise<OverviewData>
-  campaigns(filter: CampaignFilter): Promise<CampaignListRow[]>
+  campaigns(filter: CampaignFilter, source?: CampaignSource | null): Promise<CampaignListRow[]>
   campaign(id: number): Promise<CampaignDetailData | null>
   posts(): Promise<PostRow[]>
 }
@@ -130,7 +132,9 @@ export function createRequestHandler(deps: DashboardDeps) {
       }
       if (path === '/campaigns') {
         const filter = parseCampaignFilter(url.searchParams.get('status'))
-        send(req, res, 200, renderCampaignList(await deps.loaders.campaigns(filter), filter, ctx))
+        const source = parseCampaignSource(url.searchParams.get('source'))
+        const rows = await deps.loaders.campaigns(filter, source)
+        send(req, res, 200, renderCampaignList(rows, filter, ctx, source))
         return
       }
       const detail = /^\/campaigns\/(\d{1,15})$/.exec(path)

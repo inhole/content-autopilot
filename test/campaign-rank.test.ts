@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { parseCampaignProfile } from '../src/campaigns/profile.ts'
-import { chunk, pickTopCampaigns, remainingQuota, ruleSkipReason } from '../src/campaigns/rank.ts'
+import { candidateLine, rankSystem } from '../src/campaigns/prompts.ts'
+import {
+  chunk,
+  pickTopCampaigns,
+  remainingQuota,
+  ruleSkipReason,
+  toRankCandidate,
+} from '../src/campaigns/rank.ts'
 
 const profile = parseCampaignProfile({
   about: 'dev',
@@ -72,5 +79,71 @@ describe('pickTopCampaigns', () => {
     const { picked, rest } = pickTopCampaigns([...batchA, ...batchB], new Set([1, 2, 3, 4]), 3)
     expect(picked.map((p) => p.id)).toEqual([2, 3, 4])
     expect(rest.map((p) => p.id)).toEqual([1])
+  })
+})
+
+describe('Musinsa campaigns (no applicant counts)', () => {
+  it('are never skipped for competition, only by keyword, brand or deadline', () => {
+    const musinsa = { ...base, application_count: null, recruit_count: null }
+    expect(ruleSkipReason(musinsa, profile, now)).toBeNull()
+    expect(ruleSkipReason({ ...musinsa, title: '주류 세트' }, profile, now)).toBe(
+      '제외 키워드: 주류',
+    )
+    expect(
+      ruleSkipReason(
+        { ...musinsa, apply_deadline: new Date('2026-10-17T00:00:00Z') },
+        profile,
+        now,
+      ),
+    ).toBe('모집 마감')
+  })
+})
+
+describe('rank prompts per source', () => {
+  const detail = {
+    campaignId: 1,
+    representativeGoods: { goodsName: '후드 집업', price: 129000 },
+    goodsCount: 2,
+    contentType: 'VIDEO',
+  }
+  const row = (over: Record<string, unknown>) =>
+    ({
+      id: 5,
+      source: 'musinsa',
+      title: '후드 집업',
+      brand: '브랜드',
+      application_count: null,
+      recruit_count: null,
+      remaining_days: 3,
+      detail,
+      ...over,
+    }) as Parameters<typeof toRankCandidate>[0]
+
+  it('shows price, goods count and review format for Musinsa instead of competition', () => {
+    const line = candidateLine(toRankCandidate(row({})))
+    expect(line).toContain('[5] 후드 집업')
+    expect(line).toContain('정가 129,000원')
+    expect(line).toContain('상품 2개')
+    expect(line).toContain('리뷰 형식 영상')
+    expect(line).toContain('남은 기간 3일')
+    expect(line).not.toContain('경쟁률')
+    expect(
+      candidateLine(toRankCandidate(row({ detail: { ...detail, contentType: 'IMAGE' } }))),
+    ).toContain('리뷰 형식 사진')
+  })
+  it('keeps competition for gift campaigns', () => {
+    const line = candidateLine(
+      toRankCandidate(
+        row({ source: 'kakao-gift', detail: null, application_count: 50, recruit_count: 10 }),
+      ),
+    )
+    expect(line).toContain('모집 10명 / 신청 50명 (경쟁률 5.0:1)')
+    expect(line).not.toContain('정가')
+  })
+  it('system prompts name the shop and the competition rule', () => {
+    expect(rankSystem('musinsa')).toContain('무신사')
+    expect(rankSystem('musinsa')).toContain('경쟁률 정보는 없다')
+    expect(rankSystem('kakao-gift')).toContain('선물하기')
+    expect(rankSystem('kakao-gift')).toContain('경쟁률(신청자 수 / 모집 인원)')
   })
 })

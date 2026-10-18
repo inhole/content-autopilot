@@ -2,14 +2,14 @@ import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { localDate } from '../lib/time.ts'
 import type { CampaignButton } from './tg.ts'
-import type { Campaign } from './types.ts'
+import { type Campaign, sourceInfo } from './types.ts'
 
 export type Reminder = { kind: string; text: string; buttons: CampaignButton[] }
 
 export type ReminderInput = Pick<
   Campaign,
   'id' | 'status' | 'title' | 'apply_deadline' | 'selected_at' | 'review_deadline'
->
+> & { source?: string }
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const REMINDER_STATUSES = ['APPLIED', 'SELECTED', 'DRAFT_REVIEW']
@@ -31,7 +31,7 @@ function formatDay(d: Date, tz: string): string {
 }
 
 function label(c: ReminderInput): string {
-  return `#${c.id} ${c.title?.trim() || '체험단'}`
+  return `#${c.id} [${sourceInfo(c.source).label}] ${c.title?.trim() || '체험단'}`
 }
 
 const resultButtons = (c: ReminderInput): CampaignButton[] => [
@@ -75,7 +75,7 @@ export function dueReminders(
   ) {
     out.push({
       kind: 'result-check',
-      text: `📮 ${label(c)}\n신청 마감이 지났어요. 결과가 나왔나요? 카카오톡에서 확인하고 눌러주세요.`,
+      text: `📮 ${label(c)}\n신청 마감이 지났어요. 결과가 나왔나요? ${c.source === 'musinsa' ? '무신사' : '카카오톡'}에서 확인하고 눌러주세요.`,
       buttons: resultButtons(c),
     })
   }
@@ -123,7 +123,7 @@ export async function runCampaignReminders(
   tz: string = config.TZ_NAME,
 ): Promise<number> {
   const campaigns = await query<ReminderInput>(
-    `select id, status, title, apply_deadline, selected_at, review_deadline
+    `select id, source, status, title, apply_deadline, selected_at, review_deadline
      from campaigns where status = any($1::text[]) order by id`,
     [REMINDER_STATUSES],
   )
