@@ -36,13 +36,12 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 
 | 명령 | 하는 일 |
 |---|---|
-| `/status` | (체험단 단계별 개수와 로컬 워커의 마지막 heartbeat도 같이 보인다.) 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 최근 7일 만료 수, 실패하거나 멈춘 연결 글 답글 수(있을 때만), 토큰 만료일, 마지막 수집 실행 결과, 이번 달 LLM 비용(OpenRouter)을 보여준다 |
+| `/status` | (체험단 단계별 개수와 마지막 수집 시각도 같이 보인다.) 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 최근 7일 만료 수, 실패하거나 멈춘 연결 글 답글 수(있을 때만), 토큰 만료일, 마지막 수집 실행 결과, 이번 달 LLM 비용(OpenRouter)을 보여준다 |
 | `/help` | 명령과 답장 규칙을 보여준다. 입력창에 `/`를 치면 명령 메뉴도 뜬다. |
 | `/add <url> [한 줄 의견]` | 직접 고른 기사로 초안을 만든다. 의견을 붙이면 그 의견을 글의 관점으로 삼는다. 의견은 관점일 뿐이고, 사실은 기사 본문에서만 가져온다. 이미 다룬 기사면 알려주기만 하고 새로 만들지 않는다. |
 | `/report` | 최근 7일 성과 리포트(발행 수, 조회·좋아요·답글·리포스트 합계와 평균, 답글률, 답글 많은 글 3개, 조회 가장 적은 글, 연결 글과 단일 글의 평균 조회·답글 비교)를 보여준다. 매주 월요일 09:00에도 자동으로 온다. |
-| `/camp <레뷰 링크>` | 체험단 공고를 직접 추가한다. 이미 있는 공고면 상태만 알려준다. |
-| `/camps` | 진행 중인 체험단을 마감순으로 보여준다. |
-| `/posted <id> <블로그 주소>` | 임시저장한 후기를 발행했다고 기록한다 (`POSTED`) |
+| `/camps` | 진행 중인 체험단을 단계별로 보여준다 (아래 [체험단](#체험단)) |
+| `/due <번호> <날짜>` | 체험단 리뷰 기한을 기록한다 (예: `/due 12 10/30`) |
 | `/start` | chat id를 알려준다 (처음 설정할 때) |
 
 ## CLI
@@ -134,8 +133,7 @@ select name, state, retry_count, output, created_on from pgboss.job order by cre
    - Restart Policy: On Failure (기본값)
 
 ### 주의
-- **Telegram polling은 한 곳에서만 한다.** 로컬에서 `npm start`를 켜 둔 채로 Railway 워커가 뜨면 두 워커가 polling을 놓고 충돌한다 (`409 Conflict`). 중복 발행은 일어나지 않지만 버튼 응답이 불안정해진다. 로컬에서는 CLI만 쓴다. 예외는 체험단용 `WORKER_ROLE=local` 워커 하나뿐이며, 이 워커는 polling을 하지 않는다. Railway의 cloud 워커를 둘 이상 띄우지 않는다.
-- 체험단 기능을 켤 때는 **cloud를 먼저 배포한다.** cloud가 마이그레이션 `014`를 적용한다. local은 마이그레이션을 하지 않는다.
+- **Telegram polling은 한 곳에서만 한다.** 로컬에서 `npm start`를 켜 둔 채로 Railway 워커가 뜨면 두 워커가 polling을 놓고 충돌한다 (`409 Conflict`). 중복 발행은 일어나지 않지만 버튼 응답이 불안정해진다. 로컬에서는 CLI만 쓴다. Railway의 cloud 워커를 둘 이상 띄우지 않는다.
 - 워커는 시작할 때 migration을 자동으로 적용한다.
 - 환경변수를 바꾸면 Railway가 자동으로 재배포한다.
 - 웹 대시보드는 `DASHBOARD_PASSWORD`를 넣고 Networking에서 도메인을 만들면 켜진다. 자세한 내용은 [dashboard.md](dashboard.md)에 있다.
@@ -154,90 +152,69 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres DATABASE_SSL=f
 ```
 통합 테스트는 테이블을 비우기 때문에 `DATABASE_URL` 호스트가 localhost/127.0.0.1/postgres가 아니면 실행을 거부한다(`test/integration/setup.ts`). 운영 DB에는 절대 돌지 않는다.
 
-## 체험단 로컬 워커
+## 체험단
 
-카톡 읽기, 레뷰 신청, 블로그 임시저장은 이 PC에서만 된다. 준비물은 [setup.md 5절](setup.md#5-체험단-aside--카카오톡-pc)이다.
+선물하기 체험단은 같은 워커가 처리한다. 따로 켤 것은 없다(수집은 기본 켜짐). 로컬 PC도 필요 없다. 동작 설명은 [architecture.md](architecture.md#체험단-파이프라인)에 있다.
 
-### 실행
+신청과 리뷰 작성은 카카오톡 **모바일 앱에서만** 된다(PC에서 열면 모바일 전용 안내 페이지로 간다). 그래서 코드는 아무것도 신청하거나 올리지 않는다. 내가 폰에서 하고 Telegram 버튼으로 기록한다.
 
-```bash
-# .env에 WORKER_ROLE=local
-npm start
-```
+### 매일 할 일
 
-- 시작 로그에 `[worker] started`가 보이면 된다. Telegram polling 로그(`[telegram] @… polling`)는 **나오지 않는 것이 정상**이다.
-- **PC가 켜져 있고 화면이 잠기지 않아야 한다.** 잠기면 `read-room.ps1`이 종료 코드 2로 끝나 카톡을 읽지 못한다. Aside도 잠긴 화면에서는 동작하지 않는다. 꺼져 있는 동안의 로컬 job은 대기하다가 켜지면 처리된다.
-- 로그인할 때 자동으로 시작하려면 Windows **작업 스케줄러**에 작업을 만든다.
-  - 트리거: 로그온할 때. 사용자: 본인 계정 (카톡과 Aside 창이 있는 데스크톱 세션이어야 해서 "로그온 여부와 관계없이 실행"은 쓰지 않는다).
-  - 동작: 프로그램 `cmd.exe`, 인수 `/c npm start`, 시작 위치 이 레포 경로.
-  - 절전을 끄거나, 최소한 사용하는 시간 동안 깨어 있게 한다.
-- 이 PC에서 `npm start`가 두 개 뜨지 않게 한다.
+하루 `CAMPAIGN_DAILY_MAX`개(기본 5)까지 카드가 온다. 수집은 09·15·21시(KST)다.
+
+| 상황 | 할 일 |
+|---|---|
+| 체험단 카드(🎁)가 왔다 | `📱 선물하기에서 열기`를 눌러 폰 카톡에서 연다. 신청했으면 `✅ 신청함`, 아니면 `🙅 패스`를 누르고 사유를 고른다. 패스 사유는 다음 선별에 반영된다. |
+| `✅ 신청함` 뒤 결과 메시지 | 결과가 나오면 `🎉 선정` 또는 `😢 미선정`을 누른다. 안 누르면 신청 마감 하루 뒤에 `📮` 확인 메시지가 온다. |
+| 선정됐다 | 선물하기에서 리뷰 기한을 보고 `/due <번호> <날짜>`(예: `/due 12 10/30`)로 알린다. 하루가 지나도 기한을 모르면 `⏳` 안내가 온다. |
+| 리뷰 기한 알림(`⏰`) | 마감 3일 전, 1일 전, 당일에 온다. 선정 상태면 `📝 리뷰 초안 쓰기` 버튼이 붙는다. |
+| 리뷰를 쓸 차례 | `📝 리뷰 초안 쓰기` → 안내 메시지에 사용 메모(써본 기간, 좋았던 점, 아쉬운 점)를 **답장** → 초안이 온다. 초안 메시지를 길게 눌러 복사해서 선물하기 리뷰에 붙여 넣고 올린 뒤 `✅ 리뷰 올림`을 누른다. |
+| 초안이 마음에 안 든다 | 조작 메시지에 `수정: <리뷰>`로 답장하면 그대로 교체한다. 그 외 내용으로 답장하면 피드백으로 보고 다시 쓴다. `🔁 다시 쓰기`는 같은 메모로 새로 쓴다. |
+
+- 초안은 메모에 있는 내용만 근거로 쓴다. 메모가 짧으면 글도 짧고, 권장 글자 수보다 짧으면 조작 메시지에 경고가 나온다.
+- 광고 표기(`disclosure`)는 코드가 맨 앞에 붙인다. 수정 답장에도 유지된다.
+- 마감 날짜는 `(추정)`이다. 목록에는 남은 일수만 있어서 실제 마감 시각과 다를 수 있다. 중요한 건 카톡에서 직접 확인한다.
+- 카드 버튼은 그 카드에서만 동작한다. 이미 처리했거나 새 카드가 와서 이전 카드가 됐으면 "이전 카드예요" 또는 "이미 처리된 카드예요"라고 답한다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `/camps` | 진행 중인 체험단을 단계별(신청 대기, 결과 대기, 선정·리뷰 작성, 초안 검수)로 보여준다. 마감 D-n과 기한을 모르는 항목의 `/due` 안내가 같이 나온다. |
+| `/due <번호> <날짜>` | 리뷰 기한을 기록한다. `10/30`, `10-30`, `10.30`, `2026-10-30`을 읽는다. 신청함·선정·초안 검수 단계에서만 된다. |
 
 ### 체험단 CLI
 
 ```bash
-npm run cli -- campaign:collect        # 카톡을 지금 읽어 새 링크를 등록한다 (local 역할 PC에서)
-npm run cli -- campaign:add <url>      # 링크를 직접 추가 (/camp와 같음)
-npm run cli -- campaign:fetch <id>     # 상세 페이지를 다시 읽는다
-npm run cli -- campaign:rank           # 선별을 지금 실행한다
-npm run cli -- campaign:show <id>      # 상태, 선별 이유, skip_reason, last_error 보기
-npm run cli -- campaign:card <id>      # Telegram 카드를 (다시) 보낸다
-npm run cli -- campaign:apply <id>     # 신청을 지금 실행한다 (ASIDE_DRY_RUN이 꺼져 있으면 실제로 제출한다)
-npm run cli -- campaign:selection      # 선정 확인을 지금 실행한다
-npm run cli -- campaign:remind         # 리마인더를 지금 확인해서 보낸다
-npm run cli -- blog:draft <id> [피드백] # 후기 초안을 (다시) 만든다
-npm run cli -- blog:save <id>          # 승인된 초안을 네이버에 임시저장한다
-npm run cli -- kakao:read "<방 이름>"  # 스파이크용. 읽어서 출력만 한다
-npm run cli -- aside:read <url>        # 스파이크용. 페이지 텍스트를 출력만 한다
+npm run cli -- gift:list              # 선물하기 공개 목록을 읽어 출력만 한다 (DB에 쓰지 않는다)
+npm run cli -- campaign:collect       # 목록 수집 → 선별 → 뽑힌 카드를 Telegram으로 보낸다 (큐 없이)
+npm run cli -- campaign:rank          # COLLECTED를 지금 선별한다 (카드는 보내지 않는다)
+npm run cli -- campaign:show <id>     # 상태, 선별 이유, skip_reason, 카드 문구 보기
+npm run cli -- campaign:card <id>     # Telegram 카드를 (다시) 보낸다
+npm run cli -- campaign:remind        # 리마인더를 지금 확인해서 보낸다
+npm run cli -- review:draft <id> [피드백]  # 리뷰 초안을 (다시) 쓰고 보낸다. 메모가 있어야 한다
 ```
 
-`kakao:read`, `aside:read`는 DB와 외부 서비스에 아무것도 쓰지 않는다.
+CLI는 Telegram을 polling하지 않고 보내기만 한다. 워커가 실행 중이어도 같이 쓴다.
 
-### Telegram에서 할 일
+### 처음 켤 때 확인할 것
 
-| 때 | 동작 |
-|---|---|
-| 공고 카드(🎁)가 왔다 | `✅ 신청함 (직접)`은 내가 직접 신청했을 때, `🚀 신청 승인 (자동)`은 Aside가 신청하게 할 때, `🙅 패스`는 사유를 고른다. 신청 문구는 `수정: <문구>` 답장으로 교체하거나 다른 내용으로 답장해 다시 쓰게 한다. |
-| 신청이 끝났다 / 실패했다 | 실패 알림의 재시도 버튼은 `attempts`를 0으로 돌리고 다시 신청한다. |
-| 선정됐다 (🎉) | 리뷰 마감, 키워드, 가이드 요약이 온다. 리뷰 마감 D-3, D-1, 당일과 선정 3일 뒤 "제품 받았나요?"가 온다(리마인더는 09~21시에만). |
-| `📝 초안 쓰기` | 접수 메시지에 **사진과 사용 메모를 답장**한다. 메모를 보내면 초안 카드가 온다. |
-| 초안 카드 | `✅ 승인 (임시저장)`, `🔁 재생성`. 답장 `수정: <본문>`, `제목: <제목>`은 그대로 교체하고, 그 외는 수정 요청으로 재생성한다. 광고 표기는 코드가 맨 앞에 붙이므로 지우지 않아도 된다. |
-| 임시저장 완료 | 네이버 블로그 임시저장함에서 사진 위치와 글을 확인하고 **직접 발행**한 뒤 `/posted <id> <블로그 주소>`를 보낸다. |
+수집과 선별은 실제 서비스에 대해 확인했지만, 아래는 실제 봇과 폰으로 아직 본 적이 없다([plans/campaign-autopilot.md](plans/campaign-autopilot.md)).
 
-### Phase 0 스파이크 체크리스트
-
-코드는 모두 쓰여 있지만 아래는 실제 PC에서 확인한 적이 없다. 결과는 [plans/campaign-autopilot.md](plans/campaign-autopilot.md) 9절에 적는다.
-
-1. `aside --help`, `aside repl --help`, `aside account list`를 저장한다.
-2. `npm run cli -- aside:read https://www.revu.net/campaign/<id>`로 페이지 텍스트가 나오는지 본다. `__ASIDE_RESULT__` 줄 파싱이 되는지, `openTab`이 돌려주는 객체가 `evaluate`/`title`/`url`을 지원하는지 확인한다. 로그인이 풀려 있는지도 본다.
-3. `npm run cli -- aside:read https://www.revu.net/mypage/campaigns?status=request`로 내 신청 목록이 보이는지 본다.
-4. 레뷰 신청 폼(신청 메시지, 선택 항목)이 `APPLY_SCRIPT`의 가정과 맞는지 dry-run 로그와 화면으로 비교한다.
-5. `npm run cli -- kakao:read "<방 이름>"`으로 복사된 텍스트가 `[이름] [오후 1:23] 내용` 형식이고 몇 개 메시지까지 읽히는지 본다. 화면을 잠그고 다시 해서 종료 코드 2가 나오는지도 본다.
-6. 네이버 블로그 임시저장을 `ASIDE_DRY_RUN=false`로 한 건만 실제로 돌려 본다 (`blog:save <id>`). 발행되지 않고 임시저장함에만 생기는지 확인한다.
-7. 셋(Aside 읽기, 레뷰 목록, 카톡 읽기)이 되면 운영을 시작한다. 카톡이 불안정하면 대화 내보내기 txt 입력으로 대체한다(결정 11).
-
-### dry-run 해제
-
-`ASIDE_DRY_RUN=true`이면 읽기는 하지만 신청 제출과 블로그 저장은 하지 않는다. 신청은 `APPLY_FAILED`(`드라이런: 제출하지 않음`), 저장은 `DRAFT_FAILED`(`드라이런: 저장하지 않음`)로 끝난다.
-
-1. 처음 **일주일**은 `true`로 운영하면서 선별 카드의 품질과 dry-run 로그의 신청 내용(`[aside dry-run]`)을 본다.
-2. 문제가 없으면 `.env`에서 `ASIDE_DRY_RUN=false`(또는 줄 삭제)로 바꾸고 로컬 워커를 재시작한다.
-3. dry-run으로 끝난 건은 카드의 재시도 버튼으로 다시 신청한다.
+1. `npm run cli -- gift:list`로 목록이 나오는지 본다(수백 건, `invalid 0` 근처).
+2. `npm run cli -- campaign:collect`로 한 번 돌려 카드가 오는지 본다. 사진이 보이고, 경쟁률과 `D-n (추정)`이 맞는지 본다. 첫 수집은 후보가 많아 선별 LLM이 여러 번 호출된다(60건씩).
+3. 카드의 `📱 선물하기에서 열기`를 폰 Telegram에서 눌러 카카오톡 앱의 해당 체험단으로 열리는지 본다. 브라우저로 열리면 카톡에서 직접 찾아야 한다.
+4. 카드 몇 개를 `✅`/`🙅`로 처리하고 `/camps`, `/due`가 맞게 보이는지 본다.
+5. 선별 품질이 별로면 `config/campaign-profile.json`의 `interests`, `excludeKeywords`, `excludeBrands`, `maxCompetition`을 고친다. 프로필은 프로세스당 한 번 읽으므로 워커를 재시작한다.
 
 ### 체험단 문제 해결
 
 | 증상 | 확인할 것 |
 |---|---|
-| 카드가 안 온다 | `/status`로 로컬 heartbeat와 단계별 개수를 본다. `npm run cli -- campaign:show <id>`로 `status`, `skip_reason`, `last_error`를 본다. `SKIPPED`면 사유(방문형, 제외 키워드, 신청 마감 지남, 선별 탈락)를 보고 프로필을 조정한다. |
-| `read-room.ps1` 종료 코드 **2** | 화면이 잠겨 있다. 잠금을 풀고 PC를 깨워 둔다. 다음 수집 주기에 다시 읽는다. |
-| 종료 코드 **3** | 카카오톡이 실행 중이 아니거나, 메인 창을 찾지 못했다(로그아웃, 트레이로 최소화). 카카오톡을 열고 로그인한다. |
-| 종료 코드 **4** | 방을 찾지 못했다. `KAKAO_ROOMS`가 창 제목과 정확히 같은지 본다. 방이 목록 맨 위에 있지 않으면 메인 창 검색으로 열리는지 직접 해 본다. |
-| 종료 코드 **5** | 복사된 텍스트가 없다. 방 창이 가려져 있거나 대화 영역을 클릭하지 못한 것이다. 창 크기와 배율을 확인하고 `kakao:read`로 재현한다. |
-| 종료 코드 **1** | 그 밖의 오류. stderr 메시지를 본다. |
-| `레뷰 로그인이 필요해요` (신청 `APPLY_FAILED`, 선정 확인 알림) | Aside 브라우저에서 revu.net에 다시 로그인하고 카드의 재시도 버튼을 누른다. 로그인이 풀린 채로는 선정 확인도 하지 않는다. 안 뽑힌 것으로 처리하지 않기 위해서다. |
-| 공고가 `UNREADABLE` | 상세 페이지를 읽지 못했다. 링크가 레뷰 캠페인이 아니거나 삭제된 공고일 수 있다. 재시도하지 않는다. 고쳤다면 `campaign:fetch <id>`로 다시 읽는다. |
-| 신청이 `APPLY_FAILED` | `last_error`로 원인을 보고(`campaign:show <id>`), 고친 뒤 카드의 **재시도 버튼**을 누른다. 3번 실패하면 `APPLY_FAILED`가 되고 재시도 버튼이 온다. 실패 화면은 `data/campaign-screenshots/`에 저장된다. `드라이런: 제출하지 않음`이면 dry-run 때문이다. 신청 내역에 이미 있으면 재시도해도 다시 제출하지 않고 `APPLIED`로 바꾼다. |
-| 초안 저장이 `DRAFT_FAILED` | `last_error`를 본다. `드라이런: 저장하지 않음`이면 dry-run 때문이다. 로그인(네이버)이 풀렸거나 에디터 화면이 달라졌을 수 있다. 고친 뒤 재시도 버튼, 또는 `blog:save <id>`. 결과를 확인하지 못해 재시도하면 임시저장 글이 중복될 수 있으니 네이버 임시저장함을 정리한다. |
-| `/status`의 로컬 heartbeat가 오래됨 | PC가 꺼졌거나 잠겼거나 로컬 워커가 죽었다. 로컬 워커를 다시 시작한다. 그동안의 local job은 대기하고 있다가 이어서 처리된다. |
-| Telegram `409 Conflict` | polling을 하는 워커가 둘이다. Railway cloud 워커가 하나뿐인지, PC의 워커가 `WORKER_ROLE=local`인지 확인한다. |
-| 로컬 워커 시작 후 `relation "campaigns" does not exist` | cloud가 아직 마이그레이션 `014`를 적용하지 않았다. cloud를 먼저 배포하고 다시 시작한다. |
+| 카드가 안 온다 | `/status`의 체험단 마지막 수집 시각을 본다. `npm run cli -- campaign:show <id>`로 `status`, `skip_reason`을 본다. 하루 한도(`CAMPAIGN_DAILY_MAX`)를 다 쓴 날은 `COLLECTED`로 남아 다음 수집에서 다시 평가한다. |
+| `gift list: unexpected ...` 로그, 수집 job 실패 알림 | 선물하기 목록의 응답 형식이 바뀌었다. `gift:list`로 재현하고 `src/campaigns/gift.ts`의 스키마를 고친다. 2페이지 이후 실패는 경고만 남기고 읽은 만큼 쓴다. |
+| `gift.kakao.com responded 429/5xx` | 한 번 다시 시도하고, 그래도 안 되면 job이 10분 뒤 한 번 재시도한다. 계속되면 `GIFT_COLLECT_CRON` 횟수를 줄인다. |
+| 마감이 이상하다 | 마감은 남은 일수로 추정한 값이다. 카톡의 실제 마감을 기준으로 한다. |
+| 카드가 모두 `SKIPPED` | `select skip_reason, count(*) from campaigns where status='SKIPPED' group by 1 order by 2 desc`로 이유를 본다. 프로필의 제외 규칙이 너무 넓을 수 있다. |
+| `review:draft`가 "nothing written" | 메모가 없거나, 선정·초안 검수 상태가 아니거나, 더 새 요청이 있다. 먼저 `📝 리뷰 초안 쓰기`로 메모를 남긴다. |
+| 초안이 너무 짧다 | 메모에 더 쓸 내용이 없으면 글도 짧다. 메모를 보태서 피드백으로 답장한다. |
+| 리마인더가 밤에 안 온다 | 정상이다. 09~21시(KST)에만 보낸다. 쌓인 것은 다음 날 아침에 간다. |
+| `/due`가 "신청·선정 단계의 체험단이 아니에요" | 신청함, 선정, 초안 검수 상태에서만 기한을 기록할 수 있다. `/camps`로 번호와 단계를 확인한다. |

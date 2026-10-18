@@ -1,6 +1,6 @@
 # 외부 서비스 준비
 
-워커를 돌리려면 서비스 4개가 필요하다. Supabase만 있으면 수집과 dry-run 발행은 바로 돌아가고, 나머지는 하나씩 붙이면 된다.
+워커를 돌리려면 서비스 4개가 필요하다. 체험단은 별도 준비가 필요 없다. Supabase만 있으면 수집과 dry-run 발행은 바로 돌아가고, 나머지는 하나씩 붙이면 된다.
 
 | 서비스 | 용도 | 없을 때 동작 |
 |---|---|---|
@@ -8,7 +8,7 @@
 | OpenRouter | 주제 선정·중복 판정, 초안 작성 | 주제 선정부터 실패 |
 | Telegram 봇 | 초안 검수 (승인/재생성/폐기) | 콘솔 출력 + CLI로 검수 |
 | Meta 앱 (Threads API) | 실제 발행 | `THREADS_DRY_RUN=true`로 로그만 남김 |
-| Aside + 카카오톡 PC (Windows PC, 5절) | 체험단 수집·신청·블로그 임시저장 | 체험단 파이프라인만 멈춤. Threads는 영향 없음 |
+| 카카오톡 선물하기 (5절) | 체험단 공개 목록 | 계정·토큰 필요 없음. 읽기만 한다 |
 
 모든 값은 `.env`에 넣는다. 형식은 `.env.example`을 참고한다. `.env`는 git에 올라가지 않는다.
 
@@ -106,80 +106,60 @@
 
 ---
 
-## 5. 체험단 (Aside + 카카오톡 PC)
+## 5. 체험단 (카카오톡 선물하기)
 
-체험단 파이프라인의 로컬 워커(`WORKER_ROLE=local`)가 쓰는 준비물이다. 카카오톡과 Aside가 깔린 Windows PC에서 한다. 클라우드 워커는 이 절이 필요 없다. 클라우드를 먼저 배포해 마이그레이션 `014`가 적용돼 있어야 한다([operations.md](operations.md#체험단-로컬-워커)).
+선물하기 체험단은 계정이나 토큰이 필요 없다. 공개 목록을 읽기만 한다. 위의 Supabase, OpenRouter, Telegram 설정이 되어 있으면 바로 돈다. 워커 하나가 Threads와 체험단을 같이 처리하고, 별도 PC나 브라우저 자동화는 쓰지 않는다.
 
-### 5-1. Aside 브라우저와 CLI
+신청과 리뷰 작성은 카카오톡 **모바일 앱**에서만 된다. 폰에 카카오톡이 있고 선물하기에서 체험단에 신청할 수 있는 계정이면 된다. Telegram은 그 폰에도 깔려 있어야 카드의 링크를 바로 열 수 있다.
 
-1. Aside 브라우저를 설치한다. 이 PC에는 `C:Program FilesAside`에 있다.
-2. `aside` CLI를 설치한다. 둘 중 하나로 한다.
-   - PowerShell에서 `install.ps1`을 실행한다. 스크립트가 Authenticode 서명을 검증하므로, 검증이 실패하면 중단하고 받은 파일을 확인한다.
-   - 또는 Aside **Settings > Developers**에서 설치한다.
-3. 새 PowerShell을 열어 확인한다.
-   ```powershell
-   aside --help
-   aside account list
-   ```
-   `aside`를 찾지 못하면 `ASIDE_BIN`에 전체 경로를 넣는다. 계정이 여러 개면 `ASIDE_ACCOUNT`로 고른다.
-4. 인증 파일(`~/.aside/cli/auth.json`)은 커밋하지 않는다.
+### 5-1. 환경 변수
 
-### 5-2. 레뷰와 네이버 로그인
+모두 선택이다. 기본값으로 돌아간다. 형식은 `.env.example`을 본다.
 
-1. Aside 브라우저에서 https://www.revu.net 과 https://blog.naver.com 에 직접 로그인한다. 로그인 유지를 켠다.
-2. 다른 브라우저의 로그인과 쿠키를 쓰려면 Aside의 브라우저 데이터 가져오기(import)를 쓴다.
-3. 로그인이 풀리면 신청이 `레뷰 로그인이 필요해요`로 실패하고 선정 확인이 멈춘다([operations.md](operations.md#체험단-문제-해결)). 가끔 열어서 로그인 상태를 확인한다.
-4. 네이버 블로그 글쓰기 화면이 한 번은 정상으로 열리는지 직접 확인해 둔다(임시저장 자동화가 그 화면을 쓴다).
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `GIFT_COLLECT_CRON` | `0 9,15,21 * * *` | 공개 목록을 읽는 시각 (`TZ_NAME` 기준) |
+| `GIFT_TRIAL_PAGE_ID` | `33325` | 선물하기 체험단 탭의 페이지 번호. `gift.kakao.com/page/<번호>`다. 탭이 바뀌면 이 값을 고친다. |
+| `CAMPAIGN_DAILY_MAX` | `5` | 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
+| `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 선별 규칙과 리뷰 문체, 광고 표기를 담은 프로필 파일 |
 
-### 5-3. 카카오톡 PC
+선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
 
-1. 카카오톡 PC에 로그인해 두고 PC를 켜 둔다. 트레이로 최소화돼 있으면 메인 창을 찾지 못할 수 있다.
-2. 공고가 올라오는 오픈채팅·단체방을 `KAKAO_ROOMS`에 쉼표로 적는다. **창 제목과 한 글자도 다르면 안 된다**(공백, 이모지 포함). 방에 들어가면 창 위쪽에 보이는 이름 그대로다.
-   ```
-   KAKAO_ROOMS=레뷰 체험단 공고방,체험단 정보공유
-   ```
-3. 읽기만 한다. 메시지를 보내지 않고, 하루 2~3회(`KAKAO_COLLECT_CRON`, 기본 09·13·20시)만 읽는다. 방 하나를 직접 확인하려면 `npm run cli -- kakao:read "<방 이름>"`(아무것도 쓰지 않는다).
+### 5-2. 프로필 `config/campaign-profile.json`
 
-### 5-4. 프로필 `config/campaign-profile.json`
-
-선별 규칙과 신청 문구, 후기 문체의 기준이다. 레포에 두며, 배송지나 연락처는 넣지 않는다(레뷰 계정에 이미 있다). 경로는 `CAMPAIGN_PROFILE_PATH`로 바꿀 수 있다.
+선별 규칙과 리뷰 문체의 기준이다. 레포에 두며, 배송지나 연락처는 넣지 않는다(카카오에 이미 있다). 바꾸면 워커를 재시작한다.
 
 ```json
 {
-  "blog": { "url": "https://blog.naver.com/...", "topic": "개발자 일상·IT 제품", "tone": "담백한 1인칭" },
-  "types": ["delivery"],
-  "interests": ["IT 액세서리", "생활용품", "식품"],
-  "excludeKeywords": ["다이어트 보조제", "주류"],
-  "minRewardWon": 20000,
-  "applyMessage": { "maxChars": 300, "points": ["사진 퀄리티", "실사용 후기"] },
-  "disclosure": "본 포스팅은 레뷰를 통해 제품을 무상으로 제공받아 작성한 솔직한 후기입니다."
+  "about": "IT 개발자. 실사용 위주로 꼼꼼히 써보고 장단점을 솔직하게 남기는 편",
+  "interests": ["IT 액세서리", "주변기기", "생활용품", "식품", "주방용품"],
+  "excludeKeywords": ["다이어트 보조제", "주류", "성인"],
+  "excludeBrands": [],
+  "maxCompetition": 200,
+  "review": {
+    "tone": "담백한 1인칭, 과장 없이 실사용 위주",
+    "minChars": 100,
+    "maxChars": 500,
+    "points": ["실제로 써본 기간과 상황", "좋았던 점과 아쉬운 점"]
+  },
+  "disclosure": "체험단으로 제품을 제공받아 작성한 솔직한 리뷰입니다."
 }
 ```
 
 | 필드 | 설명 |
 |---|---|
-| `blog` | 블로그 주소, 주제, 말투. 후기 초안과 신청 문구의 문체에 쓴다. |
-| `types` | 받을 공고 유형. `delivery`(배송형), `visit`(방문형), `other` 중에서 고른다. 나머지는 LLM을 부르기 전에 걸러진다. |
+| `about` | 나를 소개하는 한두 문장. 선별과 리뷰 초안의 맥락이다. |
 | `interests` | 관심 품목. 선별 LLM이 참고한다. |
-| `excludeKeywords` | 제목·내용에 있으면 코드가 바로 건너뛴다. |
-| `minRewardWon` | 제공 가치가 이보다 낮으면 건너뛴다. 기본 0이다. |
-| `applyMessage` | 신청 문구의 최대 글자 수(50~2000)와 강조할 점 |
-| `disclosure` | 블로그 초안 맨 앞에 코드가 붙이는 광고 표기. 생략하면 위 기본 문구다(결정 13). |
+| `excludeKeywords` | 제목·브랜드에 있으면 코드가 LLM 전에 바로 건너뛴다. |
+| `excludeBrands` | 브랜드 이름에 포함되면 건너뛴다. 생략하면 빈 목록이다. |
+| `maxCompetition` | 모집 인원 한 명당 신청자 수가 이보다 많으면 건너뛴다. **생략하면 제한이 없다** (저장소 기본 파일에는 없다. 위 예시의 200은 예시 값이다). |
+| `review.tone` | 리뷰 말투 |
+| `review.minChars` / `maxChars` | 리뷰 글자 수 범위. 기본 100 / 500. `maxChars`는 광고 표기 줄을 포함한 전체 길이다. |
+| `review.points` | 리뷰에 담을 관점 |
+| `disclosure` | 모든 리뷰 초안 맨 앞에 코드가 붙이는 광고 표기. 생략하면 줄을 붙이지 않는다([결정 12](decisions.md#12-광고-표기는-코드가-강제한다)). 체험단으로 받은 제품의 리뷰에는 반드시 두는 것을 권한다. |
 
-### 5-5. 로컬 `.env`
+### 5-3. 첫 실행
 
-PC의 `.env`는 클라우드와 같은 DB와 Telegram 봇을 쓴다. 같은 값이어야 두 워커가 같은 큐와 `campaigns`를 본다.
-
-```
-WORKER_ROLE=local
-DATABASE_URL=            # 클라우드와 같은 Supabase session pooler URL
-OPENROUTER_API_KEY=      # fetch의 상세 구조화에 필요
-TELEGRAM_BOT_TOKEN=      # 클라우드와 같은 봇 (보내기만 한다)
-TELEGRAM_CHAT_ID=        # 클라우드와 같은 값
-KAKAO_ROOMS=...
-ASIDE_DRY_RUN=true       # 처음 일주일은 켜 둔다 (operations.md)
-```
-
-- 로컬 워커는 Telegram polling을 하지 않는다. 같은 토큰이어도 `sendMessage`만 쓰므로 클라우드의 polling과 충돌하지 않는다.
-- 로컬에서 `WORKER_ROLE`을 비워 두면 `cloud`로 돌아서 polling을 시작한다. **Railway 워커가 떠 있는 동안에는 PC에서 `WORKER_ROLE=cloud`로 `npm start`하지 않는다.**
-- 나머지 키는 `.env.example`의 체험단 항목을 본다.
+1. `npm run cli -- gift:list`로 목록이 읽히는지 본다. DB에는 쓰지 않는다.
+2. `npm run cli -- campaign:collect`로 수집·선별·카드 전송을 한 번 돌린다. `TELEGRAM_BOT_TOKEN`과 `TELEGRAM_CHAT_ID`가 있어야 카드가 간다(없으면 콘솔에 출력만 한다).
+3. 이후는 워커가 `GIFT_COLLECT_CRON`대로 돈다. 쓰는 법은 [operations.md](operations.md#체험단)를 본다.
