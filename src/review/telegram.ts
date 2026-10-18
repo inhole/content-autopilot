@@ -36,6 +36,14 @@ type ReviewPost = {
   source_url: string | null
   caveats: string[] | null
   score: number | null
+  /** posts.origin (migration 016); absent means a normal news draft. */
+  origin?: string | null
+}
+
+/** Header label for drafts that did not come straight from the news pipeline. */
+export const ORIGIN_LABELS: Record<string, string> = {
+  revived: '♻️ 재활용',
+  digest: '🗞 주간 묶음',
 }
 
 const ADD_USAGE = '사용법: /add <url> [한 줄 의견]'
@@ -183,6 +191,8 @@ export function formatReview(
   const cta = opts.cta || undefined
   const score = p.score != null ? ` · 점수 ${p.score}` : ''
   const lines: string[] = []
+  const origin = p.origin ? ORIGIN_LABELS[p.origin] : undefined
+  if (origin) lines.push(origin)
   if (parts.length === 0) {
     lines.push(`📝 초안 #${p.id}${score} · ${len(p.text)}/${THREADS_TEXT_LIMIT}자`, '', p.text)
   } else {
@@ -576,7 +586,7 @@ export function createReviewer(opts: {
     async sendForReview(postId) {
       if (!chatId) throw new Error('TELEGRAM_CHAT_ID is not set (send /start to the bot)')
       const [post] = await query<ReviewPost>(
-        `select p.id, p.topic_id, p.revision, p.text, p.angle, p.source_url, t.score,
+        `select p.id, p.topic_id, p.revision, p.text, p.angle, p.source_url, p.origin, t.score,
                 array(select jsonb_array_elements_text(p.generation->'caveats')) as caveats
          from posts p join topics t on t.id = p.topic_id where p.id = $1`,
         [postId],

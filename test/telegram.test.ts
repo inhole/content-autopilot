@@ -117,6 +117,11 @@ describe('formatReview', () => {
     expect(out).toContain('— CTA: 팔로우')
     expect(out).toContain('삭제2')
   })
+  it('labels revived and digest drafts, not news drafts', () => {
+    expect(formatReview({ ...post, origin: 'revived' }).split('\n')[0]).toBe('♻️ 재활용')
+    expect(formatReview({ ...post, origin: 'digest' }).split('\n')[0]).toBe('🗞 주간 묶음')
+    expect(formatReview({ ...post, origin: 'news' }).split('\n')[0]).toContain('📝 초안 #12')
+  })
   it('omits CTA and link markers when absent', () => {
     const out = formatReview({ ...post, source_url: null }, { parts: ['one'] })
     expect(out).toContain('[2/2] 답글 (3/500자)\none')

@@ -73,7 +73,7 @@ async function sendReview(postId: number) {
 
 async function show(postId: number) {
   const [post] = await query<Parameters<typeof formatReview>[0] & { status: string }>(
-    `select p.id, p.topic_id, p.text, p.angle, p.source_url, p.status, t.score,
+    `select p.id, p.topic_id, p.text, p.angle, p.source_url, p.status, p.origin, t.score,
             array(select jsonb_array_elements_text(p.generation->'caveats')) as caveats
      from posts p join topics t on t.id = p.topic_id where p.id = $1`,
     [postId],
