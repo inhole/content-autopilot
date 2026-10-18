@@ -64,10 +64,22 @@ describe('chatJson', () => {
     expect(body(1).messages[0].content).toContain('"text"')
   })
 
+  it('also retries when the gateway reports the format was ignored', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('{"error":{"message":"openrouter/x key1: format_ignored"}}', { status: 502 }),
+      )
+      .mockResolvedValueOnce(completion('{"text":"c"}'))
+    expect(await call()).toEqual({ text: 'c' })
+    expect(body(1).response_format).toBeUndefined()
+  })
+
   it('does not retry other failures', async () => {
     fetchMock.mockResolvedValueOnce(new Response('quota', { status: 429 }))
     await expect(call()).rejects.toThrow('429')
-    expect(fetchMock).toHaveBeenCalledOnce()
+    fetchMock.mockResolvedValueOnce(new Response('key1=timeout', { status: 502 }))
+    await expect(call()).rejects.toThrow('502')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('rejects output that does not match the schema', async () => {

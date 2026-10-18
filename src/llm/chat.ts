@@ -1,10 +1,11 @@
 import { z } from 'zod'
 import { config, requireValue } from '../config.ts'
 
-/** An HTTP error from the LLM gateway; `status` decides whether to retry without a schema. */
+/** An HTTP error from the LLM gateway; `status` and `body` decide whether to retry without a schema. */
 export class LlmHttpError extends Error {
   constructor(
     readonly status: number,
+    readonly body: string,
     message: string,
   ) {
     super(message)
@@ -23,7 +24,7 @@ async function post(path: string, body: unknown, fetchImpl: typeof fetch): Promi
   })
   const text = await res.text()
   if (!res.ok)
-    throw new LlmHttpError(res.status, `LLM ${path} ${res.status}: ${text.slice(0, 500)}`)
+    throw new LlmHttpError(res.status, text, `LLM ${path} ${res.status}: ${text.slice(0, 500)}`)
   // FreeLLMAPI names the provider/model that actually answered; free routing changes it per call.
   const via = res.headers.get('x-routed-via')
   if (via) console.log(`[llm] routed via ${via}`)
@@ -52,8 +53,16 @@ export function extractJson(content: string): unknown {
   }
 }
 
-/** Statuses meaning the request was refused as sent; some providers reject `json_schema`. */
-const SCHEMA_REJECTED = new Set([400, 422])
+/**
+ * True when the structured-output request itself was the problem: a provider rejecting
+ * `json_schema` (400/422), or FreeLLMAPI giving up with a 502 after every routed model either
+ * ignored `response_format` (`format_ignored`) or refused the request (`provider_bad_request`).
+ */
+export function schemaRejected(err: unknown): boolean {
+  if (!(err instanceof LlmHttpError)) return false
+  if (err.status === 400 || err.status === 422) return true
+  return err.status === 502 && /format_ignored|provider_bad_request/.test(err.body)
+}
 
 /**
  * Asks the model for JSON matching `schema` and validates it. The schema is sent as a
@@ -95,7 +104,7 @@ export async function chatJson<S extends z.ZodType>(opts: {
   try {
     raw = await request(opts.system, true)
   } catch (err) {
-    if (!(err instanceof LlmHttpError && SCHEMA_REJECTED.has(err.status))) throw err
+    if (!schemaRejected(err)) throw err
     console.warn(`[llm] ${opts.schemaName}: structured output refused, retrying with prompt schema`)
     raw = await request(
       `${opts.system}\n\n다른 설명 없이 다음 JSON 스키마에 맞는 JSON 객체 하나만 출력한다.\n${JSON.stringify(jsonSchema)}`,
