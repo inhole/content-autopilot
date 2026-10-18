@@ -20,6 +20,8 @@ import { loadParts, retryFailedParts } from './pipeline/parts.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
+import { judgeExpired, reviveDraft } from './pipeline/revive.ts'
+import { formatReviveList } from './pipeline/revive-bot.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
 import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts'
 import { ThreadsClient } from './threads/client.ts'
@@ -52,6 +54,7 @@ const USAGE = `usage: npm run cli -- <command>
   insights                    collect Threads post insights now and print the latest numbers
   report                      print the weekly insights report (same text as Telegram /report)
   replies                     poll new Threads replies now and notify Telegram
+  revive [postId]             judge expired drafts and print the list, or revive one now (no Telegram)
 
   gift:list                   fetch the Kakao gift trial list and print it (writes nothing)
   musinsa:list                fetch the Musinsa preuser list via Aside and print it (writes nothing)
@@ -246,6 +249,16 @@ try {
       console.log(`${fresh.length} new reply(ies)`)
       for (const r of fresh)
         console.log(`- @${r.username ?? '?'} (post #${r.post_id}): ${r.text ?? '-'}`)
+      break
+    }
+    case 'revive': {
+      if (!args[0]) {
+        console.log(formatReviveList(await judgeExpired(), new Date(), config.TZ_NAME))
+        break
+      }
+      const postId = id()
+      if (!(await reviveDraft(postId))) throw new Error(`post ${postId} cannot be revived`)
+      await show(postId)
       break
     }
     case 'gift:list': {
