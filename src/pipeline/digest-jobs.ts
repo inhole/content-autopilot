@@ -1,7 +1,7 @@
 import type { Bot } from 'grammy'
 import type { PgBoss } from 'pg-boss'
 import { config } from '../config.ts'
-import type { Reviewer } from '../review/telegram.ts'
+import { Q } from '../jobs.ts'
 import { buildWeeklyDigest } from './digest.ts'
 
 // The weekly "이번 주 놓친 소식" job (docs/plans/roadmap.md 1) and its /digest command.
@@ -35,7 +35,7 @@ export function registerDigestBot(bot: Bot, deps: { onDigest: () => Promise<void
 }
 
 /** Creates the queue and its Sunday schedule, and the worker that builds and sends the digest. */
-export async function registerDigestJobs(boss: PgBoss, reviewer: Reviewer): Promise<void> {
+export async function registerDigestJobs(boss: PgBoss): Promise<void> {
   await boss.createQueue(DIGEST_QUEUE, {
     policy: 'stately',
     retryLimit: DIGEST_RETRY_LIMIT,
@@ -49,7 +49,9 @@ export async function registerDigestJobs(boss: PgBoss, reviewer: Reviewer): Prom
       console.log('[digest] fewer than 2 expired drafts to fold, nothing sent')
       return
     }
-    await reviewer.sendForReview(postId)
-    console.log(`[digest] sent #${postId} for review`)
+    // Through the retrying review queue: a retry of this job could not rebuild the digest, because
+    // its member drafts are already claimed.
+    await boss.send(Q.review, { postId })
+    console.log(`[digest] queued #${postId} for review`)
   })
 }

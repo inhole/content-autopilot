@@ -7,6 +7,14 @@ import { config } from './config.ts'
 import { migrate } from './db/migrate.ts'
 import { pool, query } from './db/pool.ts'
 import { createBoss, enqueueGenerate, enqueueRegeneration, registerJobs } from './jobs.ts'
+import { enqueueDigest, registerDigestBot, registerDigestJobs } from './pipeline/digest-jobs.ts'
+import { registerReviveBot } from './pipeline/revive-bot.ts'
+import {
+  enqueueRevive,
+  enqueueReviveCheck,
+  registerReviveJobs,
+  sendWithKeyboard,
+} from './pipeline/revive-jobs.ts'
 import { createReviewer } from './review/telegram.ts'
 import { startDashboard } from './web/server.ts'
 
@@ -62,10 +70,27 @@ if (config.WORKER_ROLE === 'local') {
     onAddTopic: async (topicId) => {
       await enqueueGenerate(boss, { topicId })
     },
-    extend: (bot) => registerCampaignBots(boss, bot),
+    extend: (bot) => {
+      registerCampaignBots(boss, bot)
+      registerReviveBot(bot, {
+        onJudge: async () => {
+          await enqueueReviveCheck(boss)
+        },
+        onRevive: async (postId) => {
+          await enqueueRevive(boss, postId)
+        },
+      })
+      registerDigestBot(bot, {
+        onDigest: async () => {
+          await enqueueDigest(boss)
+        },
+      })
+    },
   })
   await registerJobs(boss, reviewer)
   await registerCampaignJobs(boss)
+  await registerReviveJobs(boss, reviewer, sendWithKeyboard)
+  await registerDigestJobs(boss)
   reviewer.start()
   // Null when DASHBOARD_PASSWORD is unset.
   const dashboard = await startDashboard()

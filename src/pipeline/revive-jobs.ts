@@ -1,7 +1,8 @@
-import type { Bot, InlineKeyboard } from 'grammy'
+import type { InlineKeyboard } from 'grammy'
 import type { PgBoss } from 'pg-boss'
+import { telegramApi } from '../campaigns/tg.ts'
 import { config } from '../config.ts'
-import { formatFinalFailure, isFinalAttempt } from '../jobs.ts'
+import { formatFinalFailure, isFinalAttempt, Q } from '../jobs.ts'
 import type { Reviewer } from '../review/telegram.ts'
 import { judgeExpired, reviveDraft } from './revive.ts'
 import { formatReviveList, reviveKeyboard } from './revive-bot.ts'
@@ -14,17 +15,16 @@ const REVIVE_RETRY_LIMIT = 1
 export type SendWithKeyboard = (text: string, keyboard: InlineKeyboard) => Promise<void>
 
 /**
- * Builds the keyboard-capable sender from the review bot, i.e. the Bot handed to the `extend`
- * hook of createReviewer. Without a chat id it logs instead.
+ * Sends through the send-only Api (src/campaigns/tg.ts), which never conflicts with the review
+ * bot's polling. Without a bot token or chat id it logs instead.
  */
-export function sendWithKeyboardVia(bot: Bot): SendWithKeyboard {
-  return async (text, keyboard) => {
-    if (!config.TELEGRAM_CHAT_ID) {
-      console.log(`[revive] ${text}`)
-      return
-    }
-    await bot.api.sendMessage(config.TELEGRAM_CHAT_ID, text, { reply_markup: keyboard })
+export const sendWithKeyboard: SendWithKeyboard = async (text, keyboard) => {
+  const api = telegramApi()
+  if (!api || !config.TELEGRAM_CHAT_ID) {
+    console.log(`[revive] ${text}`)
+    return
   }
+  await api.sendMessage(config.TELEGRAM_CHAT_ID, text, { reply_markup: keyboard })
 }
 
 export const enqueueReviveCheck = (boss: PgBoss) => boss.send(REVIVE_QUEUES.check, {})
@@ -79,7 +79,9 @@ export async function registerReviveJobs(
     const { postId } = job.data
     const label = `초안 #${postId} 되살리기`
     await alertOnFinalFailure(job, REVIVE_RETRY_LIMIT, label, reviewer, async () => {
-      if (await reviveDraft(postId)) await reviewer.sendForReview(postId)
+      // The review queue retries the Telegram send; sending inline here would lose the review
+      // message for good, because a retry of this job finds the draft already revived.
+      if (await reviveDraft(postId)) await boss.send(Q.review, { postId })
       else await reviewer.notify('이미 처리된 초안이에요')
     })
   })

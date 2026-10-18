@@ -6,6 +6,7 @@ import { query, transaction } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
 import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
+import { DIGEST_BOT_COMMANDS, DIGEST_HELP_LINES } from '../pipeline/digest-jobs.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
 import {
   ctaSuffix,
@@ -17,6 +18,7 @@ import {
 } from '../pipeline/parts.ts'
 import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
 import { answerReply } from '../pipeline/replies.ts'
+import { REVIVE_BOT_COMMANDS, REVIVE_HELP_LINES } from '../pipeline/revive-bot.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
@@ -81,6 +83,10 @@ export const HELP_TEXT = [
   '💬 Threads 답글 알림에 답장하기',
   '- 답장한 내용이 그대로 Threads 답글로 달려요 (답글당 1회)',
   '',
+  '♻️ 만료된 초안 다시 쓰기',
+  ...REVIVE_HELP_LINES,
+  ...DIGEST_HELP_LINES,
+  '',
   ...CAMPAIGN_HELP_LINES,
   '',
   ...REVIEW_HELP_LINES,
@@ -91,6 +97,8 @@ const BOT_COMMANDS = [
   { command: 'add', description: '기사 URL로 초안 만들기: /add <url> [의견]' },
   { command: 'help', description: '사용법 보기' },
   { command: 'report', description: '주간 성과 리포트 보기' },
+  ...REVIVE_BOT_COMMANDS,
+  ...DIGEST_BOT_COMMANDS,
   ...CAMPAIGN_BOT_COMMANDS,
 ]
 
