@@ -98,3 +98,95 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 - 개발자 관점의 해석을 하나 이상 넣는다.
 
 남의 글을 모아서 올리기만 하는 계정은 노출에서 불리하다. 이 세 규칙이 그걸 피하는 장치다.
+
+## 체험단 파이프라인
+
+레뷰 체험단 공고를 카카오톡에서 모아 신청하고, 선정되면 일정을 챙기고, 블로그 후기 초안을 임시저장한다. Threads 파이프라인과 같은 Postgres와 pg-boss를 쓰지만 워커가 둘이다(결정 9~13).
+
+```
+ [로컬 PC · WORKER_ROLE=local]                    [Railway · WORKER_ROLE=cloud]
+  kakao-collect (09·13·20시)                       campaign-rank ──▶ 규칙 필터 + LLM 선별
+    카톡방 읽기 → 레뷰 링크 → campaigns               └─▶ campaign-card ──▶ Telegram 카드 ◀──▶ 사람
+  campaign-fetch ──▶ Aside로 상세 읽기 + LLM 구조화    campaign-rewrite  신청 문구 재작성
+  campaign-sweep (5분마다)                          blog-draft        후기 초안 (메모·사진 근거)
+    heartbeat, 신청·저장 대기분, 멈춘 DISCOVERED        campaign-maintenance (매시)
+  campaign-apply ──▶ 레뷰 신청                         만료 + 리마인더(09~21시만)
+  campaign-selection (10·19시) ──▶ 선정 확인           Telegram polling은 여기서만
+  blog-save ──▶ 네이버 임시저장
+                 └──────── 같은 Postgres + pg-boss 큐 ────────┘
+```
+
+두 역할 모두 모든 체험단 큐와 스케줄을 만들지만(멱등) `work()`는 자기 큐에만 등록한다. PC가 꺼져 있으면 로컬 큐의 job은 대기한다. 마이그레이션은 클라우드만 실행한다.
+
+### 큐
+
+| 큐 | 역할 | 하는 일 |
+|---|---|---|
+| `kakao-collect` | local | `KAKAO_COLLECT_CRON`(기본 `0 9,13,20 * * *`)마다 `KAKAO_ROOMS`를 읽는다. 방 하나가 실패해도 다른 방은 계속한다. 새 메시지에서 레뷰 링크를 뽑아 `campaigns`(`DISCOVERED`)에 넣고 `campaign-fetch`를 보낸다. |
+| `campaign-fetch` | local | Aside로 상세 페이지를 읽고 `chatJson`으로 구조화해 `DETAILED`로 바꾼다. 본문을 읽지 못하면 `UNREADABLE`로 두고 재시도하지 않는다. 일시 오류는 재시도한다. 끝나면 `campaign-rank`를 요청한다. |
+| `campaign-rank` | cloud | 마감 지난 것·방문형·제외 키워드 같은 규칙을 코드로 먼저 걸러 `SKIPPED`(`skip_reason`)로 두고, 남은 후보를 한 번의 LLM 호출로 평가한다. 상위 `CAMPAIGN_DAILY_MAX`개를 `SHORTLISTED`로 두고 신청 문구 초안을 만든다. fetch가 끝난 뒤에 도는 stately 큐다. |
+| `campaign-card` | cloud | `SHORTLISTED`를 `PENDING_REVIEW`로 바꾸고 Telegram 카드를 보낸다. |
+| `campaign-rewrite` | cloud | 카드에 단 피드백으로 신청 문구를 다시 쓴다. |
+| `campaign-sweep` | local | 5분마다 heartbeat를 기록하고, 신청 대기(`APPROVED`, 멈춘 `APPLYING`)와 저장 대기(`DRAFT_APPROVED`, 멈춘 `DRAFT_SAVING`)를 각 큐에 넣고, 30분 넘게 `DISCOVERED`인 것을 다시 fetch한다. |
+| `campaign-apply` | local | `retryLimit: 0`. 실패하면 행이 `APPROVED`로 돌아가고 sweep이 다시 찾는다. |
+| `campaign-selection` | local | 10:00, 19:00에 레뷰 마이페이지를 읽어 선정 여부를 반영한다. |
+| `campaign-maintenance` | cloud | 매시 신청 마감이 지난 `PENDING_REVIEW`를 `EXPIRED`로 바꾸고, 리마인더를 보낸다(09~21시에만). |
+| `blog-draft` | cloud | 메모·사진·가이드로 후기 초안을 쓴다. 요청할 때 `regen_seq`를 올려서 가장 최근 요청의 결과만 저장한다. |
+| `blog-save` | local | 승인된 초안을 네이버 블로그에 임시저장한다. |
+
+### 상태
+
+```
+공고:  DISCOVERED ─▶ DETAILED ─▶ SHORTLISTED ─▶ PENDING_REVIEW ─▶ APPROVED ─▶ APPLYING ─▶ APPLIED
+          │             │             │              │  │  │          ▲          │            │ │
+          └▶ UNREADABLE └▶ SKIPPED    │              │  │  └▶ APPLIED (직접 신청함 버튼)  └▶ APPLY_FAILED
+                                      │              │  └▶ REJECTED (패스)      └── 재시도 버튼 ──┘  │
+                                      └▶ EXPIRED ◀───┘  (신청 마감 지남)             APPLIED ─▶ SELECTED / NOT_SELECTED
+
+후기:  SELECTED ─▶ RECEIVED (📦 받음, 건너뛸 수 있음) ─▶ DRAFT_REVIEW ─▶ DRAFT_APPROVED ─▶ DRAFT_SAVING ─▶ DRAFT_SAVED ─▶ POSTED
+                                                         │  ▲                ▲                 │  │
+                                                         └──┘ 재생성·수정     └── 재시도 ────────┘  └▶ DRAFT_FAILED
+```
+
+- `DRAFT_REVIEW`는 `SELECTED`나 `RECEIVED`에서 `📝 초안 쓰기`로 들어간다. 사진과 메모를 답장으로 받은 뒤에 초안이 만들어진다.
+- `APPLY_FAILED`는 Telegram 재시도 버튼으로 `APPROVED`에 돌아간다(`attempts` 초기화). `DRAFT_FAILED`도 같다.
+- `POSTED`는 `/posted <id> <블로그 주소>`로 기록한다. `DRAFT_SAVED`에서만 가능하다.
+
+### 신청과 임시저장은 행을 선점한다
+
+`posts` 발행과 같은 모델이다(`src/campaigns/apply.ts`, `blog-save.ts`).
+
+1. `UPDATE … SET status='APPLYING'(또는 'DRAFT_SAVING'), attempts = attempts + 1, claim_seq = claim_seq + 1`로 행을 잡는다. 올린 `claim_seq`가 소유 토큰이다.
+2. 이후 모든 쓰기는 `status`와 `claim_seq = 토큰` 조건을 단다. 선점을 잃은 워커는 아무것도 쓰지 않는다.
+3. 브라우저에서 돌이킬 수 없는 일을 하기 직전에 소유권을 한 번 더 확인한다(heartbeat 겸용).
+4. **신청:** 제출 전에 레뷰의 신청 내역(`status=request`)과 선정 내역(`accepted`)을 먼저 본다. 응답을 잃어 이미 신청된 경우 다시 제출하지 않는다. 제출 뒤에도 스크립트의 답을 믿지 않고 목록으로 확인해야 `APPLIED`가 된다. 로그인이 풀려 있으면 즉시 `APPLY_FAILED`(`레뷰 로그인이 필요해요`)다.
+5. 3번 시도해도 안 되면 `APPLY_FAILED`/`DRAFT_FAILED`로 두고 Telegram에 재시도 버튼을 보낸다. 10분 넘게 멈춘 `APPLYING`/`DRAFT_SAVING`은 이어받는다.
+6. 임시저장은 결과를 알 수 없을 때(타임아웃, 결과 줄 없음) 재시도하므로 임시저장 글이 중복될 수 있다. 임시저장은 발행이 아니라서 허용한다.
+7. **드라이런(`ASIDE_DRY_RUN=true`):** 읽기는 하지만 제출·저장 스크립트는 실행하지 않는다. 신청은 `APPLY_FAILED`(`드라이런: 제출하지 않음`), 저장은 `DRAFT_FAILED`(`드라이런: 저장하지 않음`)로 끝난다. `APPROVED`로 되돌리면 sweep이 5분마다 반복하기 때문이다. 직접 신청하거나, 드라이런을 끈 뒤 재시도 버튼을 누른다.
+
+### 카카오톡 읽기
+
+Aside는 카카오톡 PC 앱을 읽을 수 없어서 `src/kakao/read-room.ps1`이 읽는다. 방 이름과 같은 제목의 창을 찾아(없으면 메인 창 검색으로 연다) 대화 영역에서 `Ctrl+A`, `Ctrl+C`로 복사하고 클립보드를 stdout으로 출력한다. 읽기만 하고 입력창에는 쓰지 않는다. 종료 코드: 0 성공, 2 화면 잠김, 3 카카오톡 창 없음, 4 방을 찾지 못함, 5 복사된 것 없음, 1 기타. `src/kakao/reader.ts`가 복사 텍스트(`[이름] [오후 1:23] 내용`)와 대화 내보내기 형식을 파싱하고, 메시지별 해시를 `kakao_messages`에 기록해 이미 본 메시지를 건너뛴다.
+
+### Telegram
+
+- 카드 버튼: `✅ 신청함 (직접)` → `APPLIED`, `🚀 신청 승인 (자동)` → `APPROVED`, `🙅 패스` → 사유 버튼 → `REJECTED`. callback은 `camp:<action>:<id>:<revision>`이고 카드에 보인 `revision`과 같을 때만 동작한다. 신청 문구가 바뀌면 `revision`이 올라간다.
+- 카드 답장: `수정: <문구>`는 신청 문구를 그대로 교체하고, 그 외는 피드백으로 보고 다시 쓴다.
+- 선정되면 🎉 알림(리뷰 마감, 키워드, 가이드 요약)과 `📝 초안 쓰기` 버튼이 온다. 3일이 지나도 `RECEIVED`가 아니면 `📦 받음` 확인이 온다. 리뷰 마감은 D-3(2~3일 전), D-1, 당일에 알리고 같은 종류는 한 번만 보낸다(`campaign_reminders`).
+- `📝 초안 쓰기` → 접수 메시지가 오면 그 메시지에 사진(여러 장)과 사용 메모를 답장한다. 메모를 보내면 초안을 만든다. 초안 카드는 `✅ 승인 (임시저장)`, `🔁 재생성` 버튼을 가지며, 답장 `수정: <본문>`, `제목: <제목>`은 그대로 교체하고 그 외는 수정 요청으로 재생성한다. 빠진 필수 키워드는 카드에 경고로 보인다.
+- 명령: `/camp <링크>`, `/camps`(진행 중 목록, 마감순), `/posted <id> <블로그 주소>`. `/status`에 체험단 단계별 개수와 로컬 워커의 마지막 heartbeat가 나온다.
+- 핸들러는 `createReviewer`의 `extend` 훅으로 등록한다. 기존 검수 `message:text` 핸들러보다 먼저 실행되고, 자기 것이 아닌 답장은 `next()`로 넘긴다.
+
+### 광고 표기
+
+프로필(`config/campaign-profile.json`)의 `disclosure` 한 줄을 코드가 모든 블로그 초안의 맨 앞에 붙인다(결정 13). 모델이 첫머리에 같은 취지의 문단을 써도 걷어내고 코드의 문구만 남긴다. `수정:` 답장으로 본문을 바꿔도 맨 앞에 다시 붙는다.
+
+### 체험단 데이터
+
+| 테이블 | 내용 |
+|---|---|
+| `campaigns` | 공고 한 건의 모든 상태(`014`). `(source, external_id)`와 `url_hash`가 unique. 파싱한 상세(`detail` jsonb와 `type`, `reward_won`, 마감일 등), 선별(`score`, `reason`, `skip_reason`, `apply_message`), 카드(`revision`, `review_message_id`, `review_revision`, `reject_reason`), 선점(`claim_seq`, `attempts`, `last_error`, `screenshot_path`), 후기(`intake_message_id`, `memo`, `draft_title`, `draft_body`, `regen_seq`, `blog_url`)를 가진다. |
+| `kakao_messages` | 이미 읽은 카톡 메시지의 해시(primary key)와 방 이름 |
+| `campaign_photos` | 후기용 사진. Telegram `file_id`를 저장하고, 로컬 워커가 `local_path`로 내려받는다(Aside는 디스크 파일을 올린다). |
+| `campaign_reminders` | 보낸 리마인더(`selected`, `received-check`, `review-d3`/`d1`/`d0`). `(campaign_id, kind)`가 primary key라 한 번만 간다. |
+| `worker_heartbeats` | 로컬 워커의 마지막 응답 시각. `/status`에 보인다. |
