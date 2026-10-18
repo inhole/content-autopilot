@@ -105,6 +105,30 @@ describe('setReviewDeadline', () => {
       expect(await setReviewDeadline(id, due)).toBe(false)
     }
   })
+
+  it('clears the review reminders already sent when the date changes', async () => {
+    const id = await seedCampaign({ status: 'SELECTED' })
+    const due = new Date('2026-10-30T14:59:00Z')
+    await setReviewDeadline(id, due)
+    await query(
+      "insert into campaign_reminders (campaign_id, kind) values ($1, 'review-d0'), ($1, 'due-missing')",
+      [id],
+    )
+    const kinds = async () =>
+      (
+        await query<{ kind: string }>(
+          'select kind from campaign_reminders where campaign_id = $1 order by kind',
+          [id],
+        )
+      ).map((r) => r.kind)
+
+    // Same date again: nothing to resend.
+    await setReviewDeadline(id, due)
+    expect(await kinds()).toEqual(['due-missing', 'review-d0'])
+    // A new date gets its own reminders; unrelated kinds stay.
+    await setReviewDeadline(id, new Date('2026-11-05T14:59:00Z'))
+    expect(await kinds()).toEqual(['due-missing'])
+  })
 })
 
 describe('expireCampaigns', () => {

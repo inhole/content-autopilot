@@ -104,6 +104,8 @@ export type Campaign = {
   detail: GiftTrialItem | MusinsaDetail | null
   score: number | null
   reason: string | null
+  /** When the ranker picked it (migration 015); the daily pick quota counts this. */
+  shortlisted_at: Date | null
   skip_reason: string | null
   revision: number
   review_chat_id: number | null

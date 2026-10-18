@@ -19,6 +19,7 @@ vi.mock('../../src/campaigns/profile.ts', async (importOriginal) => {
 })
 
 const { config } = await import('../../src/config.ts')
+const { query } = await import('../../src/db/pool.ts')
 const { rankCollected } = await import('../../src/campaigns/rank.ts')
 const { getCampaign, seedCampaign } = await import('./campaign-helpers-rank.ts')
 
@@ -78,6 +79,23 @@ describe('rankCollected', () => {
 
     expect(shortlisted).toEqual([b])
     expect((await getCampaign(a)).status).toBe('SKIPPED')
+  })
+
+  it('does not count campaigns that expired today without ever being picked', async () => {
+    // Hourly maintenance expires unpicked COLLECTED rows and bumps their updated_at.
+    await seedCampaign({ status: 'EXPIRED' })
+    await seedCampaign({ status: 'EXPIRED' })
+    await seedCampaign({ status: 'SKIPPED' })
+    const a = await seedCampaign()
+    const b = await seedCampaign()
+    chatJson.mockResolvedValueOnce({ scores: [score(a, 5), score(b, 8)] })
+
+    expect(await rankCollected(now)).toEqual([b, a])
+    const [row] = await query<{ shortlisted_at: Date | null }>(
+      'select shortlisted_at from campaigns where id = $1',
+      [b],
+    )
+    expect(row?.shortlisted_at).toBeInstanceOf(Date)
   })
 
   it('makes no LLM call and keeps candidates COLLECTED when the quota is used up', async () => {

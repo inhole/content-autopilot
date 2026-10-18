@@ -1,4 +1,4 @@
-import { query } from '../db/pool.ts'
+import { query, transaction } from '../db/pool.ts'
 import {
   ACTIVE_CAMPAIGN_STATUSES,
   type Campaign,
@@ -67,14 +67,29 @@ export async function markResult(id: number, selected: boolean): Promise<boolean
   return rows.length > 0
 }
 
-/** Sets the review deadline given by the owner with /due. */
+/**
+ * Sets the review deadline given by the owner with /due. When the date changes, the review
+ * reminders already sent were for the old date, so they are cleared and the new date gets its own.
+ */
 export async function setReviewDeadline(id: number, deadline: Date): Promise<boolean> {
-  const rows = await query(
-    `update campaigns set review_deadline = $2, updated_at = now()
-     where id = $1 and status in ('APPLIED', 'SELECTED', 'DRAFT_REVIEW') returning id`,
-    [id, deadline],
-  )
-  return rows.length > 0
+  return transaction(async (q) => {
+    const [old] = await q<{ review_deadline: Date | null }>(
+      `select review_deadline from campaigns
+       where id = $1 and status in ('APPLIED', 'SELECTED', 'DRAFT_REVIEW') for update`,
+      [id],
+    )
+    if (!old) return false
+    await q('update campaigns set review_deadline = $2, updated_at = now() where id = $1', [
+      id,
+      deadline,
+    ])
+    if (old.review_deadline?.getTime() !== deadline.getTime()) {
+      await q("delete from campaign_reminders where campaign_id = $1 and kind like 'review-%'", [
+        id,
+      ])
+    }
+    return true
+  })
 }
 
 export type ExpiredCard = {

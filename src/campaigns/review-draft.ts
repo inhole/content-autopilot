@@ -219,7 +219,9 @@ export async function replaceDraft(
     }
   }
   const [row] = await query<{ revision: number }>(
-    `update campaigns set draft_text = $3, revision = revision + 1, updated_at = now()
+    // regen_seq moves too, so a regeneration queued before this edit cannot overwrite it.
+    `update campaigns set draft_text = $3, revision = revision + 1, regen_seq = regen_seq + 1,
+       updated_at = now()
      where id = $1 and status = 'DRAFT_REVIEW' and review_message_id = $2
      returning revision`,
     [id, reviewMessageId, full],

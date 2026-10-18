@@ -37,6 +37,7 @@ function campaign(over: Partial<Campaign> = {}): Campaign {
     detail: null,
     score: 8.5,
     reason: '관심 품목이고 경쟁률이 낮아요',
+    shortlisted_at: null,
     skip_reason: null,
     revision: 2,
     review_chat_id: null,

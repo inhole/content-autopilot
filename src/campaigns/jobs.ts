@@ -11,6 +11,7 @@ import { runCampaignReminders } from './reminders.ts'
 import { expireCampaigns } from './review.ts'
 import { generateReviewDraft, requestDraftRegeneration } from './review-draft.ts'
 import { registerReviewBot, sendDraft } from './review-telegram.ts'
+import { campaignIdsByStatus } from './store.ts'
 import { registerCampaignBot, sendCampaignCard } from './telegram.ts'
 import { clearButtons, sendCampaignMessage } from './tg.ts'
 
@@ -96,6 +97,15 @@ export async function enqueueReviewDraft(
   return true
 }
 
+/**
+ * Sends a card for every SHORTLISTED campaign, not just this run's picks: a pick whose card was
+ * never queued (a later source failed to rank, an enqueue failed) is still in the table, and the
+ * row is the source of truth. The card queue's singletonKey drops duplicates.
+ */
+export async function sendPendingCards(send: (campaignId: number) => Promise<unknown>) {
+  for (const id of await campaignIdsByStatus('SHORTLISTED')) await send(id)
+}
+
 /** Collects the Kakao gift list, ranks what is new and sends a card for every pick. */
 export async function runGiftCollect(
   send: (campaignId: number) => Promise<unknown>,
@@ -103,7 +113,7 @@ export async function runGiftCollect(
 ) {
   const collected = await collectGiftCampaigns(now)
   const picked = await rankCollected(now)
-  for (const id of picked) await send(id)
+  await sendPendingCards(send)
   return { ...collected, created: collected.created.length, picked }
 }
 
@@ -230,7 +240,7 @@ export async function registerCampaignJobs(boss: PgBoss): Promise<void> {
     if (!job) return
     await alertOnFinalFailure(job, RANK_RETRY_LIMIT, '체험단 선별', async () => {
       const picked = await rankCollected()
-      for (const id of picked) await sendCard(boss, id)
+      await sendPendingCards((id) => sendCard(boss, id))
       console.log('[campaign-rank]', { picked })
     })
   })

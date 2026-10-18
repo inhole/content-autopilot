@@ -19,7 +19,8 @@ export const campaignProfileSchema = z.object({
   review: z.object({
     tone: z.string(),
     minChars: z.number().int().min(10).default(100),
-    maxChars: z.number().int().min(50).max(5000).default(500),
+    // The draft is sent as one Telegram message (4096 chars), so stay below that.
+    maxChars: z.number().int().min(50).max(4000).default(500),
     points: z.array(z.string()).default([]),
   }),
   /** Put first in every review draft by code, never by the LLM. Unset: no line is added. */

@@ -2,6 +2,9 @@ import { query } from '../../src/db/pool.ts'
 
 let seq = 0
 
+/** Statuses a campaign can only reach by being picked, so they get shortlisted_at by default. */
+const PICKED = ['SHORTLISTED', 'PENDING_REVIEW', 'REJECTED', 'APPLIED', 'SELECTED']
+
 export async function seedCampaign(
   opts: {
     status?: string
@@ -13,21 +16,31 @@ export async function seedCampaign(
     applyDeadline?: Date | null
     rejectReason?: string | null
     updatedAt?: Date
+    /** Defaults to updatedAt (or now) for picked statuses, null otherwise. */
+    shortlistedAt?: Date | null
     source?: string
     detail?: unknown
   } = {},
 ): Promise<number> {
   seq += 1
+  const status = opts.status ?? 'COLLECTED'
+  const shortlistedAt =
+    opts.shortlistedAt !== undefined
+      ? opts.shortlistedAt
+      : PICKED.includes(status)
+        ? (opts.updatedAt ?? new Date())
+        : null
   const [row] = await query<{ id: number }>(
     `insert into campaigns (external_id, url, url_hash, status, title, brand, recruit_count,
-       application_count, remaining_days, apply_deadline, reject_reason, updated_at, source, detail)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, now()), $13, $14)
+       application_count, remaining_days, apply_deadline, reject_reason, updated_at, source, detail,
+       shortlisted_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, now()), $13, $14, $15)
      returning id`,
     [
       `ext-${seq}`,
       `https://gift.kakao.com/giftbox/trial-campaign/ext-${seq}`,
       `hash-${seq}`,
-      opts.status ?? 'COLLECTED',
+      status,
       opts.title ?? `캠페인 ${seq}`,
       opts.brand === undefined ? '브랜드' : opts.brand,
       opts.recruitCount === undefined ? 10 : opts.recruitCount,
@@ -38,6 +51,7 @@ export async function seedCampaign(
       opts.updatedAt ?? null,
       opts.source ?? 'kakao-gift',
       opts.detail == null ? null : JSON.stringify(opts.detail),
+      shortlistedAt,
     ],
   )
   if (!row) throw new Error('seedCampaign failed')

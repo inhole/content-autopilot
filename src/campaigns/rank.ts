@@ -84,19 +84,14 @@ export function pickTopCampaigns(scores: Scored[], candidateIds: Set<number>, co
 }
 
 /**
- * Campaigns that reached SHORTLISTED or a later pre-apply stage today (KST). There is no column
- * for "when it was shortlisted", so this uses updated_at: shortlisting, the owner's decision and
- * applying all bump it, while list refreshes (collect.ts) deliberately do not. Later stages
- * (SELECTED, DRAFT_REVIEW, POSTED) are left out because they change days after the shortlisting.
- * A campaign shortlisted yesterday and applied today counts today; that only makes the quota
- * slightly more conservative.
+ * Campaigns picked today (KST), per source. Counted by shortlisted_at (migration 015), not
+ * updated_at: maintenance expiring never-picked campaigns also bumps updated_at.
  */
 async function countShortlistedToday(now: Date): Promise<Map<string, number>> {
   const dayStart = zonedToUtc(localDate(now, config.TZ_NAME), '00:00', config.TZ_NAME)
   const rows = await query<{ source: string; n: number }>(
     `select source, count(*) as n from campaigns
-     where status in ('SHORTLISTED', 'PENDING_REVIEW', 'REJECTED', 'EXPIRED', 'APPLIED')
-       and updated_at >= $1
+     where shortlisted_at >= $1
      group by source`,
     [dayStart],
   )
@@ -200,7 +195,8 @@ async function rankSource(
   const shortlisted: number[] = []
   for (const s of picked) {
     const [row] = await query<{ id: number }>(
-      `update campaigns set status = 'SHORTLISTED', score = $2, reason = $3, updated_at = now()
+      `update campaigns set status = 'SHORTLISTED', score = $2, reason = $3,
+         shortlisted_at = now(), updated_at = now()
        where id = $1 and status = 'COLLECTED' returning id`,
       [s.id, s.score, s.reason],
     )

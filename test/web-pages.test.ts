@@ -175,6 +175,7 @@ const campaign = (over: Partial<Campaign> = {}): Campaign => ({
   detail: null,
   score: 71,
   reason: '평가 <이유>',
+  shortlisted_at: null,
   skip_reason: null,
   revision: 0,
   review_chat_id: null,

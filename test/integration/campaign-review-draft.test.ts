@@ -116,6 +116,16 @@ describe('replaceDraft', () => {
     expect(c.draft_text).toBe(`${DISCLOSURE}\n\n내가 고친 리뷰`)
     expect(c.review_revision).toBe(1)
   })
+  it('makes a regeneration queued before the edit stale', async () => {
+    const id = await seedDraftCampaign()
+    const seq = await requestDraftRegeneration(id)
+    expect(seq).not.toBeNull()
+    await replaceDraft(id, 200, '내가 고친 리뷰', profile)
+    chatJson.mockResolvedValue({ text: '예전 요청으로 다시 쓴 리뷰'.repeat(5) })
+    // The queued job still carries the old seq, so it must not overwrite the owner's text.
+    expect(await generateReviewDraft(id, { seq: seq ?? 0 })).toBe(false)
+    expect((await getCampaign(id)).draft_text).toBe(`${DISCLOSURE}\n\n내가 고친 리뷰`)
+  })
   it('does not duplicate a disclosure the owner kept', async () => {
     const id = await seedDraftCampaign()
     await replaceDraft(id, 200, `${DISCLOSURE}\n\n본문`, profile)
