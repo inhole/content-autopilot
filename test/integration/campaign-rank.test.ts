@@ -5,6 +5,19 @@ vi.mock('../../src/llm/openrouter.ts', () => ({
   chatJson: (...args: unknown[]) => chatJson(...args),
 }))
 
+// A fixed profile, so the rule cases do not depend on config/campaign-profile.json.
+vi.mock('../../src/campaigns/profile.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/campaigns/profile.ts')>()
+  const profile = actual.parseCampaignProfile({
+    about: '테스트 프로필',
+    interests: ['생활용품'],
+    excludeKeywords: ['다이어트 보조제', '주류'],
+    maxCompetition: 1000,
+    review: { tone: '담백하게' },
+  })
+  return { ...actual, loadCampaignProfile: async () => profile }
+})
+
 const { config } = await import('../../src/config.ts')
 const { rankCollected } = await import('../../src/campaigns/rank.ts')
 const { getCampaign, seedCampaign } = await import('./campaign-helpers-rank.ts')
