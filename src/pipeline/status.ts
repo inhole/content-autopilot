@@ -67,43 +67,45 @@ export type Status = {
   /** Absent when pg-boss could not be queried or has no run yet. */
   lastDaily?: { state: string; at: Date }
   campaigns: CampaignCounts
-  /** Last heartbeat of the local worker (Kakao + Aside); null when it never reported. */
-  localWorkerSeenAt: Date | null
 }
 
 export type CampaignCounts = {
+  /** Newest last_seen_at of any campaign; null when nothing was ever collected. */
+  lastCollectedAt: Date | null
   pendingReview: number
-  applying: number
-  applyFailed: number
+  applied: number
   selected: number
-  reviewing: number
-  saveFailed: number
+  draftReview: number
+  postedLast30d: number
 }
 
-/** Campaign statuses behind each count shown in /status. */
-const CAMPAIGN_COUNT_STATUSES: Record<keyof CampaignCounts, readonly string[]> = {
-  pendingReview: ['PENDING_REVIEW'],
-  applying: ['APPROVED', 'APPLYING'],
-  applyFailed: ['APPLY_FAILED'],
-  selected: ['SELECTED'],
-  reviewing: ['RECEIVED', 'DRAFT_REVIEW', 'DRAFT_APPROVED', 'DRAFT_SAVING', 'DRAFT_SAVED'],
-  saveFailed: ['DRAFT_FAILED'],
-}
-
-export async function loadCampaignCounts(): Promise<CampaignCounts> {
-  const rows = await query<{ status: string; n: number }>(
-    'select status, count(*) as n from campaigns group by status',
+export async function loadCampaignCounts(now = new Date()): Promise<CampaignCounts> {
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000)
+  const [row] = await query<{
+    last_collected_at: Date | null
+    pending_review: number
+    applied: number
+    selected: number
+    draft_review: number
+    posted_30d: number
+  }>(
+    `select max(last_seen_at) as last_collected_at,
+            count(*) filter (where status = 'PENDING_REVIEW') as pending_review,
+            count(*) filter (where status = 'APPLIED') as applied,
+            count(*) filter (where status = 'SELECTED') as selected,
+            count(*) filter (where status = 'DRAFT_REVIEW') as draft_review,
+            count(*) filter (where status = 'POSTED'
+                               and coalesce(posted_at, updated_at) >= $1) as posted_30d
+       from campaigns`,
+    [monthAgo],
   )
-  const byStatus = new Map(rows.map((r) => [r.status, r.n]))
-  const total = (statuses: readonly string[]) =>
-    statuses.reduce((sum, st) => sum + (byStatus.get(st) ?? 0), 0)
   return {
-    pendingReview: total(CAMPAIGN_COUNT_STATUSES.pendingReview),
-    applying: total(CAMPAIGN_COUNT_STATUSES.applying),
-    applyFailed: total(CAMPAIGN_COUNT_STATUSES.applyFailed),
-    selected: total(CAMPAIGN_COUNT_STATUSES.selected),
-    reviewing: total(CAMPAIGN_COUNT_STATUSES.reviewing),
-    saveFailed: total(CAMPAIGN_COUNT_STATUSES.saveFailed),
+    lastCollectedAt: row?.last_collected_at ?? null,
+    pendingReview: row?.pending_review ?? 0,
+    applied: row?.applied ?? 0,
+    selected: row?.selected ?? 0,
+    draftReview: row?.draft_review ?? 0,
+    postedLast30d: row?.posted_30d ?? 0,
   }
 }
 
@@ -129,44 +131,33 @@ const FAILED_SHOWN = 5
 export async function loadStatus(now = new Date()): Promise<Status> {
   const since = new Date(now.getTime() - 24 * 3600 * 1000)
   const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000)
-  const [
-    pending,
-    scheduled,
-    published,
-    failed,
-    account,
-    expired,
-    llmCost,
-    chainParts,
-    campaigns,
-    heartbeat,
-  ] = await Promise.all([
-    query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
-    query<{ id: number; scheduled_at: Date; text: string }>(
-      `select id, scheduled_at, left(text, 30) as text from posts
+  const [pending, scheduled, published, failed, account, expired, llmCost, chainParts, campaigns] =
+    await Promise.all([
+      query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
+      query<{ id: number; scheduled_at: Date; text: string }>(
+        `select id, scheduled_at, left(text, 30) as text from posts
        where status = 'SCHEDULED' order by scheduled_at limit $1`,
-      [SCHEDULED_SHOWN],
-    ),
-    query<{ n: number }>(
-      "select count(*) as n from posts where status = 'PUBLISHED' and published_at >= $1",
-      [since],
-    ),
-    query<{ id: number; last_error: string | null }>(
-      "select id, last_error from posts where status = 'FAILED' order by id desc limit $1",
-      [FAILED_SHOWN],
-    ),
-    query<{ expires_at: Date | null }>(
-      "select expires_at from platform_accounts where platform = 'THREADS'",
-    ),
-    query<{ n: number }>(
-      "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
-      [weekAgo],
-    ),
-    fetchLlmCost(),
-    loadChainParts(now),
-    loadCampaignCounts(),
-    query<{ seen_at: Date }>("select seen_at from worker_heartbeats where role = 'local'"),
-  ])
+        [SCHEDULED_SHOWN],
+      ),
+      query<{ n: number }>(
+        "select count(*) as n from posts where status = 'PUBLISHED' and published_at >= $1",
+        [since],
+      ),
+      query<{ id: number; last_error: string | null }>(
+        "select id, last_error from posts where status = 'FAILED' order by id desc limit $1",
+        [FAILED_SHOWN],
+      ),
+      query<{ expires_at: Date | null }>(
+        "select expires_at from platform_accounts where platform = 'THREADS'",
+      ),
+      query<{ n: number }>(
+        "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
+        [weekAgo],
+      ),
+      fetchLlmCost(),
+      loadChainParts(now),
+      loadCampaignCounts(now),
+    ])
 
   // pg-boss internals may change between versions, so this is best-effort.
   let lastDaily: Status['lastDaily']
@@ -195,7 +186,6 @@ export async function loadStatus(now = new Date()): Promise<Status> {
     expiredLast7d: expired[0]?.n ?? 0,
     llmCost: llmCost ?? undefined,
     campaigns,
-    localWorkerSeenAt: heartbeat[0]?.seen_at ?? null,
   }
 }
 
@@ -256,16 +246,15 @@ export function formatStatus(status: Status, timeZone: string): string {
   const c = status.campaigns
   const campaignLines = [
     ['검수 대기', c.pendingReview],
-    ['신청 대기/진행', c.applying],
-    ['신청 실패', c.applyFailed],
-    ['선정', c.selected],
-    ['리뷰 진행', c.reviewing],
-    ['저장 실패', c.saveFailed],
+    ['신청함·결과 대기', c.applied],
+    ['선정·리뷰 전', c.selected],
+    ['리뷰 초안', c.draftReview],
+    ['최근 30일 리뷰 완료', c.postedLast30d],
   ] as const
   lines.push('', '🎁 체험단')
+  lines.push(
+    `체험단 마지막 수집: ${c.lastCollectedAt ? fmt(c.lastCollectedAt, timeZone) : '기록 없음'}`,
+  )
   for (const [label, n] of campaignLines) if (n > 0) lines.push(`${label}: ${n}건`)
-  if (campaignLines.every(([, n]) => n === 0)) lines.push('진행 중인 체험단 없음')
-  const seen = status.localWorkerSeenAt
-  lines.push(`로컬 워커 마지막 응답: ${seen ? fmt(seen, timeZone) : '기록 없음'}`)
   return lines.join('\n')
 }

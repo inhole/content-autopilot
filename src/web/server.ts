@@ -13,6 +13,7 @@ import {
   type PostRow,
   parseCampaignFilter,
 } from './data.ts'
+import { IMAGE_HOSTS } from './html.ts'
 import {
   renderCampaignDetail,
   renderCampaignList,
@@ -44,8 +45,7 @@ const dbLoaders: DashboardLoaders = {
 }
 
 const SECURITY_HEADERS = {
-  'Content-Security-Policy':
-    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: ${IMAGE_HOSTS.map((h) => `https://${h}`).join(' ')}; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
