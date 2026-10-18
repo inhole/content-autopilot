@@ -203,9 +203,85 @@ export type PostRow = {
   replies: number | null
 }
 
-export async function loadRecentPosts(limit = 50): Promise<PostRow[]> {
-  return query<PostRow>(
-    `select p.id, p.status, p.text, p.scheduled_at, p.published_at,
+export type PostOrigin = 'news' | 'revived' | 'digest'
+
+export type InsightsData = {
+  days: number
+  daily: { date: string; posts: number; views: number; likes: number; replies: number }[]
+  top: {
+    id: number
+    text: string
+    published_at: Date
+    views: number | null
+    likes: number | null
+    replies: number | null
+    reposts: number | null
+  }[]
+}
+
+/** `?days=` of /api/insights: an integer clamped to 7..90, default 30. */
+export function parseInsightsDays(value: string | null | undefined): number {
+  const n = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(n)) return 30
+  return Math.min(90, Math.max(7, n))
+}
+
+/** `?limit=` of /api/posts: an integer clamped to 1..200, default 50. */
+export function parsePostLimit(value: string | null | undefined): number {
+  const n = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(n)) return 50
+  return Math.min(200, Math.max(1, n))
+}
+
+/**
+ * Engagement of posts published within the last `days` days, from each post's latest insights
+ * snapshot. `daily` sums by KST publish date (oldest first, only days with posts); `top` is the
+ * 10 posts with the most views. Posts without any snapshot count as zero in `daily`.
+ */
+export async function loadInsights(days: number, now: Date = new Date()): Promise<InsightsData> {
+  const rows = await query<{
+    id: number
+    text: string
+    published_at: Date
+    day: string
+    views: number | null
+    likes: number | null
+    replies: number | null
+    reposts: number | null
+  }>(
+    `select p.id, p.text, p.published_at,
+            to_char(p.published_at at time zone 'Asia/Seoul', 'YYYY-MM-DD') as day,
+            i.views, i.likes, i.replies, i.reposts
+       from posts p
+       left join lateral (
+         select views, likes, replies, reposts from post_insights
+          where post_id = p.id order by collected_at desc limit 1
+       ) i on true
+      where p.status = 'PUBLISHED' and p.published_at is not null
+        and p.published_at > $1::timestamptz - make_interval(days => $2::int)
+        and p.published_at <= $1::timestamptz
+      order by p.published_at`,
+    [now, days],
+  )
+  const byDay = new Map<string, InsightsData['daily'][number]>()
+  for (const r of rows) {
+    const d = byDay.get(r.day) ?? { date: r.day, posts: 0, views: 0, likes: 0, replies: 0 }
+    d.posts += 1
+    d.views += Number(r.views ?? 0)
+    d.likes += Number(r.likes ?? 0)
+    d.replies += Number(r.replies ?? 0)
+    byDay.set(r.day, d)
+  }
+  const top = [...rows]
+    .sort((a, b) => Number(b.views ?? -1) - Number(a.views ?? -1) || b.id - a.id)
+    .slice(0, 10)
+    .map(({ day: _day, ...rest }) => rest)
+  return { days, daily: [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date)), top }
+}
+
+export async function loadRecentPosts(limit = 50): Promise<(PostRow & { origin: PostOrigin })[]> {
+  return query<PostRow & { origin: PostOrigin }>(
+    `select p.id, p.status, p.text, p.scheduled_at, p.published_at, p.origin,
             i.views, i.likes, i.replies
        from posts p
        left join lateral (

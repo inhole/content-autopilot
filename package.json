@@ -7,11 +7,14 @@
     "start": "tsx src/worker.ts",
     "cli": "tsx src/cli.ts",
     "db:migrate": "tsx src/db/migrate.ts",
+    "build:web": "npm --prefix web ci --include=dev && npm --prefix web run build",
+    "build": "npm run build:web",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:web": "npm --prefix web test"
   },
   "type": "module",
   "dependencies": {

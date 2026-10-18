@@ -1,17 +1,13 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
-import type { CampaignSource } from '../campaigns/types.ts'
 import { config } from '../config.ts'
+import { type ApiLoaders, handleApi } from './api.ts'
 import {
-  type CampaignDetailData,
-  type CampaignFilter,
-  type CampaignListRow,
   loadCampaignDetail,
   loadCampaignList,
+  loadInsights,
   loadOverview,
   loadRecentPosts,
-  type OverviewData,
-  type PostRow,
   parseCampaignFilter,
   parseCampaignSource,
 } from './data.ts'
@@ -24,30 +20,37 @@ import {
   renderOverview,
   renderPosts,
 } from './pages.ts'
+import { defaultDistDir, hasBuild, lookupStatic } from './static.ts'
 
-export type DashboardLoaders = {
-  overview(): Promise<OverviewData>
-  campaigns(filter: CampaignFilter, source?: CampaignSource | null): Promise<CampaignListRow[]>
-  campaign(id: number): Promise<CampaignDetailData | null>
-  posts(): Promise<PostRow[]>
-}
+export type DashboardLoaders = ApiLoaders
 
 export type DashboardDeps = {
   password: string
   loaders: DashboardLoaders
   tz?: string
   now?: () => Date
+  /** Directory of the built React app; null disables it (legacy pages only). Default: web/dist. */
+  webDist?: string | null
 }
 
 const dbLoaders: DashboardLoaders = {
   overview: loadOverview,
   campaigns: loadCampaignList,
   campaign: loadCampaignDetail,
-  posts: () => loadRecentPosts(50),
+  posts: loadRecentPosts,
+  insights: loadInsights,
 }
 
+const IMG_HOSTS = IMAGE_HOSTS.map((h) => `https://${h}`).join(' ')
+
+/** CSP of the server-rendered pages (inline styles and scripts). */
+export const LEGACY_CSP = `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+/** CSP of the React app: same-origin scripts only. */
+export const APP_CSP = `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+const API_CSP = "default-src 'none'; frame-ancestors 'none'"
+
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: ${IMAGE_HOSTS.map((h) => `https://${h}`).join(' ')}; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+  'Content-Security-Policy': LEGACY_CSP,
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
@@ -70,11 +73,28 @@ export function isAuthorized(header: string | undefined, password: string): bool
   return passwordMatches(decoded.slice(colon + 1), password)
 }
 
+function sendJson(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+  extra: Record<string, string> = {},
+): void {
+  send(
+    req,
+    res,
+    status,
+    JSON.stringify(body),
+    { 'Content-Security-Policy': API_CSP, ...extra },
+    'application/json; charset=utf-8',
+  )
+}
+
 function send(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   status: number,
-  body: string,
+  body: string | Buffer,
   extra: Record<string, string> = {},
   type = 'text/html; charset=utf-8',
 ): void {
@@ -90,15 +110,12 @@ function send(
 export function createRequestHandler(deps: DashboardDeps) {
   const tz = deps.tz ?? config.TZ_NAME
   const nowFn = deps.now ?? (() => new Date())
+  const distDir = deps.webDist === undefined ? defaultDistDir() : deps.webDist
 
   return async function handleRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      send(req, res, 405, 'Method Not Allowed', { Allow: 'GET, HEAD' }, 'text/plain; charset=utf-8')
-      return
-    }
     let url: URL
     try {
       url = new URL(req.url ?? '/', 'http://dashboard.local')
@@ -107,6 +124,22 @@ export function createRequestHandler(deps: DashboardDeps) {
       return
     }
     const path = url.pathname
+    const isApi = path === '/api' || path.startsWith('/api/')
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      if (isApi) {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'GET, HEAD' })
+      } else {
+        send(
+          req,
+          res,
+          405,
+          'Method Not Allowed',
+          { Allow: 'GET, HEAD' },
+          'text/plain; charset=utf-8',
+        )
+      }
+      return
+    }
 
     if (path === '/healthz') {
       send(req, res, 200, 'ok', {}, 'text/plain; charset=utf-8')
@@ -125,7 +158,36 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
 
     const ctx = { now: nowFn(), tz }
+    if (isApi) {
+      try {
+        const result = await handleApi(path, url.searchParams, deps.loaders, ctx.now)
+        sendJson(req, res, result.status, result.body)
+      } catch (err) {
+        console.error('dashboard api request failed:', err)
+        sendJson(req, res, 500, { error: 'internal error' })
+      }
+      return
+    }
     try {
+      if (distDir && (await hasBuild(distDir))) {
+        const file = await lookupStatic(distDir, path)
+        if (file === 'bad') send(req, res, 400, 'Bad Request', {}, 'text/plain; charset=utf-8')
+        else if (!file) send(req, res, 404, 'Not Found', {}, 'text/plain; charset=utf-8')
+        else {
+          send(
+            req,
+            res,
+            200,
+            file.body,
+            {
+              'Content-Security-Policy': APP_CSP,
+              'Cache-Control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+            },
+            file.type,
+          )
+        }
+        return
+      }
       if (path === '/') {
         send(req, res, 200, renderOverview(await deps.loaders.overview(), ctx))
         return
@@ -145,7 +207,7 @@ export function createRequestHandler(deps: DashboardDeps) {
         return
       }
       if (path === '/posts') {
-        send(req, res, 200, renderPosts(await deps.loaders.posts(), ctx))
+        send(req, res, 200, renderPosts(await deps.loaders.posts(50), ctx))
         return
       }
       send(req, res, 404, renderNotFound())
