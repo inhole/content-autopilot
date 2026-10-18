@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
 import type { CampaignDetailData, CampaignListRow, OverviewData } from '../src/web/data.ts'
-import { esc, extLink, isHttpUrl } from '../src/web/html.ts'
+import { esc, extLink, isAllowedImageUrl, isHttpUrl } from '../src/web/html.ts'
 import {
+  formatCompetition,
   renderCampaignDetail,
   renderCampaignList,
   renderOverview,
@@ -33,31 +34,38 @@ describe('escaping', () => {
 
 const overview = (over: Partial<OverviewData> = {}): OverviewData => ({
   posts: { pendingReview: 2, scheduled: [], published24h: 1, failed: 0 },
-  campaignCounts: { PENDING_REVIEW: 3, APPROVED: 1, APPLYING: 1, POSTED: 4 },
-  heartbeats: [],
+  campaigns: {
+    counts: { PENDING_REVIEW: 3, APPLIED: 2, SELECTED: 1, POSTED: 9 },
+    lastCollectedAt: new Date('2026-10-18T02:30:00Z'),
+    lastSeenCount: 42,
+    postedLast30d: 4,
+  },
   ...over,
 })
 
 describe('renderOverview', () => {
-  it('sums bucketed statuses and shows empty states', () => {
+  it('shows campaign counts, the last collection and no worker heartbeat', () => {
     const html = renderOverview(overview(), ctx)
     expect(html).toContain('<b>3</b><span>검수 대기')
-    expect(html).toContain('<b>2</b><span>신청 대기/진행')
+    expect(html).toContain('<b>2</b><span>신청함·결과 대기')
+    expect(html).toContain('<b>1</b><span>선정·리뷰 전')
+    expect(html).toContain('<b>0</b><span>리뷰 초안')
+    expect(html).toContain('<b>4</b><span>최근 30일 리뷰 완료')
+    expect(html).toContain('2026-10-18 11:30')
+    expect(html).toContain('30분 전')
+    expect(html).toContain('체험단 42건')
     expect(html).toContain('발행 예정인 글이 없어요')
-    expect(html).toContain('하트비트가 아직 없어요')
+    expect(html).not.toContain('로컬 워커')
     expect(html).toContain('http-equiv="refresh"')
   })
-  it('warns when the heartbeat is older than 30 minutes', () => {
-    const stale = renderOverview(
-      overview({ heartbeats: [{ role: 'local', seen_at: new Date('2026-10-18T02:00:00Z') }] }),
+  it('handles a database that was never collected', () => {
+    const html = renderOverview(
+      overview({
+        campaigns: { counts: {}, lastCollectedAt: null, lastSeenCount: 0, postedLast30d: 0 },
+      }),
       ctx,
     )
-    expect(stale).toContain('badge warn')
-    const fresh = renderOverview(
-      overview({ heartbeats: [{ role: 'local', seen_at: new Date('2026-10-18T02:50:00Z') }] }),
-      ctx,
-    )
-    expect(fresh).not.toContain('badge warn')
+    expect(html).toContain('아직 수집한 체험단이 없어요')
   })
   it('escapes scheduled post text', () => {
     const html = renderOverview(
@@ -76,79 +84,105 @@ describe('renderOverview', () => {
   })
 })
 
+describe('formatCompetition', () => {
+  it('formats applicants per slot, or a dash when unknown', () => {
+    expect(formatCompetition({ application_count: 123_400, recruit_count: 100 })).toBe('1,234:1')
+    expect(formatCompetition({ application_count: 25, recruit_count: 10 })).toBe('2.5:1')
+    expect(formatCompetition({ application_count: null, recruit_count: 10 })).toBe('-')
+    expect(formatCompetition({ application_count: 5, recruit_count: 0 })).toBe('-')
+  })
+})
+
 const listRow = (over: Partial<CampaignListRow> = {}): CampaignListRow => ({
   id: 7,
   title: '<i>이어폰</i> 체험',
+  brand: '<b>브랜드</b>',
   status: 'PENDING_REVIEW',
-  reward_won: 59000,
+  recruit_count: 10,
+  application_count: 5000,
   apply_deadline: new Date('2026-10-20T09:00:00Z'),
-  announce_at: null,
   review_deadline: null,
   score: 82,
-  found_in: '체험단방',
   updated_at: new Date('2026-10-18T01:00:00Z'),
-  offer: null,
   ...over,
 })
 
 describe('renderCampaignList', () => {
-  it('shows D-n, label, and escapes the title', () => {
+  it('shows label, competition, estimated D-n, and escapes title and brand', () => {
     const html = renderCampaignList([listRow()], 'active', ctx)
     expect(html).toContain('D-2')
+    expect(html).toContain('추정')
+    expect(html).toContain('500:1')
+    expect(html).toContain('검수 대기</span>')
     expect(html).toContain('href="/campaigns/7"')
     expect(html).toContain('&lt;i&gt;이어폰&lt;/i&gt;')
-    expect(html).toContain('59,000원')
+    expect(html).toContain('&lt;b&gt;브랜드&lt;/b&gt;')
+    expect(html).not.toContain('<b>브랜드</b>')
   })
-  it('marks the active filter chip and handles empty', () => {
+  it('uses the review deadline, unestimated, for SELECTED', () => {
+    const html = renderCampaignList(
+      [
+        listRow({
+          status: 'SELECTED',
+          review_deadline: new Date('2026-10-25T09:00:00Z'),
+          application_count: null,
+        }),
+      ],
+      'all',
+      ctx,
+    )
+    expect(html).toContain('D-7')
+    expect(html).not.toContain('추정')
+    expect(html).toContain('선정</span>')
+    expect(html).toContain('<td data-label="경쟁률">-</td>')
+  })
+  it('marks the active filter chip, offers the new statuses and handles empty', () => {
     const html = renderCampaignList([], 'APPLIED', ctx)
     expect(html).toContain('해당하는 체험단이 없어요')
     expect(html).toContain('href="/campaigns?status=APPLIED" class="on"')
+    for (const s of ['SELECTED', 'DRAFT_REVIEW', 'NOT_SELECTED', 'POSTED']) {
+      expect(html).toContain(`href="/campaigns?status=${s}"`)
+    }
+    expect(html).not.toContain('APPLY_FAILED')
   })
 })
 
 const campaign = (over: Partial<Campaign> = {}): Campaign => ({
   id: 9,
-  source: 'revu',
+  source: 'kakao-gift',
   external_id: 'x',
-  url: 'https://www.revu.net/campaign/9',
+  url: 'https://gift.kakao.com/product/123',
   url_hash: 'h',
-  found_in: null,
-  status: 'DRAFT_FAILED',
-  title: '맛집',
-  type: 'visit',
-  category: null,
-  reward_won: null,
-  recruit_count: 5,
-  apply_deadline: null,
-  announce_at: null,
-  review_deadline: new Date('2026-10-18T10:00:00Z'),
-  keywords: ['a', 'b'],
+  status: 'DRAFT_REVIEW',
+  title: '<u>수분 크림</u> 체험',
+  brand: '브랜드A',
+  product_id: 123,
+  image_url: 'https://st.kakaocdn.net/product/a.png',
+  recruit_count: 20,
+  application_count: 3000,
+  remaining_days: 3,
+  apply_deadline: new Date('2026-10-21T14:59:59Z'),
+  first_seen_at: new Date('2026-10-10T00:00:00Z'),
+  last_seen_at: new Date('2026-10-18T02:00:00Z'),
   detail: null,
-  score: null,
-  reason: null,
+  score: 71,
+  reason: '평가 <이유>',
   skip_reason: null,
-  apply_message: null,
   revision: 0,
   review_chat_id: null,
   review_message_id: null,
   review_revision: null,
   reject_reason: null,
-  claim_seq: 0,
-  attempts: 2,
-  last_error: '<script>boom</script>',
-  screenshot_path: null,
-  applied_at: null,
-  selected_at: null,
-  received_at: null,
+  applied_at: new Date('2026-10-11T00:00:00Z'),
+  selected_at: new Date('2026-10-15T00:00:00Z'),
+  result_at: new Date('2026-10-15T00:00:00Z'),
+  review_deadline: new Date('2026-10-18T10:00:00Z'),
   intake_message_id: null,
-  memo: null,
-  draft_title: '초안 제목',
-  draft_body: '첫 줄\n둘째 줄',
+  memo: '메모 <script>x</script>',
+  draft_text: '첫 줄\n둘째 줄',
   regen_seq: 0,
-  draft_saved_at: null,
-  blog_url: 'javascript:alert(1)',
   posted_at: null,
-  created_at: new Date('2026-10-01T00:00:00Z'),
+  created_at: new Date('2026-10-10T00:00:00Z'),
   updated_at: new Date('2026-10-18T00:00:00Z'),
   ...over,
 })
@@ -157,18 +191,73 @@ describe('renderCampaignDetail', () => {
   const data: CampaignDetailData = {
     campaign: campaign(),
     reminders: [{ kind: 'review-d3', sent_at: new Date('2026-10-15T00:00:00Z') }],
-    photoCount: 3,
   }
-  it('renders fields, escapes errors, never links javascript: urls', () => {
+  it('renders fields, competition, draft and escapes everything', () => {
     const html = renderCampaignDetail(data, ctx)
     expect(html).toContain('D-day')
-    expect(html).toContain('3장')
+    expect(html).toContain('150:1')
+    expect(html).toContain('3,000')
+    expect(html).toContain('신청 마감 (추정)')
     expect(html).toContain('review-d3')
     expect(html).toContain('첫 줄\n둘째 줄')
-    expect(html).not.toContain('<script>boom')
-    expect(html).toContain('&lt;script&gt;boom')
-    expect(html).not.toContain('href="javascript:')
-    expect(html).toContain('href="https://www.revu.net/campaign/9"')
+    expect(html).toContain('&lt;u&gt;수분 크림&lt;/u&gt;')
+    expect(html).toContain('평가 &lt;이유&gt;')
+    expect(html).not.toContain('<script>x')
+    expect(html).toContain('href="https://gift.kakao.com/product/123"')
+    expect(html).toContain('선물하기에서 열기')
+    expect(html).not.toMatch(/revu|블로그|하트비트|스크린샷/)
+  })
+  it('embeds allowlisted https thumbnails only', () => {
+    expect(renderCampaignDetail(data, ctx)).toContain(
+      '<img src="https://st.kakaocdn.net/product/a.png"',
+    )
+    for (const image_url of [
+      'http://st.kakaocdn.net/a.png',
+      'https://evil.example/a.png',
+      'https://st.kakaocdn.net.evil.example/a.png',
+      'https://user:pw@st.kakaocdn.net/a.png',
+      'javascript:alert(1)',
+      null,
+    ]) {
+      const html = renderCampaignDetail({ ...data, campaign: campaign({ image_url }) }, ctx)
+      expect(html).not.toContain('<img')
+    }
+  })
+  it('shows dashes and empty states for a bare collected campaign', () => {
+    const html = renderCampaignDetail(
+      {
+        campaign: campaign({
+          status: 'COLLECTED',
+          brand: null,
+          product_id: null,
+          recruit_count: null,
+          application_count: null,
+          remaining_days: null,
+          apply_deadline: null,
+          review_deadline: null,
+          memo: null,
+          draft_text: null,
+          applied_at: null,
+          selected_at: null,
+          result_at: null,
+        }),
+        reminders: [],
+      },
+      ctx,
+    )
+    expect(html).toContain('수집됨')
+    expect(html).toContain('아직 초안이 없어요')
+    expect(html).toContain('메모가 없어요')
+  })
+})
+
+describe('isAllowedImageUrl', () => {
+  it('accepts only https on the allowlisted hosts', () => {
+    expect(isAllowedImageUrl('https://t1.daumcdn.net/a.jpg')).toBe(true)
+    expect(isAllowedImageUrl('https://gift-s.kakaocdn.net/a.jpg')).toBe(true)
+    expect(isAllowedImageUrl('https://t1.daumcdn.net:8443/a.jpg')).toBe(false)
+    expect(isAllowedImageUrl('//t1.daumcdn.net/a.jpg')).toBe(false)
+    expect(isAllowedImageUrl('')).toBe(false)
   })
 })
 

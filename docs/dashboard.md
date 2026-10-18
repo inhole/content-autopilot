@@ -2,7 +2,7 @@
 
 읽기 전용 현황 페이지다. Telegram을 열지 않고도 폰에서 파이프라인 상태, 체험단 진행, 최근 Threads 글을 볼 수 있다. DB에는 쓰지 않는다. 승인·패스·재시도 같은 조작은 계속 Telegram에서 한다.
 
-클라우드 워커(`WORKER_ROLE=cloud`)에서만 뜬다. 별도 프로세스나 의존성 없이 `node:http`로 같은 워커 안에서 돈다 (`src/web/`).
+워커 안에서 뜬다. 별도 프로세스나 의존성 없이 `node:http`로 같은 워커 안에서 돈다 (`src/web/`).
 
 ## 켜기
 
@@ -17,7 +17,6 @@
 
 1. 클라우드 워커 서비스의 Variables에 `DASHBOARD_PASSWORD`를 추가한다.
 2. Settings > Networking에서 **Generate Domain**으로 공개 도메인을 만든다. 대상 포트는 Railway가 주입한 `PORT`를 따른다.
-3. 로컬 워커(Windows PC)에는 `DASHBOARD_PASSWORD`를 넣지 않는다. 넣어도 로컬 역할에서는 시작하지 않는다.
 
 HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 가므로 반드시 HTTPS 주소로만 접속한다.
 
@@ -25,9 +24,9 @@ HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 �
 
 ## 페이지
 
-- `/` 현황: Threads 검수 대기, 발행 예정, 최근 24시간 발행, 실패, 체험단 단계별 개수, 로컬 워커 마지막 응답 (30분 넘으면 경고 표시).
-- `/campaigns?status=active|all|<STATUS>` 체험단 목록. 단계별 다음 마감 순으로 정렬한다 (신청 전은 신청 마감, `APPLIED`는 발표일, 그 밖은 리뷰 마감). 최대 300건.
-- `/campaigns/<id>` 체험단 상세: 공고 내용, 선별 점수와 이유, 신청 메시지, 오류, 단계별 시각, 보낸 리마인더, 사진 수, 블로그 초안.
+- `/` 현황: Threads 검수 대기, 발행 예정, 최근 24시간 발행, 실패와 체험단 단계별 개수(검수 대기, 신청함·결과 대기, 선정·리뷰 전, 리뷰 초안, 최근 30일 리뷰 완료)를 보여준다. 체험단 마지막 수집 시각과 그때 확인한 체험단 수(가장 최근 `last_seen_at`에서 10분 이내)도 함께 나온다.
+- `/campaigns?status=active|all|<STATUS>` 체험단 목록. 제목(상세 링크), 브랜드, 상태, 경쟁률(`1,234:1`, 모르면 `-`), 마감 D-n, 점수를 보여준다. 신청 전·결과 대기 단계는 신청 마감, 선정·리뷰 초안 단계는 리뷰 마감을 쓴다. 신청 마감은 남은 일수로 추정한 값이라 `추정`이라고 표시한다. 마감이 가까운 순으로 정렬하고 마감이 없는 행은 뒤로 간다. 최대 300건.
+- `/campaigns/<id>` 체험단 상세: 썸네일, 제목, 브랜드, 상품 ID, 모집·신청 인원과 경쟁률, 남은 일수, 신청 마감(추정), 처음·마지막으로 본 시각, 점수와 이유, 제외·패스 사유, 신청·선정·결과·리뷰 완료 시각, 리뷰 마감, 보낸 리마인더, 메모, 리뷰 초안, `선물하기에서 열기` 링크.
 - `/posts` 최근 Threads 글 50개와 최신 반응 수치.
 - `/healthz` 인증 없이 `ok`를 돌려준다. 헬스체크용이다.
 
@@ -38,6 +37,7 @@ HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 �
 - GET/HEAD만 허용하고 나머지는 405를 돌려준다.
 - 비밀번호는 양쪽을 해시한 뒤 `timingSafeEqual`로 비교한다.
 - 모든 동적 텍스트는 HTML 이스케이프하고, `http(s)` URL만 링크로 만든다.
+- 썸네일은 `https`이고 호스트가 `st.kakaocdn.net`, `t1.daumcdn.net`, `img1.kakaocdn.net`, `gift-s.kakaocdn.net`인 URL만 그린다. CSP `img-src`도 같은 호스트만 허용한다.
 - CSP, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`를 보낸다.
 
 ## 알려진 한계

@@ -21,23 +21,31 @@ describe('status extras', () => {
     expect(out).toContain('연결 글 답글 실패: 2건')
     expect(out).toContain('연결 글 답글 멈춤: 1건')
   })
-  it('shows campaign counts and the local worker heartbeat', () => {
+  it('shows campaign counts and the last collection', () => {
     const quiet = formatStatus(base, 'Asia/Seoul')
-    expect(quiet).toContain('진행 중인 체험단 없음')
-    expect(quiet).toContain('로컬 워커 마지막 응답: 기록 없음')
+    expect(quiet).toContain('체험단 마지막 수집: 기록 없음')
+    expect(quiet).not.toContain('신청함')
     const out = formatStatus(
       {
         ...base,
-        campaigns: { ...base.campaigns, pendingReview: 2, applyFailed: 1, saveFailed: 1 },
-        localWorkerSeenAt: new Date('2026-10-08T21:05:00Z'),
+        campaigns: {
+          ...base.campaigns,
+          lastCollectedAt: new Date('2026-10-08T21:05:00Z'),
+          pendingReview: 2,
+          applied: 1,
+          draftReview: 1,
+          postedLast30d: 4,
+        },
       },
       'Asia/Seoul',
     )
+    expect(out).toContain('체험단 마지막 수집: 10-09 06:05')
     expect(out).toContain('검수 대기: 2건')
-    expect(out).toContain('신청 실패: 1건')
-    expect(out).toContain('저장 실패: 1건')
-    expect(out).not.toContain('선정:')
-    expect(out).toContain('로컬 워커 마지막 응답: 10-09 06:05')
+    expect(out).toContain('신청함·결과 대기: 1건')
+    expect(out).toContain('리뷰 초안: 1건')
+    expect(out).toContain('최근 30일 리뷰 완료: 4건')
+    expect(out).not.toContain('선정·리뷰 전')
+    expect(out).not.toContain('로컬 워커')
   })
   it('parses key info, preferring monthly usage', () => {
     expect(parseLlmCost({ data: { usage: 9, usage_monthly: 2, limit: null } })).toEqual({
@@ -80,14 +88,13 @@ const base: Status = {
   threads: { dryRun: true, tokenExpiresAt: new Date('2026-12-01T00:00:00Z') },
   lastDaily: { state: 'completed', at: new Date('2026-10-08T21:05:00Z') },
   campaigns: {
+    lastCollectedAt: null,
     pendingReview: 0,
-    applying: 0,
-    applyFailed: 0,
+    applied: 0,
     selected: 0,
-    reviewing: 0,
-    saveFailed: 0,
+    draftReview: 0,
+    postedLast30d: 0,
   },
-  localWorkerSeenAt: null,
 }
 
 describe('formatStatus', () => {
@@ -114,7 +121,7 @@ describe('formatStatus', () => {
     )
     expect(out).toContain('Threads: 실제 발행')
     expect(out).toContain('발행 예정: 없음')
-    expect(out).not.toContain('마지막 수집')
+    expect(out).not.toMatch(/^마지막 수집/m)
     expect(out).toContain('- #9 xxx')
     expect(out).toContain('…')
   })

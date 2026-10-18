@@ -1,23 +1,12 @@
-import { CAMPAIGN_STATUSES, type Campaign, type CampaignStatus } from '../campaigns/types.ts'
+import {
+  ACTIVE_CAMPAIGN_STATUSES,
+  CAMPAIGN_STATUSES,
+  type Campaign,
+  type CampaignStatus,
+} from '../campaigns/types.ts'
 import { query } from '../db/pool.ts'
 
 /** Read-only queries for the dashboard. Nothing here writes to the database. */
-
-/** Statuses a campaign passes through while the owner still has something to do or wait for. */
-export const ACTIVE_STATUSES: CampaignStatus[] = [
-  'PENDING_REVIEW',
-  'APPROVED',
-  'APPLYING',
-  'APPLY_FAILED',
-  'APPLIED',
-  'SELECTED',
-  'RECEIVED',
-  'DRAFT_REVIEW',
-  'DRAFT_APPROVED',
-  'DRAFT_SAVING',
-  'DRAFT_SAVED',
-  'DRAFT_FAILED',
-]
 
 export type CampaignFilter = CampaignStatus | 'active' | 'all'
 
@@ -27,6 +16,9 @@ export function parseCampaignFilter(value: string | null | undefined): CampaignF
   return 'active'
 }
 
+/** Campaigns whose `last_seen_at` is within this window of the newest one count as the last collection. */
+export const LAST_COLLECTION_WINDOW_MINUTES = 10
+
 export type OverviewData = {
   posts: {
     pendingReview: number
@@ -34,9 +26,15 @@ export type OverviewData = {
     published24h: number
     failed: number
   }
-  /** Row count per campaign status; missing statuses count as zero. */
-  campaignCounts: Partial<Record<CampaignStatus, number>>
-  heartbeats: { role: string; seen_at: Date }[]
+  campaigns: {
+    /** Row count per campaign status; missing statuses count as zero. */
+    counts: Partial<Record<CampaignStatus, number>>
+    /** Newest `last_seen_at`; null when nothing was ever collected. */
+    lastCollectedAt: Date | null
+    /** Campaigns seen in that last collection. */
+    lastSeenCount: number
+    postedLast30d: number
+  }
 }
 
 export async function loadOverview(): Promise<OverviewData> {
@@ -58,8 +56,16 @@ export async function loadOverview(): Promise<OverviewData> {
   const campaignRows = await query<{ status: CampaignStatus; n: number }>(
     'select status, count(*) as n from campaigns group by status',
   )
-  const heartbeats = await query<{ role: string; seen_at: Date }>(
-    'select role, seen_at from worker_heartbeats order by role',
+  const [seen] = await query<{ last_collected_at: Date | null; last_seen_count: number }>(
+    `select max(last_seen_at) as last_collected_at,
+            count(*) filter (where last_seen_at >= (select max(last_seen_at) from campaigns)
+                                   - make_interval(mins => $1::int)) as last_seen_count
+       from campaigns`,
+    [LAST_COLLECTION_WINDOW_MINUTES],
+  )
+  const [posted] = await query<{ n: number }>(
+    `select count(*) as n from campaigns
+      where status = 'POSTED' and coalesce(posted_at, updated_at) > now() - interval '30 days'`,
   )
   const campaignCounts: Partial<Record<CampaignStatus, number>> = {}
   for (const r of campaignRows) campaignCounts[r.status] = Number(r.n)
@@ -70,8 +76,12 @@ export async function loadOverview(): Promise<OverviewData> {
       published24h: Number(counts?.published_24h ?? 0),
       failed: Number(counts?.failed ?? 0),
     },
-    campaignCounts,
-    heartbeats,
+    campaigns: {
+      counts: campaignCounts,
+      lastCollectedAt: seen?.last_collected_at ?? null,
+      lastSeenCount: Number(seen?.last_seen_count ?? 0),
+      postedLast30d: Number(posted?.n ?? 0),
+    },
   }
 }
 
@@ -79,56 +89,60 @@ export type CampaignListRow = Pick<
   Campaign,
   | 'id'
   | 'title'
+  | 'brand'
   | 'status'
-  | 'reward_won'
+  | 'recruit_count'
+  | 'application_count'
   | 'apply_deadline'
-  | 'announce_at'
   | 'review_deadline'
   | 'score'
-  | 'found_in'
   | 'updated_at'
-> & { offer: string | null }
+>
+
+/** The deadline of the current stage; an apply deadline is only an estimate. */
+export type NextDeadline = { at: Date; kind: 'apply' | 'review' }
 
 /** Deadline that matters for the stage the campaign is in; null when the stage has none. */
 export function nextDeadline(
-  c: Pick<Campaign, 'status' | 'apply_deadline' | 'announce_at' | 'review_deadline'>,
-): Date | null {
+  c: Pick<Campaign, 'status' | 'apply_deadline' | 'review_deadline'>,
+): NextDeadline | null {
   switch (c.status) {
+    case 'COLLECTED':
+    case 'SKIPPED':
+    case 'SHORTLISTED':
     case 'PENDING_REVIEW':
-    case 'APPROVED':
-    case 'APPLYING':
-    case 'APPLY_FAILED':
-      return c.apply_deadline
     case 'APPLIED':
-      return c.announce_at ?? c.apply_deadline
+      return c.apply_deadline ? { at: c.apply_deadline, kind: 'apply' } : null
+    case 'SELECTED':
+    case 'DRAFT_REVIEW':
+      return c.review_deadline ? { at: c.review_deadline, kind: 'review' } : null
     default:
-      return c.review_deadline
+      return null
   }
 }
 
 export async function loadCampaignList(filter: CampaignFilter): Promise<CampaignListRow[]> {
   const where =
     filter === 'all' ? '' : filter === 'active' ? 'where status = any($1)' : 'where status = $1'
-  const values = filter === 'all' ? [] : [filter === 'active' ? ACTIVE_STATUSES : filter]
+  const values = filter === 'all' ? [] : [filter === 'active' ? ACTIVE_CAMPAIGN_STATUSES : filter]
   const rows = await query<CampaignListRow>(
-    `select id, title, status, reward_won, apply_deadline, announce_at, review_deadline, score,
-            found_in, updated_at, detail->>'offer' as offer
+    `select id, title, brand, status, recruit_count, application_count, apply_deadline,
+            review_deadline, score, updated_at
        from campaigns ${where}
       order by updated_at desc limit 300`,
     values,
   )
-  // Soonest deadline first; rows without one go last, newest update first among them.
+  // Soonest deadline first; rows without one go last, newest update first among them (stable sort).
   return rows.sort((a, b) => {
-    const da = nextDeadline(a)?.getTime() ?? Number.POSITIVE_INFINITY
-    const db = nextDeadline(b)?.getTime() ?? Number.POSITIVE_INFINITY
-    return da - db
+    const da = nextDeadline(a)?.at.getTime() ?? Number.POSITIVE_INFINITY
+    const db = nextDeadline(b)?.at.getTime() ?? Number.POSITIVE_INFINITY
+    return da === db ? 0 : da < db ? -1 : 1
   })
 }
 
 export type CampaignDetailData = {
   campaign: Campaign
   reminders: { kind: string; sent_at: Date }[]
-  photoCount: number
 }
 
 export async function loadCampaignDetail(id: number): Promise<CampaignDetailData | null> {
@@ -138,11 +152,7 @@ export async function loadCampaignDetail(id: number): Promise<CampaignDetailData
     'select kind, sent_at from campaign_reminders where campaign_id = $1 order by sent_at',
     [id],
   )
-  const [photos] = await query<{ n: number }>(
-    'select count(*) as n from campaign_photos where campaign_id = $1',
-    [id],
-  )
-  return { campaign, reminders, photoCount: Number(photos?.n ?? 0) }
+  return { campaign, reminders }
 }
 
 export type PostRow = {

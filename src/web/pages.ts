@@ -1,19 +1,56 @@
-import { daysUntil, formatDday, formatWon, statusLabel } from '../campaigns/telegram.ts'
-import { CAMPAIGN_STATUSES, type CampaignStatus } from '../campaigns/types.ts'
-import type {
-  CampaignDetailData,
-  CampaignFilter,
-  CampaignListRow,
-  OverviewData,
-  PostRow,
+import { daysUntil, formatDday } from '../campaigns/telegram.ts'
+import {
+  CAMPAIGN_STATUSES,
+  type Campaign,
+  type CampaignStatus,
+  competition,
+} from '../campaigns/types.ts'
+import {
+  type CampaignDetailData,
+  type CampaignFilter,
+  type CampaignListRow,
+  type NextDeadline,
+  nextDeadline,
+  type OverviewData,
+  type PostRow,
 } from './data.ts'
-
-import { esc, extLink, formatAge, formatDateTime, layout, truncate } from './html.ts'
+import {
+  esc,
+  extLink,
+  formatAge,
+  formatDateTime,
+  isAllowedImageUrl,
+  layout,
+  truncate,
+} from './html.ts'
 
 export type RenderCtx = { now: Date; tz: string }
 
-/** A heartbeat older than this means the local worker (Kakao + Aside) is probably down. */
-export const HEARTBEAT_STALE_MINUTES = 30
+const STATUS_LABELS: Record<CampaignStatus, string> = {
+  COLLECTED: '수집됨',
+  SKIPPED: '제외',
+  SHORTLISTED: '후보',
+  PENDING_REVIEW: '검수 대기',
+  REJECTED: '패스',
+  EXPIRED: '만료',
+  APPLIED: '신청함',
+  SELECTED: '선정',
+  NOT_SELECTED: '탈락',
+  DRAFT_REVIEW: '리뷰 초안',
+  POSTED: '리뷰 완료',
+}
+
+export const statusLabel = (status: string) => STATUS_LABELS[status as CampaignStatus] ?? status
+
+/** `1,234:1` applicants per slot (one decimal below 10:1), or `-` when unknown. */
+export function formatCompetition(
+  c: Pick<Campaign, 'application_count' | 'recruit_count'>,
+): string {
+  const ratio = competition(c)
+  if (ratio == null) return '-'
+  const shown = ratio >= 10 ? Math.round(ratio).toLocaleString('en-US') : ratio.toFixed(1)
+  return `${shown}:1`
+}
 
 const dday = (d: Date | null, ctx: RenderCtx) =>
   d ? ` <span class="badge">${esc(formatDday(daysUntil(d, ctx.now, ctx.tz)))}</span>` : ''
@@ -23,21 +60,6 @@ const dateWithDday = (d: Date | null, ctx: RenderCtx) =>
 
 const stat = (label: string, n: number, href: string, warn = false) =>
   `<a class="stat" href="${esc(href)}"><b${warn && n > 0 ? ' style="color:var(--warn)"' : ''}>${n}</b><span>${esc(label)}</span></a>`
-
-type Bucket = { label: string; statuses: CampaignStatus[]; warn?: boolean }
-const BUCKETS: Bucket[] = [
-  { label: '검수 대기', statuses: ['PENDING_REVIEW'] },
-  { label: '신청 대기/진행', statuses: ['APPROVED', 'APPLYING'] },
-  { label: '신청 실패', statuses: ['APPLY_FAILED'], warn: true },
-  { label: '신청 완료', statuses: ['APPLIED'] },
-  { label: '선정', statuses: ['SELECTED'] },
-  {
-    label: '리뷰 진행',
-    statuses: ['RECEIVED', 'DRAFT_REVIEW', 'DRAFT_APPROVED', 'DRAFT_SAVING', 'DRAFT_SAVED'],
-  },
-  { label: '저장 실패', statuses: ['DRAFT_FAILED'], warn: true },
-  { label: '게시 완료', statuses: ['POSTED'] },
-]
 
 export function renderOverview(data: OverviewData, ctx: RenderCtx): string {
   const p = data.posts
@@ -56,51 +78,55 @@ export function renderOverview(data: OverviewData, ctx: RenderCtx): string {
               `<div class="box"><b>${esc(formatDateTime(s.scheduled_at, ctx.tz))}</b> ${esc(truncate(s.text, 60))}</div>`,
           )
           .join('')
-  const campaigns = BUCKETS.map((b) =>
-    stat(
-      b.label,
-      b.statuses.reduce((sum, s) => sum + (data.campaignCounts[s] ?? 0), 0),
-      b.statuses.length === 1 ? `/campaigns?status=${b.statuses[0]}` : '/campaigns',
-      b.warn,
-    ),
-  ).join('')
-  const heartbeats =
-    data.heartbeats.length === 0
-      ? '<div class="empty">로컬 워커의 하트비트가 아직 없어요.</div>'
-      : data.heartbeats
-          .map((h) => {
-            const ageMin = (ctx.now.getTime() - h.seen_at.getTime()) / 60_000
-            const stale = ageMin > HEARTBEAT_STALE_MINUTES
-            return `<div class="box"><b>${esc(h.role)}</b> 마지막 신호 ${esc(formatDateTime(h.seen_at, ctx.tz))} (${esc(formatAge(h.seen_at, ctx.now))}) <span class="badge ${stale ? 'warn' : 'ok'}">${stale ? '응답 없음' : '정상'}</span></div>`
-          })
-          .join('')
+  const c = data.campaigns
+  const n = (s: CampaignStatus) => c.counts[s] ?? 0
+  const campaigns = [
+    stat('검수 대기', n('PENDING_REVIEW'), '/campaigns?status=PENDING_REVIEW'),
+    stat('신청함·결과 대기', n('APPLIED'), '/campaigns?status=APPLIED'),
+    stat('선정·리뷰 전', n('SELECTED'), '/campaigns?status=SELECTED'),
+    stat('리뷰 초안', n('DRAFT_REVIEW'), '/campaigns?status=DRAFT_REVIEW'),
+    stat('최근 30일 리뷰 완료', c.postedLast30d, '/campaigns?status=POSTED'),
+  ].join('')
+  const collection = c.lastCollectedAt
+    ? `<div class="box">마지막 수집 <b>${esc(formatDateTime(c.lastCollectedAt, ctx.tz))}</b> (${esc(formatAge(c.lastCollectedAt, ctx.now))}) · 그때 확인한 체험단 ${c.lastSeenCount}건</div>`
+    : '<div class="empty">아직 수집한 체험단이 없어요.</div>'
   const body = `<h1>현황</h1>
 <h2>Threads</h2><div class="cards">${threads}</div>
 <h2>발행 예정</h2>${scheduled}
-<h2>체험단</h2><div class="cards">${campaigns}</div>
+<h2>체험단</h2><div class="cards">${campaigns}</div>${collection}
 <p><a href="/campaigns">체험단 목록</a> · <a href="/posts">Threads 글 목록</a></p>
-<h2>로컬 워커</h2>${heartbeats}
 <p class="empty">${esc(formatDateTime(ctx.now, ctx.tz))} 기준 · 60초마다 새로고침</p>`
   return layout(body, { title: '현황', refresh: true })
 }
 
+const CHIP_STATUSES: CampaignStatus[] = [
+  'PENDING_REVIEW',
+  'APPLIED',
+  'SELECTED',
+  'DRAFT_REVIEW',
+  'POSTED',
+  'NOT_SELECTED',
+  'REJECTED',
+  'EXPIRED',
+  'SKIPPED',
+  'SHORTLISTED',
+  'COLLECTED',
+]
+
 const FILTER_CHIPS: { value: CampaignFilter; label: string }[] = [
   { value: 'active', label: '진행 중' },
   { value: 'all', label: '전체' },
-  ...CAMPAIGN_STATUSES.filter((s) =>
-    [
-      'PENDING_REVIEW',
-      'APPLY_FAILED',
-      'APPLIED',
-      'SELECTED',
-      'DRAFT_SAVED',
-      'DRAFT_FAILED',
-      'POSTED',
-      'REJECTED',
-      'EXPIRED',
-    ].includes(s),
-  ).map((s) => ({ value: s as CampaignFilter, label: statusLabel(s) })),
+  ...CAMPAIGN_STATUSES.filter((s) => CHIP_STATUSES.includes(s))
+    .sort((a, b) => CHIP_STATUSES.indexOf(a) - CHIP_STATUSES.indexOf(b))
+    .map((s) => ({ value: s as CampaignFilter, label: statusLabel(s) })),
 ]
+
+/** `D-3` badge for the stage's deadline; apply deadlines carry an estimate marker. */
+function deadlineCell(d: NextDeadline | null, ctx: RenderCtx): string {
+  if (!d) return '-'
+  const label = formatDday(daysUntil(d.at, ctx.now, ctx.tz))
+  return `<span class="badge">${esc(label)}</span>${d.kind === 'apply' ? ' <small class="muted">추정</small>' : ''}`
+}
 
 export function renderCampaignList(
   rows: CampaignListRow[],
@@ -116,19 +142,17 @@ export function renderCampaignList(
     table = '<div class="empty">해당하는 체험단이 없어요.</div>'
   } else {
     const trs = rows
-      .map((c) => {
-        return `<tr>
-<td data-label="제목"><a href="/campaigns/${c.id}">#${c.id} ${esc(c.title ?? '(제목 없음)')}</a></td>
+      .map(
+        (c) => `<tr>
+<td data-label="제목"><a href="/campaigns/${c.id}">#${c.id} ${esc(c.title || '(제목 없음)')}</a></td>
+<td data-label="브랜드">${esc(c.brand ?? '-')}</td>
 <td data-label="상태"><span class="badge">${esc(statusLabel(c.status))}</span></td>
-<td data-label="제공">${c.reward_won != null ? esc(formatWon(c.reward_won)) : '-'}${c.offer ? ` ${esc(truncate(c.offer, 40))}` : ''}</td>
-<td data-label="신청 마감">${dateWithDday(c.apply_deadline, ctx)}</td>
-<td data-label="리뷰 마감">${dateWithDday(c.review_deadline, ctx)}</td>
-<td data-label="점수">${c.score != null ? esc(c.score) : '-'}</td>
-<td data-label="출처">${esc(c.found_in ?? '-')}</td>
-<td data-label="갱신">${esc(formatDateTime(c.updated_at, ctx.tz))}</td></tr>`
-      })
+<td data-label="경쟁률">${esc(formatCompetition(c))}</td>
+<td data-label="마감">${deadlineCell(nextDeadline(c), ctx)}</td>
+<td data-label="점수">${c.score != null ? esc(c.score) : '-'}</td></tr>`,
+      )
       .join('')
-    table = `<div class="scroll"><table class="cards-m"><thead><tr><th>제목</th><th>상태</th><th>제공</th><th>신청 마감</th><th>리뷰 마감</th><th>점수</th><th>출처</th><th>갱신</th></tr></thead><tbody>${trs}</tbody></table></div>`
+    table = `<div class="scroll"><table class="cards-m"><thead><tr><th>제목</th><th>브랜드</th><th>상태</th><th>경쟁률</th><th>마감</th><th>점수</th></tr></thead><tbody>${trs}</tbody></table></div>`
   }
   return layout(
     `<h1>체험단 <small class="badge">${rows.length}</small></h1><div class="chips">${chips}</div>${table}`,
@@ -141,60 +165,56 @@ function field(label: string, valueHtml: string): string {
 }
 
 const text = (v: string | null | undefined) => (v ? esc(v) : '-')
+const count = (v: number | null) => (v != null ? esc(v.toLocaleString('en-US')) : '-')
 
 export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): string {
-  const { campaign: c, reminders, photoCount } = data
-  const d = c.detail
+  const { campaign: c, reminders } = data
   const t = (x: Date | null) => esc(formatDateTime(x, ctx.tz))
-  const parsed = [
-    field('유형', text(c.type)),
-    field('카테고리', text(c.category)),
-    field('제공 내역', text(d?.offer)),
-    field('제공 가치', c.reward_won != null ? esc(formatWon(c.reward_won)) : '-'),
-    field('모집 인원', c.recruit_count != null ? esc(c.recruit_count) : '-'),
-    field('키워드', c.keywords.length ? esc(c.keywords.join(', ')) : '-'),
-    field('채널', text(d?.channel)),
-    field('가이드', d?.guide ? `<pre>${esc(d.guide)}</pre>` : '-'),
-    field('신청 마감', dateWithDday(c.apply_deadline, ctx)),
-    field('발표', dateWithDday(c.announce_at, ctx)),
-    field('리뷰 마감', dateWithDday(c.review_deadline, ctx)),
+  const thumb = isAllowedImageUrl(c.image_url)
+    ? `<p><img src="${esc(c.image_url)}" alt="" width="160" referrerpolicy="no-referrer" loading="lazy" style="max-width:160px;border-radius:8px"></p>`
+    : ''
+  const listing = [
+    field('브랜드', text(c.brand)),
+    field('상품 ID', c.product_id != null ? esc(c.product_id) : '-'),
+    field('모집 인원', count(c.recruit_count)),
+    field('신청자', count(c.application_count)),
+    field('경쟁률', esc(formatCompetition(c))),
+    field('남은 일수', c.remaining_days != null ? `${esc(c.remaining_days)}일` : '-'),
+    field('신청 마감 (추정)', dateWithDday(c.apply_deadline, ctx)),
+    field('처음 본 시각', t(c.first_seen_at)),
+    field('마지막으로 본 시각', t(c.last_seen_at)),
   ].join('')
   const ranking = [
     field('점수', c.score != null ? esc(c.score) : '-'),
     field('평가 이유', text(c.reason)),
     field('제외 사유', text(c.skip_reason)),
-    field('신청 메시지', c.apply_message ? `<pre>${esc(c.apply_message)}</pre>` : '-'),
-    field('거절 사유', text(c.reject_reason)),
-    field('출처', text(c.found_in)),
+    field('패스 사유', text(c.reject_reason)),
   ].join('')
   const progress = [
-    field('시도 횟수', esc(c.attempts)),
-    field('마지막 오류', c.last_error ? `<pre>${esc(c.last_error)}</pre>` : '-'),
     field('신청', t(c.applied_at)),
     field('선정', t(c.selected_at)),
-    field('제품 수령', t(c.received_at)),
-    field('임시저장', t(c.draft_saved_at)),
-    field('게시', t(c.posted_at)),
+    field('결과 확인', t(c.result_at)),
+    field('리뷰 마감', dateWithDday(c.review_deadline, ctx)),
+    field('리뷰 완료', t(c.posted_at)),
     field(
       '알림 발송',
       reminders.length
         ? esc(reminders.map((r) => `${r.kind} (${formatDateTime(r.sent_at, ctx.tz)})`).join(', '))
         : '-',
     ),
-    field('사진', `${photoCount}장`),
     field('생성', t(c.created_at)),
     field('갱신', t(c.updated_at)),
   ].join('')
-  const draft = c.draft_title || c.draft_body
   const body = `<p><a href="/campaigns">← 목록</a></p>
-<h1>#${c.id} ${esc(c.title ?? '(제목 없음)')} <span class="badge">${esc(statusLabel(c.status))}</span></h1>
-<div class="box"><dl>${field('revu', extLink(c.url))}${field('블로그', extLink(c.blog_url))}</dl></div>
-<h2>공고</h2><div class="box"><dl>${parsed}</dl></div>
-<h2>평가·신청</h2><div class="box"><dl>${ranking}</dl></div>
+<h1>#${c.id} ${esc(c.title || '(제목 없음)')} <span class="badge">${esc(statusLabel(c.status))}</span></h1>
+${thumb}<div class="box"><dl>${field('링크', extLink(c.url, '선물하기에서 열기'))}</dl></div>
+<h2>공고</h2><div class="box"><dl>${listing}</dl></div>
+<h2>평가</h2><div class="box"><dl>${ranking}</dl></div>
 <h2>진행 상태</h2><div class="box"><dl>${progress}</dl></div>
-<h2>블로그 초안</h2><div class="box">${
-    draft
-      ? `<b>${esc(c.draft_title ?? '')}</b><pre>${esc(c.draft_body ?? '')}</pre>${c.memo ? `<h2>메모</h2><pre>${esc(c.memo)}</pre>` : ''}`
+<h2>메모</h2><div class="box">${c.memo ? `<pre>${esc(c.memo)}</pre>` : '<div class="empty">메모가 없어요.</div>'}</div>
+<h2>리뷰 초안</h2><div class="box">${
+    c.draft_text
+      ? `<pre>${esc(c.draft_text)}</pre>`
       : '<div class="empty">아직 초안이 없어요.</div>'
   }</div>`
   return layout(body, { title: `체험단 #${c.id}` })

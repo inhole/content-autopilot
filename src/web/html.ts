@@ -28,6 +28,31 @@ export function extLink(url: string | null | undefined, label?: string): string 
   return `<a href="${esc(url)}" rel="noreferrer noopener" target="_blank">${text}</a>`
 }
 
+/** Hosts campaign thumbnails may be loaded from; also the CSP `img-src` allowlist. */
+export const IMAGE_HOSTS = [
+  'st.kakaocdn.net',
+  't1.daumcdn.net',
+  'img1.kakaocdn.net',
+  'gift-s.kakaocdn.net',
+] as const
+
+/** Only https images on an allowlisted host (no credentials, default port) may be embedded. */
+export function isAllowedImageUrl(value: string | null | undefined): value is string {
+  if (!value) return false
+  try {
+    const u = new URL(value)
+    return (
+      u.protocol === 'https:' &&
+      !u.username &&
+      !u.password &&
+      u.port === '' &&
+      (IMAGE_HOSTS as readonly string[]).includes(u.hostname)
+    )
+  } catch {
+    return false
+  }
+}
+
 export function formatDateTime(d: Date | null | undefined, tz: string): string {
   if (!d) return '-'
   const parts = new Intl.DateTimeFormat('ko-KR', {
@@ -91,6 +116,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0}
 dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 @media (max-width:640px){dl{grid-template-columns:1fr}dt{margin-top:6px;font-size:12px}}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font:inherit}
+.muted{color:var(--muted)}
 .empty{color:var(--muted);padding:12px 0}
 `
 
