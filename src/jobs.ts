@@ -18,8 +18,10 @@ import {
 import { collectInsights, weeklyReport } from './pipeline/insights.ts'
 import {
   expireDrafts,
+  loadExpiringDrafts,
   loadPendingDrafts,
   loadUnsentReviews,
+  markExpiryWarned,
   runReviewMaintenance,
 } from './pipeline/maintenance.ts'
 import { loadParts } from './pipeline/parts.ts'
@@ -284,19 +286,22 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     }
   })
 
-  // Hourly: expire stale drafts and send the 09:00 / 18:00 reminder (decided from the local hour).
+  // Hourly: expire stale drafts, warn 24h before expiry, and send the 09:00 / 18:00 reminder (decided from the local hour).
   const maintenanceQueue = 'review-maintenance'
   await boss.createQueue(maintenanceQueue, { policy: 'singleton', retryLimit: 0 })
   await boss.schedule(maintenanceQueue, '0 * * * *', null, { tz })
   await boss.work(maintenanceQueue, async () => {
+    const now = new Date()
     const result = await runReviewMaintenance(
       {
         loadPending: loadPendingDrafts,
-        expire: (ids) => expireDrafts(ids, new Date()),
+        expire: (ids) => expireDrafts(ids, now),
         retire: (ids) => reviewer.retireReviewMessages(ids),
+        loadExpiring: () => loadExpiringDrafts(now),
+        markWarned: (ids) => markExpiryWarned(ids, now),
         notify: (text) => reviewer.notify(text),
       },
-      new Date(),
+      now,
       tz,
     )
     // Without Telegram no review message is ever registered, so there is nothing to recover.

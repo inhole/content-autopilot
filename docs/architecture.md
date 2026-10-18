@@ -14,7 +14,7 @@
                publish-due (5분마다) ──▶ publish ──▶ Threads API          │
                                          └─▶ publish-chain ──▶ 답글 조각 순서대로
                refresh-token (04:00) ──▶ Threads 토큰 갱신               │
-               review-maintenance (매시) ──▶ 초안 만료 + 리마인더        │
+               review-maintenance (매시) ──▶ 초안 만료·예고 + 리마인더   │
                collect-insights (05:00) ──▶ 게시물 성과 스냅샷           │
                weekly-report (월 09:00) ──▶ 주간 리포트 Telegram        │
                poll-replies (5분마다) ──▶ 새 답글을 Telegram으로 알림    │
@@ -53,7 +53,7 @@ posts:   PENDING_REVIEW ─▶ SCHEDULED ─▶ PUBLISHING ─▶ PUBLISHED
            │ │  │  └ 예약 취소 ┘                └─▶ SCHEDULED (재시도) ─▶ FAILED (3회 실패)
            │ │  └ 재생성 / 수정
            │ └─▶ REJECTED
-           └───▶ EXPIRED (48시간 동안 손대지 않음, review-maintenance)
+           └───▶ EXPIRED (48시간 동안 손대지 않음, review-maintenance. 만료 24시간 전에 ⏳ 예고를 한 번 보낸다)
                     ├─▶ PENDING_REVIEW (상록 판정 후 /revive로 재검수, origin = revived)
                     └─▶ (주간 묶음 글의 재료, digest_post_id 기록. 원래 글은 EXPIRED 그대로)
 ```
