@@ -25,6 +25,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      # The React dashboard (web/) has its own package; build it so a broken app fails CI.
+      - run: npm --prefix web ci
+      - run: npm --prefix web run typecheck
+      - run: npm --prefix web test
+      - run: npm --prefix web run build
 
   integration:
     runs-on: ubuntu-latest

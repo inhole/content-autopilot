@@ -36,6 +36,13 @@ HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 �
 - 인증은 기존 Basic 인증 그대로다. `/healthz`만 인증 없이 열려 있고, `/api/*`와 정적 파일도 모두 인증이 필요하다. 경로에 `..`나 `%2e%2e`, 역슬래시, NUL이 있으면 400으로 막고 `web/dist` 밖의 파일은 읽지 않는다.
 - CSP: React 앱 응답은 `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: <이미지 호스트>; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. 서버 렌더링 페이지는 기존 CSP(인라인 스타일·스크립트 허용)를 쓴다. API 응답은 `default-src 'none'; frame-ancestors 'none'`이다.
 
+### 개발
+
+- `cd web && npm run dev`: Vite 개발 서버. `/api`는 `http://localhost:8080`(워커의 대시보드)으로 프록시한다.
+- `cd web && npm run dev:mock`: 백엔드 없이 `web/src/mocks/`의 예시 데이터로 화면을 띄운다.
+- 검사: `npm run test:web`(루트) 또는 `cd web && npm run typecheck && npm test`. CI는 `web/`의 타입 검사, 테스트, 빌드까지 돌린다. 루트 `npm test`는 `web/`을 건너뛴다(앱 테스트는 jsdom과 `@/` 경로 별칭이 필요하다).
+- 브라우저 주소에 `https://아이디:비번@…`처럼 인증 정보를 넣어 열면 브라우저가 `fetch`를 막아 데이터를 못 불러온다. 주소에는 넣지 말고, 브라우저가 묻는 창에 비밀번호를 넣는다.
+
 ### API
 
 모두 GET/HEAD만 되고(그 밖의 메서드는 JSON 405), 응답은 `application/json; charset=utf-8`, `Cache-Control: no-store`다. 날짜는 ISO 8601 문자열이다. 오류는 `{ "error": "..." }`이며 400/404/405/500이고 스택은 담지 않는다. 응답 모양은 `src/web/api-types.ts`가 정의한다.
