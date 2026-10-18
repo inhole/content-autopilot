@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 process.env.THREAD_CTA_TEXT = '팔로우하면 다음 소식도 받아볼 수 있어요'
 
 const chatJson = vi.fn()
-vi.mock('../src/llm/chat.ts', () => ({ chatJson: (...args: unknown[]) => chatJson(...args) }))
+vi.mock('../src/llm/openrouter.ts', () => ({ chatJson: (...args: unknown[]) => chatJson(...args) }))
 
 const { draftPost, generationSchema } = await import('../src/pipeline/generate.ts')
 const { lastFollowupLimit, MAX_FOLLOWUPS } = await import('../src/pipeline/parts.ts')

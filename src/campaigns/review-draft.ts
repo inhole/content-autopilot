@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
-import { chatJson } from '../llm/chat.ts'
+import { chatJson } from '../llm/openrouter.ts'
 import { type CampaignProfile, loadCampaignProfile } from './profile.ts'
 import {
   expandReviewPrompt,

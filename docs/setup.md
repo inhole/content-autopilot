@@ -5,7 +5,7 @@
 | 서비스 | 용도 | 없을 때 동작 |
 |---|---|---|
 | Supabase | Postgres (데이터, pg-boss 큐) | 필수 |
-| FreeLLMAPI | 주제 선정·중복 판정, 초안 작성 (무료 LLM 모음) | 주제 선정부터 실패 |
+| OpenRouter | 주제 선정·중복 판정, 초안 작성 | 주제 선정부터 실패 |
 | Telegram 봇 | 초안 검수 (승인/재생성/폐기) | 콘솔 출력 + CLI로 검수 |
 | Meta 앱 (Threads API) | 실제 발행 | `THREADS_DRY_RUN=true`로 로그만 남김 |
 | 카카오톡 선물하기 (5절) | 체험단 공개 목록 | 계정·토큰 필요 없음. 읽기만 한다 |
@@ -29,27 +29,16 @@
 
 > Free 플랜은 1주일 동안 사용이 없으면 프로젝트가 일시정지된다. 워커가 매일 돌면 문제없다.
 
-## 2. FreeLLMAPI
+## 2. OpenRouter
 
-[FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi)는 직접 띄우는 프록시다. 여러 회사(Google AI Studio, Groq, Cerebras, Mistral 등)의 무료 사용량을 OpenAI 호환 주소 하나로 묶고, 한 곳이 한도(429)나 장애(5xx)를 내면 다음 모델로 넘어간다. 워커는 이 주소만 안다. OpenAI 호환 주소면 무엇이든 되므로, 나중에 유료 API로 돌아갈 때도 아래 env 세 개만 바꾼다.
-
-1. FreeLLMAPI를 띄운다.
-   - 로컬: Docker로 `ghcr.io/tashfeenahmed/freellmapi` 이미지를 띄우거나, Windows 설치 파일(Releases의 `.exe`)을 쓴다. 주소는 `http://localhost:3001`이다.
-   - Railway: [operations.md](operations.md#freellmapi-서비스)대로 같은 프로젝트에 서비스를 하나 더 만든다.
-2. 대시보드(`:3001`)에서 계정을 만들고 **Keys** 페이지에 회사별 무료 키를 넣는다. 많을수록 한도에 덜 걸린다.
-3. **Keys** 페이지 위쪽의 통합 키(`freellmapi-…`)를 `LLM_API_KEY`에 넣는다.
-4. 워커가 FreeLLMAPI에 닿는 주소를 `LLM_BASE_URL`에 넣는다(끝은 `/v1`).
+1. https://openrouter.ai/keys 에서 키를 발급하고 크레딧을 충전한다 ($5면 한참 쓴다).
+2. `OPENROUTER_API_KEY`에 넣는다.
+3. 기본 모델은 다음과 같고, 바꾸려면 env로 덮어쓴다.
 
 | 용도 | env | 기본값 |
 |---|---|---|
-| 게이트웨이 주소 | `LLM_BASE_URL` | `http://localhost:3001/v1` |
-| 통합 키 | `LLM_API_KEY` | 없음 (필수) |
-| 초안 작성 | `LLM_MODEL` | `auto:smart` (가장 똑똑한 모델 우선) |
-| 주제 선정 | `LLM_RANK_MODEL` | `auto` (대시보드의 Fallback Chain 순서) |
-
-특정 모델로 고정하려면 대시보드 모델 목록의 id를 그대로 넣는다. `auto:fast`, `auto:reliable`, `auto:<프로필 이름>`도 쓸 수 있다.
-
-> **주의.** FreeLLMAPI는 스스로 "개인 실험용, 운영용 아님"이라고 밝힌다. 무료 모델이라 최상위 모델은 없고, 하루 한도(UTC 0시 초기화)에 가까워지면 더 약한 모델로 넘어가 글 품질이 들쭉날쭉할 수 있다. 회사별 무료 약관(계정 하나, 공유 금지, 입력 데이터를 학습에 쓰는지 등)은 각자 확인한다. 어떤 모델이 답했는지는 워커 로그의 `[llm] routed via …`에 남는다.
+| 초안 작성 | `LLM_MODEL` | `anthropic/claude-sonnet-5.5` |
+| 주제 선정 | `LLM_RANK_MODEL` | `anthropic/claude-haiku-4.5` |
 
 ## 3. Telegram 봇
 
@@ -119,7 +108,7 @@
 
 ## 5. 체험단 (카카오톡 선물하기)
 
-선물하기 체험단은 계정이나 토큰이 필요 없다. 공개 목록을 읽기만 한다. 위의 Supabase, FreeLLMAPI, Telegram 설정이 되어 있으면 바로 돈다. 워커 하나가 Threads와 체험단을 같이 처리하고, 별도 PC나 브라우저 자동화는 쓰지 않는다.
+선물하기 체험단은 계정이나 토큰이 필요 없다. 공개 목록을 읽기만 한다. 위의 Supabase, OpenRouter, Telegram 설정이 되어 있으면 바로 돈다. 워커 하나가 Threads와 체험단을 같이 처리하고, 별도 PC나 브라우저 자동화는 쓰지 않는다.
 
 신청과 리뷰 작성은 카카오톡 **모바일 앱**에서만 된다. 폰에 카카오톡이 있고 선물하기에서 체험단에 신청할 수 있는 계정이면 된다. Telegram은 그 폰에도 깔려 있어야 카드의 링크를 바로 열 수 있다.
 

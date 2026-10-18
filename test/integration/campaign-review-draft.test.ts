@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const chatJson = vi.hoisted(() => vi.fn())
-vi.mock('../../src/llm/chat.ts', () => ({ chatJson }))
+vi.mock('../../src/llm/openrouter.ts', () => ({ chatJson }))
 
 import { parseCampaignProfile } from '../../src/campaigns/profile.ts'
 import {

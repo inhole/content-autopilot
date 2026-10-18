@@ -1,8 +1,62 @@
+import { z } from 'zod'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 
+const KEY_INFO_URL = 'https://openrouter.ai/api/v1/key'
+const KEY_INFO_TIMEOUT_MS = 5_000
+
+const keyInfoSchema = z.object({
+  data: z.object({
+    usage: z.number().optional(),
+    usage_monthly: z.number().optional(),
+    limit: z.number().nullish(),
+    limit_remaining: z.number().nullish(),
+  }),
+})
+
+export type LlmCost = {
+  usd: number
+  /** 'month' when OpenRouter reports usage_monthly; otherwise the key's all-time usage. */
+  period: 'month' | 'total'
+  limitRemaining?: number
+}
+
+/** Maps the OpenRouter key-info response to a cost; null when it carries no usage figure. */
+export function parseLlmCost(json: unknown): LlmCost | null {
+  const parsed = keyInfoSchema.safeParse(json)
+  if (!parsed.success) return null
+  const { usage, usage_monthly, limit_remaining } = parsed.data.data
+  const usd = usage_monthly ?? usage
+  if (usd === undefined) return null
+  return {
+    usd,
+    period: usage_monthly !== undefined ? 'month' : 'total',
+    limitRemaining: limit_remaining ?? undefined,
+  }
+}
+
+/** Best effort: any failure (no key, network, timeout, bad shape) just omits the cost line. */
+export async function fetchLlmCost(
+  apiKey = config.OPENROUTER_API_KEY,
+  fetchFn: typeof fetch = fetch,
+): Promise<LlmCost | null> {
+  if (!apiKey) return null
+  try {
+    const res = await fetchFn(KEY_INFO_URL, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(KEY_INFO_TIMEOUT_MS),
+    })
+    if (!res.ok) return null
+    return parseLlmCost(await res.json())
+  } catch {
+    return null
+  }
+}
+
 export type Status = {
   expiredLast7d: number
+  /** Absent when the OpenRouter key info could not be fetched. */
+  llmCost?: LlmCost
   pendingReview: { count: number; ids: number[] }
   scheduled: { id: number; scheduledAt: Date; preview: string }[]
   publishedLast24h: number
@@ -77,7 +131,7 @@ const FAILED_SHOWN = 5
 export async function loadStatus(now = new Date()): Promise<Status> {
   const since = new Date(now.getTime() - 24 * 3600 * 1000)
   const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000)
-  const [pending, scheduled, published, failed, account, expired, chainParts, campaigns] =
+  const [pending, scheduled, published, failed, account, expired, llmCost, chainParts, campaigns] =
     await Promise.all([
       query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
       query<{ id: number; scheduled_at: Date; text: string }>(
@@ -100,6 +154,7 @@ export async function loadStatus(now = new Date()): Promise<Status> {
         "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
         [weekAgo],
       ),
+      fetchLlmCost(),
       loadChainParts(now),
       loadCampaignCounts(now),
     ])
@@ -129,6 +184,7 @@ export async function loadStatus(now = new Date()): Promise<Status> {
     chainParts,
     lastDaily,
     expiredLast7d: expired[0]?.n ?? 0,
+    llmCost: llmCost ?? undefined,
     campaigns,
   }
 }
@@ -180,6 +236,13 @@ export function formatStatus(status: Status, timeZone: string): string {
   }
   if (partsStuck > 0) lines.push(`연결 글 답글 멈춤: ${partsStuck}건 (30분 넘게 진행 없음)`)
   if (status.expiredLast7d > 0) lines.push(`최근 7일 만료: ${status.expiredLast7d}건`)
+  if (status.llmCost) {
+    const { usd, period, limitRemaining } = status.llmCost
+    const label = period === 'month' ? '이번 달 LLM 비용' : 'LLM 누적 비용'
+    lines.push(
+      `${label}: $${usd.toFixed(2)}${limitRemaining != null ? ` (한도 잔여 $${limitRemaining.toFixed(2)})` : ''}`,
+    )
+  }
   const c = status.campaigns
   const campaignLines = [
     ['검수 대기', c.pendingReview],

@@ -113,19 +113,12 @@
 - **결정:** 프로필(`config/campaign-profile.json`)의 `disclosure` 문구를 모든 리뷰 초안 맨 앞에 코드가 붙인다. 프롬프트는 모델에게 표기를 쓰지 말라고 하고, 모델이 비슷한 줄을 써도 중복해서 붙이지 않는다. `수정:` 답장으로 본문을 바꿔도 맨 앞 표기는 유지된다. 표기 줄의 길이는 최대 글자 수에서 미리 뺀다.
 - **다시 검토할 때:** 지침이나 선물하기의 표기 요구가 바뀌면 `disclosure` 문구만 고친다. 프로필에서 `disclosure`를 빼면 표기가 사라지므로, 체험단 리뷰에서는 빼지 않는다.
 
-## 13. LLM은 FreeLLMAPI로 무료 모델을 쓴다
-
-- **이유:** 하루 호출이 몇십 번 수준이라 유료 API(OpenRouter) 비용을 없앨 수 있다. FreeLLMAPI가 여러 회사의 무료 사용량을 OpenAI 호환 주소 하나로 묶고 한도에 걸리면 다른 모델로 넘겨 준다.
-- **결정:** `src/llm/chat.ts`는 `LLM_BASE_URL`의 OpenAI 호환 `/chat/completions`만 부른다. 기본 모델은 `auto:smart`(초안)와 `auto`(선정)이다. JSON 스키마 강제를 거부하는 모델(400/422)에는 스키마를 프롬프트에 넣어 한 번 더 요청하고, 결과는 항상 zod로 다시 검증한다. `/status`의 LLM 비용 줄은 없앴다.
-- **대가:** 최상위 모델이 없고, 하루 한도에 가까워지면 약한 모델로 넘어가 품질이 흔들린다. 서비스 하나(FreeLLMAPI, SQLite 볼륨)를 더 운영해야 하고, 회사별 무료 약관을 지켜야 한다.
-- **다시 검토할 때:** 검수에서 재생성이나 직접 수정이 눈에 띄게 늘면 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`만 바꿔 유료 API(OpenRouter `https://openrouter.ai/api/v1` 등)로 돌아간다. 코드는 바꿀 필요가 없다.
-
 ## 로드맵
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 수집 → 중복 제거 → 선정 → 초안 → Telegram 검수 → Threads 발행 | 코드 완료, dry-run 검증 |
-| 1.5 | LLM / Telegram / Threads 실제 연결, 프롬프트 튜닝 | Telegram 완료. LLM은 OpenRouter로 확인한 뒤 FreeLLMAPI로 바꿈(결정 13, 실제 연결 미검증). Threads는 발행 계정 제한으로 보류(2026-10-18 전후 재시도, setup.md 4절) |
+| 1.5 | OpenRouter / Telegram / Threads 실제 연결, 프롬프트 튜닝 | OpenRouter·Telegram 완료. Threads는 발행 계정 제한으로 보류(2026-10-18 전후 재시도, setup.md 4절) |
 | 2 | Railway 배포 | 완료 (Wait for CI) |
 | 3 | Threads insights 수집 + 주간 리포트 | 코드 완료, 실제 발행 후 검증 |
 | 3.5 | 연결 글(본글 + 답글 최대 2개)과 고정 CTA | 코드 완료, 실제 발행 후 검증 (결정 8) |

@@ -36,7 +36,7 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 
 | 명령 | 하는 일 |
 |---|---|
-| `/status` | (체험단 단계별 개수와 마지막 수집 시각도 같이 보인다.) 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 최근 7일 만료 수, 실패하거나 멈춘 연결 글 답글 수(있을 때만), 토큰 만료일, 마지막 수집 실행 결과를 보여준다 |
+| `/status` | (체험단 단계별 개수와 마지막 수집 시각도 같이 보인다.) 검수 대기, 발행 예정, 최근 24시간 발행 수, 실패한 글, 최근 7일 만료 수, 실패하거나 멈춘 연결 글 답글 수(있을 때만), 토큰 만료일, 마지막 수집 실행 결과, 이번 달 LLM 비용(OpenRouter)을 보여준다 |
 | `/help` | 명령과 답장 규칙을 보여준다. 입력창에 `/`를 치면 명령 메뉴도 뜬다. |
 | `/add <url> [한 줄 의견]` | 직접 고른 기사로 초안을 만든다. 의견을 붙이면 그 의견을 글의 관점으로 삼는다. 의견은 관점일 뿐이고, 사실은 기사 본문에서만 가져온다. 이미 다룬 기사면 알려주기만 하고 새로 만들지 않는다. |
 | `/report` | 최근 7일 성과 리포트(발행 수, 조회·좋아요·답글·리포스트 합계와 평균, 답글률, 답글 많은 글 3개, 조회 가장 적은 글, 연결 글과 단일 글의 평균 조회·답글 비교)를 보여준다. 매주 월요일 09:00에도 자동으로 온다. |
@@ -99,9 +99,6 @@ update sources set enabled = false where name = '이름';   -- 끄기
 | 본글만 올라가고 답글이 안 올라간다 | `select post_id, idx, status, attempts, last_error from post_parts where status <> 'PUBLISHED'`로 원인을 본다. `FAILED`면 Telegram 알림의 「🔁 답글 다시 시도」를 누른다. `PENDING`이나 `PUBLISHING`이면 5분 안에 `publish-due`가 이어서 올린다. 계속 멈춰 있으면 워커 로그의 `[publish-chain]`을 확인한다. |
 | 답글 알림이 안 온다 / 로그에 `[replies] post #N failed` | 토큰에 `threads_read_replies`, `threads_manage_replies` 권한이 있어야 한다. 권한을 추가했다면 [setup.md](setup.md)대로 토큰을 다시 발급한다. `THREADS_DRY_RUN=true`이거나 `dry-` 글이면 답글을 확인하지 않는다. `npm run cli -- replies`로 바로 확인해 볼 수 있다. |
 | 답글 달기가 `❌ 답글을 달지 못했어요` | 메시지에 이유가 나온다. 권한 부족이면 위 항목, 이미 달았으면 한 번만 가능하다는 뜻이다. |
-| 로그에 `LLM /chat/completions 429` | FreeLLMAPI의 모든 키가 한도에 걸렸다. 대시보드에 키를 더 넣거나 UTC 0시(한국 09시) 이후 다시 시도한다. 주제 선정은 후보를 한 번에 보내서 토큰이 많이 드니, 분당 토큰 한도가 큰 모델(Gemini 등)을 Fallback Chain 앞에 둔다. |
-| 로그에 `structured output refused` | 그 모델이 JSON 스키마 강제를 지원하지 않아 스키마를 프롬프트에 넣고 한 번 더 요청했다는 뜻이다. 그다음 zod 검증에서 실패하면 job 재시도로 넘어간다. 자주 실패하면 `LLM_MODEL`/`LLM_RANK_MODEL`을 스키마를 지원하는 모델 id로 고정한다. |
-| 초안 품질이 갑자기 떨어진다 | 워커 로그의 `[llm] routed via …`로 어떤 모델이 썼는지 본다. 좋은 모델이 하루 한도에 걸려 약한 모델로 넘어갔을 가능성이 크다. Telegram에서 재생성을 누르거나, 대시보드에서 Fallback Chain을 조정한다. |
 | 토큰 만료 | [setup.md 4-3](setup.md#4-3-장기-토큰-발급-처음-한-번)대로 다시 발급한다. 그다음 `delete from platform_accounts where platform='THREADS'`로 지우고 워커를 재시작하면 env의 새 토큰을 다시 읽는다. |
 
 job 상태는 `pgboss.job` 테이블에서 볼 수 있다.
@@ -124,7 +121,7 @@ select name, state, retry_count, output, created_on from pgboss.job order by cre
 2. **New Project → Deploy from GitHub repo**를 고르고, `inhole/content-autopilot`을 선택한다 (GitHub 앱 권한 허용).
 3. 첫 배포는 환경변수가 없어서 실패한다. 정상이다.
 4. 서비스 → **Variables → Raw Editor**에 로컬 `.env` 내용을 붙여넣고 저장한다.
-   - `DATABASE_URL`, `LLM_BASE_URL`, `LLM_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_DRY_RUN`, (발급 후) `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`
+   - `DATABASE_URL`, `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `THREADS_DRY_RUN`, (발급 후) `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`
 5. **Deployments**에서 다시 배포한다. 로그에 다음 두 줄이 보이면 성공이다.
    ```
    [worker] started · collect "0 6 * * *" Asia/Seoul · ...
@@ -134,14 +131,6 @@ select name, state, retry_count, output, created_on from pgboss.job order by cre
    - Replicas: **1**
    - Serverless(App Sleeping): **끔** (켜져 있으면 06:00 수집과 Telegram 응답이 멈춘다)
    - Restart Policy: On Failure (기본값)
-
-### FreeLLMAPI 서비스
-LLM 호출은 같은 Railway 프로젝트의 FreeLLMAPI 서비스로 간다([setup.md 2절](setup.md#2-freellmapi)).
-1. 프로젝트에서 **New → Docker Image**를 고르고 `ghcr.io/tashfeenahmed/freellmapi:latest`를 넣는다. 서비스 이름은 `freellmapi`로 한다.
-2. Variables: `ENCRYPTION_KEY`(`openssl rand -hex 32`로 만든 64자), `PORT=3001`. 이 값을 잃으면 저장한 키를 못 읽으니 따로 보관한다.
-3. **Volume**을 `/app/server/data`에 붙인다. SQLite(키, 사용량)가 여기 있다. 없으면 재배포 때마다 키를 다시 넣어야 한다.
-4. 키를 넣으려면 Networking에서 잠시 공개 도메인을 만들어 대시보드에 접속하고, 계정을 만든 뒤 키를 넣는다. 다 넣었으면 도메인을 지워도 된다.
-5. 워커 서비스의 `LLM_BASE_URL`을 `http://freellmapi.railway.internal:3001/v1`(private network)로, `LLM_API_KEY`를 통합 키로 둔다.
 
 ### 주의
 - **Telegram polling은 한 곳에서만 한다.** 로컬에서 `npm start`를 켜 둔 채로 Railway 워커가 뜨면 두 워커가 polling을 놓고 충돌한다 (`409 Conflict`). 중복 발행은 일어나지 않지만 버튼 응답이 불안정해진다. 로컬에서는 CLI만 쓴다. Railway의 cloud 워커를 둘 이상 띄우지 않는다.
