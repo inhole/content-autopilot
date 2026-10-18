@@ -49,7 +49,7 @@ publish {postId}          → Threads container → wait FINISHED → threads_pu
 publish-chain {postId}    → after the main post: publish post_parts 2..3 in order, each a reply to the previous part
 chain-alert {postId, error} → Telegram alert + retry button for finally failed parts (retries Telegram outages)
 refresh-token (daily)     → refresh the Threads long-lived token (60 days) near expiry
-review-maintenance (hourly) → expire PENDING_REVIEW drafts untouched 48h (EXPIRED) + 09/18h reminders + re-enqueue review (as `ifUnsent` jobs, which send only if the draft still has no review message, because the standard-policy review queue cannot drop duplicates) for PENDING_REVIEW drafts without a review message for 10+ min (a crash between the commit and the review enqueue in generate / revive / digest)
+review-maintenance (hourly) → expire PENDING_REVIEW drafts untouched 48h (EXPIRED) + one "expires within 24h" warning per touch (`expiry_warned_at`, migration `017`; set only after the send, never bumps `updated_at`) + 09/18h reminders + re-enqueue review (as `ifUnsent` jobs, which send only if the draft still has no review message, because the standard-policy review queue cannot drop duplicates) for PENDING_REVIEW drafts without a review message for 10+ min (a crash between the commit and the review enqueue in generate / revive / digest)
 collect-insights (daily 05:00) → snapshot Threads insights of recent published posts (post_insights)
 weekly-report (Mon 09:00) → collect fresh insights, then send the weekly report to Telegram (also /report)
 poll-replies (*/5 cron)   → new Threads replies on posts published <48h ago → Telegram (src/pipeline/replies.ts)
