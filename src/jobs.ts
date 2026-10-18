@@ -8,6 +8,7 @@ import {
   unalertedChainFailures,
 } from './pipeline/chain.ts'
 import { collectAll } from './pipeline/collect.ts'
+import { digestPostIdForTopic, regenerateDigest } from './pipeline/digest.ts'
 import {
   generatePost,
   pendingShortlistedTopicIds,
@@ -176,6 +177,13 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     regenerate: boolean | undefined,
   ) => {
     try {
+      // A digest's topic only ever gets regenerations; its text is rebuilt from the member posts.
+      const digestId = await digestPostIdForTopic(topicId)
+      if (digestId !== null) {
+        const done = await regenerateDigest(digestId, { feedback, seq })
+        if (done !== null) await boss.send(Q.review, { postId: done } satisfies PostData)
+        return
+      }
       const postId = await generatePost(topicId, {
         feedback,
         seq,

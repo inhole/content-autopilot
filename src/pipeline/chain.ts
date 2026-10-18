@@ -166,6 +166,7 @@ export async function publishChain(postId: number, api?: ThreadsApi): Promise<Ch
     topicTag: post.topic_tag,
     sourceUrl: post.source_url,
     followups: parts.map((p) => p.text),
+    followupLinks: parts.map((p) => p.link_url),
   })
   const sentText = (i: number) => chain[i]?.text ?? ''
   // Every part of this chain went out after the post's slot came.
