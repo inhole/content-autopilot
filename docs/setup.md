@@ -48,17 +48,14 @@
 
 ## 4. Meta 앱 (Threads API)
 
-> **현재 상태 (2026-10-11): 연결 보류 중. 2026-10-18 전후로 재시도 예정**
-> - 완료: Meta 앱 **CAT** 생성, Threads 사용 사례·권한·콜백 URL 설정, 발행 계정 **devbrief.kr**을 Threads 테스터로 추가하고 초대 수락.
-> - 막힌 곳: devbrief.kr로 토큰을 만들려고 하면 로그인은 되지만, 허용 페이지가 Threads 404("방황하는 모든 자가 길을 잃은 것은 아니지만, 이 페이지는 길을 잃었습니다")로 나온다. OAuth 주소(`threads:auth-url`)와 대시보드의 사용자 토큰 생성기 모두 같다. PC 시크릿 창과 휴대폰 브라우저에서도 같다.
-> - 진단: 같은 앱에서 **본계정(오래 쓴 개인 계정)은 토큰 생성에 성공**했다. 그래서 앱 설정과 개발자 계정은 정상이고, **새로 만든 devbrief.kr 계정에만 걸린 제한**(새 계정 보호 조치로 추정)이 원인으로 보인다. Meta가 공식적으로 밝힌 원인은 아니다.
-> - 기다리는 동안 할 일: devbrief.kr 프로필(사진·소개) 채우기, 휴대폰 앱에서 직접 글 1~2개 올리고 팔로우·좋아요, 2단계 인증 켜기, 로그인은 같은 휴대폰에서.
-> - 정리할 것: 진단용으로 추가한 본계정은 Threads 테스터에서 삭제한다. 본계정 토큰은 쓰지 않는다(`.env`에 넣으면 본계정에 발행된다).
-> - 그동안 파이프라인은 `THREADS_DRY_RUN=true`로 정상 동작한다(초안 생성, 검수, 문체 학습 데이터 축적).
-> - 재시도할 때: 아래 4-3의 "방법 A"부터 다시 한다. 이번에도 404면 4-5의 마지막 항목을 본다.
+> **현재 상태 (2026-10-18): 본계정 @lilxnhoo를 발행 계정으로 쓴다**
+> - 처음 만든 발행 전용 계정 **devbrief.kr**은 토큰을 만들 때 허용 페이지가 Threads 404("이 페이지는 길을 잃었습니다")로 나와 일주일 넘게 연결하지 못했다. OAuth 주소와 대시보드 사용자 토큰 생성기, PC와 휴대폰 모두 같았다.
+> - 같은 앱 **CAT**에서 본계정은 토큰이 바로 나와서, 앱 설정은 정상이고 새 계정에 걸린 제한으로 보인다(Meta가 밝힌 원인은 아니다). 그래서 본계정을 운영 계정으로 정했다. 개인 이름으로 쌓이는 쪽이 개인 브랜딩에도 맞다.
+> - 2026-10-18 `npm run cli -- threads:probe`로 본계정 토큰을 확인했다. `/me/replies`의 `replied_to`가 원글 id와 일치하고, `/me/threads`와 `/me/replies`는 최신순이며 `/me/threads`에는 답글이 섞이지 않는다. 성과·답글 권한도 정상이다. 연결 글의 media id 복구가 기대는 동작이 실제와 맞다.
+> - 나중에 devbrief.kr로 옮기려면 4-3으로 그 계정 토큰을 만들고 4-4 끝의 "토큰을 새로 발급해 바꿀 때" 절차를 따른다. 팔로워와 성과 기록은 옮겨지지 않는다.
 
 ### 4-1. Threads 계정
-- 발행 전용 계정을 쓴다. 현재는 **devbrief.kr**이다(Instagram 계정을 먼저 만들고 Threads를 연결함).
+- 현재 발행 계정은 본계정 **@lilxnhoo**다(위 현재 상태 참고). 발행 전용으로 만든 **devbrief.kr**은 연결이 막혀 쓰지 않는다.
 - **프로필은 공개로 둔다.** 사용자 토큰 생성기는 공개 계정에만 토큰을 만들어 주고, 비공개 프로필은 앱 권한이 90일마다 끊긴다.
 - 새로 만든 계정은 바로 앱 연동이 안 될 수 있다(위 현재 상태 참고). 프로필을 채우고 며칠 실제로 쓴 뒤 연결한다.
 
@@ -89,9 +86,10 @@
 같은 과정을 curl로 하려면 `POST https://graph.threads.com/oauth/access_token`(code → 단기 토큰) 다음 `GET https://graph.threads.net/access_token?grant_type=th_exchange_token`(단기 → 장기)을 호출한다. 구현은 `src/threads/oauth.ts`에 있다.
 
 ### 4-4. 연결 후 할 일
-1. 로컬 `.env`는 `THREADS_DRY_RUN=true`인 채로 `THREADS_DRY_RUN=false npm run cli -- threads:check`를 실행해 계정 username이 나오는지 본다. 이때 토큰이 DB(`platform_accounts`)에 처음 저장되고, 만료일은 59일 뒤로 잡힌다. 이후 기준은 DB다.
-2. Railway Variables에 `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`, `THREADS_DRY_RUN=false`를 넣는다(저장하면 재배포된다).
-3. 첫 실제 발행: 검수 대기 초안 하나를 Telegram에서 ✅ 승인 → 🚀 지금 발행 → 5분 안에 🚀 알림 → Threads 프로필에서 본문, 원문 링크 카드, 주제 태그를 확인한다. Threads API 호출은 지금까지 dry-run으로만 검증됐으므로 이것이 첫 실제 검증이다.
+1. `npm run cli -- threads:probe`로 토큰 주인과 API 동작을 확인한다. 읽기만 하고 DB에 토큰을 저장하지 않는다. 확인할 글이 없다고 나오면 앱에서 글과 답글을 하나씩 올리고 다시 돌린다.
+2. 로컬 `.env`는 `THREADS_DRY_RUN=true`인 채로 `THREADS_DRY_RUN=false npm run cli -- threads:check`를 실행해 계정 username이 나오는지 본다. 이때 토큰이 DB(`platform_accounts`)에 처음 저장되고, 만료일은 59일 뒤로 잡힌다. 이후 기준은 DB다.
+3. Railway Variables에 `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`, `THREADS_DRY_RUN=false`를 넣는다(저장하면 재배포된다).
+4. 첫 실제 발행: 검수 대기 초안 하나를 Telegram에서 ✅ 승인 → 🚀 지금 발행 → 5분 안에 🚀 알림 → Threads 프로필에서 본문, 원문 링크 카드, 주제 태그를 확인한다. Threads API 호출은 지금까지 dry-run으로만 검증됐으므로 이것이 첫 실제 검증이다.
 
 `refresh-token` job이 매일 04:00에 확인해서 만료가 14일 안으로 남으면 갱신한다(갱신은 발급 24시간 이후부터 가능). 토큰을 새로 발급해 바꿀 때는 `delete from platform_accounts where platform='THREADS'` 후 워커를 재시작하면 env의 새 토큰을 다시 읽는다.
 

@@ -56,6 +56,7 @@ npm run cli -- approve <postId>      # 승인 (다음 발행 시간 배정)
 npm run cli -- reject <postId>
 npm run cli -- publish-now <postId>  # 즉시 발행 (FAILED 글 재시도에도 사용). 연결 글이면 답글까지 올리고, 본 글이 이미 올라간 글은 남은 답글만 이어서 올린다(FAILED 답글도 다시 시도)
 npm run cli -- threads:check         # 토큰 확인
+npm run cli -- threads:probe         # API 동작 점검 (읽기만 함, DB에 토큰 저장 안 함)
 npm run cli -- threads:refresh       # 토큰 수동 갱신
 npm run cli -- insights              # 발행 글의 성과를 지금 수집하고 글별 최신 숫자 출력
 npm run cli -- report                # 주간 리포트 본문 출력 (/report와 같음)
