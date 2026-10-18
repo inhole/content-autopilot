@@ -1,0 +1,647 @@
+{
+  "pageKey": "PROMOTION:33325",
+  "components": {
+    "totalCount": 6,
+    "contents": [
+      {
+        "id": 2237654,
+        "type": "IMAGE_BANNER",
+        "property": {
+          "displayType": "SINGLE",
+          "ratioType": "NONE",
+          "banners": [
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20251209_R_6396204979186452994.png?image_original_width=1080&image_original_height=1119",
+              "useOriginalImage": false
+            }
+          ]
+        },
+        "title": "체험단 소개",
+        "code": "1367251",
+        "isComponentSlot": false
+      },
+      {
+        "id": 2237655,
+        "type": "IMAGE_BANNER",
+        "property": {
+          "displayType": "AUTO_SLIDING",
+          "ratioType": "R5x1",
+          "banners": [
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20251209_B_12161273718898246037.png?image_original_width=1080&image_original_height=678",
+              "useOriginalImage": false
+            },
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20251209_P_17806250052151193344.png?image_original_width=1080&image_original_height=678",
+              "useOriginalImage": false
+            },
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20251209_G_8583421031532589418.png?image_original_width=1080&image_original_height=678",
+              "useOriginalImage": false
+            }
+          ]
+        },
+        "title": "원하는 상품을 골라 신청하세요.",
+        "code": "1367252",
+        "isComponentSlot": false
+      },
+      {
+        "id": 2237656,
+        "type": "IMAGE_BANNER",
+        "property": {
+          "displayType": "SINGLE",
+          "ratioType": "NONE",
+          "banners": [
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20261013_V_17201200537832699045.jpg?image_original_width=1080&image_original_height=345",
+              "linkUrl": "/curator",
+              "useOriginalImage": false
+            }
+          ]
+        },
+        "title": "큐레이터 서비스 안내",
+        "code": "2237656",
+        "isComponentSlot": false
+      },
+      {
+        "id": 2237657,
+        "type": "IMAGE_BANNER",
+        "property": {
+          "displayType": "SINGLE",
+          "ratioType": "NONE",
+          "banners": [
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20251209_H_4866684466348019933.png?image_original_width=1080&image_original_height=288",
+              "useOriginalImage": false
+            }
+          ]
+        },
+        "title": "지금 신청한 선물 체험단이에요.",
+        "code": "1367253",
+        "isComponentSlot": false
+      },
+      {
+        "id": 2237658,
+        "type": "TRIAL_CAMPAIGN",
+        "property": {
+          "description": "모집중인 체험단 리스트입니다",
+          "displayType": "COL2",
+          "headType": "NONE",
+          "componentDetailView": {
+            "detailView": true,
+            "detailViewType": "EXPANDED_BOTTOM",
+            "detailViewFetchSize": 25
+          },
+          "enableCampaignsRandomSort": true,
+          "campaigns": [
+            {
+              "campaignId": "6a9e80dda960071e0ef70bb2",
+              "campaignTitle": "패브릭 마사지볼 2종택1",
+              "brand": { "id": "88373", "name": "위글위글(스포츠)" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260824103255_321cd0da55c84cdd880e3d709c1ac4d4.jpg",
+              "productId": 14166987,
+              "remainingDays": 6,
+              "recruitmentCount": 10,
+              "applicationCount": 2973
+            },
+            {
+              "campaignId": "6a94c62abd8d3be42667b731",
+              "campaignTitle": "[선물포장] 프리미엄 40수 선염라인 180g 먼지없는 수건세트 4P",
+              "brand": { "id": "1767", "name": "무한타올" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20251231111233_130684ba1f0447b5b7b01b300a772470.jpg",
+              "productId": 12442822,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 5084
+            },
+            {
+              "campaignId": "6a90f1aebd8d3be42667b726",
+              "campaignTitle": "오덴세 테누토 피코 커트러리 디저트 4p 세트",
+              "brand": { "id": "39482", "name": "오덴세" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/CH0qqZmuaZ688bNxWDcJxg/f4PERc3gypv3ZHi_X3Zorg99HBhaigI7jbzA90oKy1Q.jpg",
+              "productId": 13612330,
+              "remainingDays": 1,
+              "recruitmentCount": 5,
+              "applicationCount": 6599
+            },
+            {
+              "campaignId": "6a9902d9bd8d3be42667b773",
+              "campaignTitle": "[누적 3만개 판매] 생일/기념일 슬립 모어 워싱 볼캡 모자 야구모자 캡모자 남녀공용 커플 데일리 패션 꾸안꾸 여자 남자",
+              "brand": { "id": "84177", "name": "레이지지" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20240325102801_92072e34c987455db4a4303a36899565.jpg",
+              "productId": 9496593,
+              "remainingDays": 4,
+              "recruitmentCount": 50,
+              "applicationCount": 5598
+            },
+            {
+              "campaignId": "6ab1f1f1be0835bee1ec6746",
+              "campaignTitle": "엘씨디씨 홈 프래그런스 기프트 세트 (오일1P+세라믹 사쉐 2P) [집들이, 신혼, 이사, 생일, 답례품]",
+              "brand": { "id": "89586", "name": "LCDC HOME" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/ybN3pu_Y7n44MIdudgAtqg/tFhOHL6sK6HmyOkU4pLA_Sx69NJPtSrKb45m_Oo33iA.png",
+              "productId": 14108248,
+              "remainingDays": 1,
+              "recruitmentCount": 10,
+              "applicationCount": 5274
+            },
+            {
+              "campaignId": "6ac7063e23a9d7ccfb3166f4",
+              "campaignTitle": "간편세탁 워셔블 무자계 열선 전자파 안심 전기요 전기매트 중형 대형",
+              "brand": { "id": "2963", "name": "곰표한일" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260917105930_d9457a79f7184a1aafd00316e491beb3.jpg",
+              "productId": 14262304,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 5848
+            },
+            {
+              "campaignId": "6ac4f2e7fa2f0bbe1bfc840b",
+              "campaignTitle": "[국내당일출고] 칼하트 오데사 볼캡 버팔로 메쉬캡 모자 (100289, 100286)",
+              "brand": { "id": "1089", "name": "칼하트" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20251105150514_15b6f4a8792744ee8726eddf1188904c.jpg",
+              "productId": 9620210,
+              "remainingDays": 1,
+              "recruitmentCount": 5,
+              "applicationCount": 7111
+            },
+            {
+              "campaignId": "6a9531f1a960071e0ef70b66",
+              "campaignTitle": "[불스원]크리스탈 스윽 미니어처 실속세차세트(미니어처 4종+버핑타월 3개) 첫차선물 남친선물 세차용품 자동차용품 차량용품",
+              "brand": { "id": "1269", "name": "불스원" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20250721105856_84ed2d3556a24f13854d56071192331d.jpg",
+              "productId": 11927589,
+              "remainingDays": 0,
+              "recruitmentCount": 10,
+              "applicationCount": 5558
+            },
+            {
+              "campaignId": "6a96920881f7ba398175d9df",
+              "campaignTitle": "마리떼 프랑소와 저버 커버드 캡 다크 베이지",
+              "brand": { "id": "88931", "name": "마리떼 프랑소와 저버" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/gMaGjIzNxPj5yDQehiguig/tnWzdx_eLNHZ2gPTn05A5IrQhUFINLLc14Qpz_xL5no.jpg",
+              "productId": 14153788,
+              "remainingDays": 2,
+              "recruitmentCount": 5,
+              "applicationCount": 6102
+            },
+            {
+              "campaignId": "6ac73a3723a9d7ccfb3166fa",
+              "campaignTitle": "[선물포장/단독/향기선물] 오하입 본딩 리브인 케라틴 폼 트리트먼트 200ml (스크런치 증정)",
+              "brand": { "id": "89533", "name": "오하입" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260904094528_7c44132f44854976aeb984ce61d42c3a.jpg",
+              "productId": 13885261,
+              "remainingDays": 2,
+              "recruitmentCount": 10,
+              "applicationCount": 6666
+            },
+            {
+              "campaignId": "6acd85f4c67e2cb1f4f17ddd",
+              "campaignTitle": "[운동/출산선물] 허리보호대 흉곽호흡 흉곽조임 개미허리 골반교정 여자친구 선물 추천 S코어벨트",
+              "brand": { "id": "86496", "name": "바디핌" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260304200409_5161763bb0e4447e9b41a40be7270ec4.png",
+              "productId": 13055563,
+              "remainingDays": 7,
+              "recruitmentCount": 10,
+              "applicationCount": 2338
+            },
+            {
+              "campaignId": "6a97b96d81f7ba398175d9ec",
+              "campaignTitle": "[감각적인 선물] 모노 웨이브 유리컵 2P",
+              "brand": { "id": "83640", "name": "류블류샵" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260916162025_98fd32eadb324afa97c7355824f9c48f.jpg",
+              "productId": 14155077,
+              "remainingDays": 3,
+              "recruitmentCount": 5,
+              "applicationCount": 4919
+            },
+            {
+              "campaignId": "6ac88a157a863551b01402c4",
+              "campaignTitle": "[1+1] 헤이홈 2세대 스마트 홈카메라 Pro 300만 화소 + 3m 케이블 2개 세트 (육아 출산 CCTV 보안 아기방)",
+              "brand": { "id": "80120", "name": "헤이홈" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260915151310_f49e2149e5794078a8c216f75312dac0.jpg",
+              "productId": 14315806,
+              "remainingDays": 4,
+              "recruitmentCount": 5,
+              "applicationCount": 5238
+            },
+            {
+              "campaignId": "6a9a2e93307648f9e1a19fec",
+              "campaignTitle": "시그니처 장우산 자동 우산 18종 택1 / 여름 장마",
+              "brand": { "id": "81053", "name": "얼모스트블루" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260831154834_7b6013bb200b4b9b967179d9244f6fa9.jpg",
+              "productId": 13451078,
+              "remainingDays": 5,
+              "recruitmentCount": 10,
+              "applicationCount": 5557
+            },
+            {
+              "campaignId": "6acd8339760488c80b8131ce",
+              "campaignTitle": "백화점급 명품 차량용 방향제 2개 세트(송풍구형 1+1, 향기블럭1+1)",
+              "brand": { "id": "83211", "name": "오도르" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260916130212_62ab88de24374b4e80bda389f8de8ad4.png",
+              "productId": 8281705,
+              "remainingDays": 6,
+              "recruitmentCount": 5,
+              "applicationCount": 3734
+            },
+            {
+              "campaignId": "6a97bef709fa42d3436b83ef",
+              "campaignTitle": "압도적 촉감! 바자르 시즈닝 소프트워싱 자수 먼지없는 사계절 차렵이불세트 (SS/Q균일가) - 3컬러",
+              "brand": { "id": "37158", "name": "바자르" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260803155133_df852ee7a0c046579cfc4c2d2036a682.jpg",
+              "productId": 12078917,
+              "remainingDays": 0,
+              "recruitmentCount": 5,
+              "applicationCount": 9179
+            },
+            {
+              "campaignId": "6a97ac8009fa42d3436b83ec",
+              "campaignTitle": "[20대/30대 남자향수] 클래식한 우디향 남자 니치향수 MOSSE",
+              "brand": { "id": "87758", "name": "센트데코" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20250906152054_b8643f1299b44eecbd5de763a6e7e67c.jpg",
+              "productId": 12097100,
+              "remainingDays": 0,
+              "recruitmentCount": 5,
+              "applicationCount": 4942
+            },
+            {
+              "campaignId": "6acd8607bd66e22a5827a91f",
+              "campaignTitle": "[여행선물/친구] 부드러운 만능 쿠션 목베개 (허리쿠션, 목쿠션, 여행용, 기내용, 휴대용) + 수면 안대 증정",
+              "brand": { "id": "86496", "name": "바디핌" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260710182959_eef03b5a492e4fcca3a8d4cd1c36d838.png",
+              "productId": 10561525,
+              "remainingDays": 7,
+              "recruitmentCount": 10,
+              "applicationCount": 2225
+            },
+            {
+              "campaignId": "6a98d1c3307648f9e1a19fdf",
+              "campaignTitle": "[선물포장] 로라애슐리 해리티지 엘더우드 60수 타올 5P 영국감성 수건 신혼 이사 결혼 답례품 선물",
+              "brand": { "id": "88590", "name": "로라애슐리" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20251127140539_a55a63002cd948f3a5cf310c04c5fe79.png",
+              "productId": 12602192,
+              "remainingDays": 4,
+              "recruitmentCount": 5,
+              "applicationCount": 5617
+            },
+            {
+              "campaignId": "6a9e389e81f7ba398175da18",
+              "campaignTitle": "[판매BEST] 리얼 빈티지 LED 벽난로 무드등 [잉크벽돌 디자인] 불멍 겨울 감성 생일 집들이 연말 선물 추천",
+              "brand": { "id": "80771", "name": "트렌데코" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260907170536_410c7607999f4bc686618a229288b837.png",
+              "productId": 3364296,
+              "remainingDays": 6,
+              "recruitmentCount": 5,
+              "applicationCount": 3039
+            },
+            {
+              "campaignId": "6ac73a4d8d39859fc7444ffe",
+              "campaignTitle": "[선물포장/단독] 오하입 본딩 알파 케라틴 헤어팩+본딩 리브인 폼 트리트먼트 세트 (스크런치 증정)",
+              "brand": { "id": "89533", "name": "오하입" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260904094753_aa43b8f54674460791117e69982afacb.jpg",
+              "productId": 13885334,
+              "remainingDays": 2,
+              "recruitmentCount": 10,
+              "applicationCount": 6902
+            },
+            {
+              "campaignId": "6aca3b60e35e6d460487b387",
+              "campaignTitle": "[선물포장/단독구성] 마레이스튜디오 오 드 퍼퓸 50ml(8종 택1)+룸스프레이 15ml 세트",
+              "brand": { "id": "89535", "name": "마레이 스튜디오" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261014165438_ef4ed23457c94f2c86d202b192cc57db.png",
+              "productId": 14015205,
+              "remainingDays": 5,
+              "recruitmentCount": 15,
+              "applicationCount": 4966
+            },
+            {
+              "campaignId": "6a8d40ae68a7485005df1d78",
+              "campaignTitle": "[선물하기 단독] \"편의점 품절대란\" 디저트 6개입 (아이스 브륄레 4종 + 아이스 생초콜릿 2종)",
+              "brand": { "id": "88657", "name": "로로멜로" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260107112242_2b7054e25aed4d85a929170e66de0970.jpg",
+              "productId": 12766399,
+              "remainingDays": 1,
+              "recruitmentCount": 15,
+              "applicationCount": 7345
+            },
+            {
+              "campaignId": "6a8ffc1b307648f9e1a19f9b",
+              "campaignTitle": "릴리이브 그로우턴 엑소좀 스피큘 앰플 3000 | 헤어라인 정수리 탈모 스페셜 케어",
+              "brand": { "id": "88635", "name": "릴리이브" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260713112619_43ecbeb5430c4b389677a28e43803aa4.jpg",
+              "productId": 13683605,
+              "remainingDays": 0,
+              "recruitmentCount": 50,
+              "applicationCount": 6945
+            },
+            {
+              "campaignId": "6a7d376cc6c82aa0f26c5466",
+              "campaignTitle": "펫생각 하루조이 강아지 가수분해 간식 연어 트릿 저알러지 저칼로리 다이어트 노즈워크 훈련",
+              "brand": { "id": "86981", "name": "펫생각" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260205172005_f492287e8b1b454ba0821b35e770752c.jpg",
+              "productId": 12294368,
+              "remainingDays": 4,
+              "recruitmentCount": 5,
+              "applicationCount": 2140
+            },
+            {
+              "campaignId": "6aa0aef6a960071e0ef70bca",
+              "campaignTitle": "카페인없는 프리미엄꽃차 나비티백 3종 선물세트 구절초/장미/아카시아(쇼핑백포함)",
+              "brand": { "id": "37719", "name": "꽃을담다" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260824112000_bb5ab7f5493749e59d32a13b1bcc21c3.jpg",
+              "productId": 1366305,
+              "remainingDays": 7,
+              "recruitmentCount": 10,
+              "applicationCount": 1826
+            },
+            {
+              "campaignId": "6ac4f581e35e6d460487b35e",
+              "campaignTitle": "[선물추천][당일출고] 칼하트 키링 B0000251 나일론 덕 키 키퍼 (3colors)",
+              "brand": { "id": "1089", "name": "칼하트" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20250724165850_96f4b28cbcf045908a47ec852432a1d4.jpg",
+              "productId": 11212366,
+              "remainingDays": 0,
+              "recruitmentCount": 5,
+              "applicationCount": 4120
+            },
+            {
+              "campaignId": "6aa0a3b709fa42d3436b8427",
+              "campaignTitle": "빵어니스타 \"꾸덕치덕\" 통밀 비건 인기 스콘 5종 선물세트 (플레인,초코칩,넛츠초코칩,황치즈초코칩,바닐라빈초코칩)",
+              "brand": { "id": "89212", "name": "빵어니스타" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260907125220_66b30be9f837451bbac8374776005d59.png",
+              "productId": 14254890,
+              "remainingDays": 7,
+              "recruitmentCount": 5,
+              "applicationCount": 2239
+            },
+            {
+              "campaignId": "6a9e1821bd8d3be42667b78a",
+              "campaignTitle": "헤어 솔루션 샴푸바&컨디셔너 세트 (4종 택 1)",
+              "brand": { "id": "42830", "name": "톤28" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261015141900_4f20d718578646be8fb08316700b124c.jpg",
+              "productId": 14234603,
+              "remainingDays": 6,
+              "recruitmentCount": 10,
+              "applicationCount": 4011
+            },
+            {
+              "campaignId": "6ac4b93c8d39859fc7444fe2",
+              "campaignTitle": "버니 런치 플레이트 세트 (그릇1P+찬기1P)",
+              "brand": { "id": "86554", "name": "바쏠" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261012113417_7f884f4596244dfab66627992da78d00.png",
+              "productId": 14433709,
+              "remainingDays": 1,
+              "recruitmentCount": 5,
+              "applicationCount": 5922
+            },
+            {
+              "campaignId": "6abb84bd866d6de45c91211f",
+              "campaignTitle": "[지수pick/선물추천] 에토 스웨이드 퍼 숏 미니 부츠 겨울 양털 방한 패딩 기념일 여성 여자 남성 커플 어그핏 발렌타인데이",
+              "brand": { "id": "87057", "name": "누아트스튜디오" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260917164223_eb96e922f948417e90599c6540270858.jpg",
+              "productId": 14331675,
+              "remainingDays": 1,
+              "recruitmentCount": 10,
+              "applicationCount": 8324
+            },
+            {
+              "campaignId": "6a91526d307648f9e1a19fa6",
+              "campaignTitle": "\"오늘은 특별하게\" 케이미트 이베리코 목살 400g (200g*2팩)",
+              "brand": { "id": "84461", "name": "케이미트" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260721110006_ec99273326f94da680ab0b00b9838d0b.jpg",
+              "productId": 12705180,
+              "remainingDays": 3,
+              "recruitmentCount": 5,
+              "applicationCount": 6492
+            },
+            {
+              "campaignId": "6a9e81b109fa42d3436b841a",
+              "campaignTitle": "[누다라] 프랑스X일본 콜라보 조향 누다라 사쉐 / 방향제 40G (3종 택1)",
+              "brand": { "id": "87081", "name": "누다라" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260407113235_cfcca80913bc4c6e863177b063453403.jpg",
+              "productId": 12807233,
+              "remainingDays": 6,
+              "recruitmentCount": 40,
+              "applicationCount": 3858
+            },
+            {
+              "campaignId": "6a9dfddd81f7ba398175da0a",
+              "campaignTitle": "프리미엄 다이아몬드 에어링 정품 위스키잔 술잔 양주잔 선물세트 나혼산 안재현 집들이 신혼",
+              "brand": { "id": "38612", "name": "브릴리언" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20251021133525_146679656eaf4199b2372ab7b01b6cfb.jpg",
+              "productId": 9643036,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 4057
+            },
+            {
+              "campaignId": "6a9913e0bd8d3be42667b777",
+              "campaignTitle": "[국내생산] 매일 편하게 데일리 파자마 잠옷 팬츠 모음 (6종)",
+              "brand": { "id": "80049", "name": "슬리피캣" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260831171015_87ee63eca937455ab8e3b2c66e3fb1e8.jpg",
+              "productId": 14197140,
+              "remainingDays": 6,
+              "recruitmentCount": 10,
+              "applicationCount": 3611
+            },
+            {
+              "campaignId": "6aa0f41781f7ba398175da30",
+              "campaignTitle": "[3P 테토 래빗] 수피마 핸드타월 30x30 (3colors)",
+              "brand": { "id": "86523", "name": "테토" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261008130123_5ad8a7dc5e044c50bbc812236c3f0eae.jpg",
+              "productId": 11798958,
+              "remainingDays": 7,
+              "recruitmentCount": 5,
+              "applicationCount": 2099
+            },
+            {
+              "campaignId": "6a9a4b6c81f7ba398175da05",
+              "campaignTitle": "[+키링 증정] 럭키 클로버 사쉐 (3종) 네잎클로버 향기 방향제 집들이 응원 시험 수능 추석",
+              "brand": { "id": "86219", "name": "미뇽맨션" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260612131414_2ed688bdf9824d2387662d5cf0b0e2dd.jpg",
+              "productId": 12752630,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 3949
+            },
+            {
+              "campaignId": "6a96210dbd8d3be42667b74a",
+              "campaignTitle": "[단독/집들이] 어노브 글로우 바디워시 & 바디로션 기프트 선물 세트 (바디케어 2종+샤워볼 증정)",
+              "brand": { "id": "83072", "name": "어노브" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260824103830_7b070818e5694e5e8b5a01f73fb747ae.jpg",
+              "productId": 12650936,
+              "remainingDays": 1,
+              "recruitmentCount": 5,
+              "applicationCount": 7636
+            },
+            {
+              "campaignId": "6ac6059be35e6d460487b36c",
+              "campaignTitle": "[벨기에 왕실 공식 초콜릿] 그랑 크루 셀렉션 6피스",
+              "brand": { "id": "87232", "name": "피에르 마르콜리니" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261008151717_d9ebaabd874d416d9c36603a25bdb956.jpg",
+              "productId": 14335387,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 5777
+            },
+            {
+              "campaignId": "6a98d1f6aacd08cebff7b4d6",
+              "campaignTitle": "[선물포장] 로라애슐리 영국감성 해리티지 엘더우드 60수 타월 4P 신혼 집들이 이사 수건 선물세트",
+              "brand": { "id": "88590", "name": "로라애슐리" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20251121152734_5fd543889d1544909c805e6746b36858.png",
+              "productId": 12602174,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 4934
+            },
+            {
+              "campaignId": "6a9fb572307648f9e1a1a00b",
+              "campaignTitle": "\"화잘먹 물빛광채\" 정샘물 에센셜 물 크림 or 물 크림 라이트 30ml (택1) ",
+              "brand": { "id": "80057", "name": "정샘물" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261007162035_be56cfe5c43546e89249a3ae07217c71.jpg",
+              "productId": 4490526,
+              "remainingDays": 7,
+              "recruitmentCount": 10,
+              "applicationCount": 2458
+            },
+            {
+              "campaignId": "6a9a3151a960071e0ef70ba1",
+              "campaignTitle": "[선물포장/증정품]PDRN 판테솔 선크림 50ml",
+              "brand": { "id": "88129", "name": "닥터비타" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260916170112_f49fd6cf06cc474882cd58cf11dcb4f9.jpg",
+              "productId": 14091461,
+              "remainingDays": 6,
+              "recruitmentCount": 30,
+              "applicationCount": 3745
+            },
+            {
+              "campaignId": "6a97de2dbd8d3be42667b766",
+              "campaignTitle": "액막이 명태 조명+머그컵 세트  [4colors] 인테리어 조명 무드등 수면등 램프 자취 신혼 결혼 집들이 생일 이사 선물",
+              "brand": { "id": "86353", "name": "레나에너지" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260829173123_3687f25070f84e57bb6070f8b2e9f396.jpg",
+              "productId": 12839880,
+              "remainingDays": 7,
+              "recruitmentCount": 5,
+              "applicationCount": 1745
+            },
+            {
+              "campaignId": "6a8f977281f7ba398175d9a1",
+              "campaignTitle": "오루 초목재유 찻잔 찻잔세트 3P 개완 티잔",
+              "brand": { "id": "88774", "name": "오루" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260113094351_dfb64d83b8f647feb71b34675285c220.jpg",
+              "productId": 12714471,
+              "remainingDays": 4,
+              "recruitmentCount": 5,
+              "applicationCount": 4408
+            },
+            {
+              "campaignId": "6a9622bdbd8d3be42667b74b",
+              "campaignTitle": "[선물포장] 닥터포헤어 두피진정 저자극 샴푸&두피 앰플 세트",
+              "brand": { "id": "3452", "name": "닥터포헤어" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261008165518_563a437759eb48dc96b170aae8238c45.jpg",
+              "productId": 10063782,
+              "remainingDays": 0,
+              "recruitmentCount": 5,
+              "applicationCount": 7846
+            },
+            {
+              "campaignId": "6aa241caa960071e0ef70bdf",
+              "campaignTitle": "[단독]고체 탈취제 300g X 4개 + 기프트세트 | 실내탈취제 초강력 실내 냄새 제거 집들이선물 결혼선물",
+              "brand": { "id": "2813", "name": "코코도르" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261012162327_5c3beaa7b26c45df883479f42f4c9e51.jpg",
+              "productId": 13755866,
+              "remainingDays": 2,
+              "recruitmentCount": 5,
+              "applicationCount": 6940
+            },
+            {
+              "campaignId": "6a952f3eaacd08cebff7b4ab",
+              "campaignTitle": "[포쉬프로젝트] 캥거루백 블랙그리드스탑",
+              "brand": { "id": "88303", "name": "포쉬프로젝트" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260921150412_832d9c5914094fda87700d73c419b44f.jpg",
+              "productId": 12019293,
+              "remainingDays": 5,
+              "recruitmentCount": 5,
+              "applicationCount": 4752
+            },
+            {
+              "campaignId": "6a952eb5307648f9e1a19fb7",
+              "campaignTitle": "[포쉬프로젝트] 캥거루백 미니 블랙",
+              "brand": { "id": "88303", "name": "포쉬프로젝트" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20251224102915_118d66f27b91400398d240db9f9b5213.jpeg",
+              "productId": 12019272,
+              "remainingDays": 3,
+              "recruitmentCount": 5,
+              "applicationCount": 5778
+            },
+            {
+              "campaignId": "6acde897760488c80b8131e5",
+              "campaignTitle": "소소모소 리을 고블렛잔세트 2P (선물포장) 그릇 막걸리잔 와인잔 집들이선물",
+              "brand": { "id": "86610", "name": "소소모소" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20261012164443_675b1203441849d787fba8f0397074cf.jpg",
+              "productId": 14460289,
+              "remainingDays": 4,
+              "recruitmentCount": 10,
+              "applicationCount": 5888
+            },
+            {
+              "campaignId": "6aa102c9bd8d3be42667b7a4",
+              "campaignTitle": "[NEW] 925실버 데일리 \"은근한 포인트\" 볼드 링귀걸이 사벨, 원터치 귀걸이",
+              "brand": { "id": "81630", "name": "47베이지" },
+              "imageUrl": "https://st.kakaocdn.net/product/gift/product/20260911102341_e94031e1ade7494d8611bfb35461365f.jpg",
+              "productId": 14235067,
+              "remainingDays": 7,
+              "recruitmentCount": 5,
+              "applicationCount": 1967
+            }
+          ],
+          "searchCondition": {
+            "searchId": 2224,
+            "campaignsRandomSeed": 29871746,
+            "firstPageSize": 50,
+            "nextSize": 24
+          },
+          "paging": { "totalCount": 475, "page": 1, "size": 24, "isLast": false, "totalPage": 20 }
+        },
+        "title": "모집중인 체험단 리스트입니다",
+        "code": "1367254",
+        "isComponentSlot": false
+      },
+      {
+        "id": 2237659,
+        "type": "IMAGE_BANNER",
+        "property": {
+          "displayType": "SINGLE",
+          "ratioType": "NONE",
+          "banners": [
+            {
+              "imageUrl": "https://t1.daumcdn.net/gift/pagebuilder/image/page/33325/20251209_Z_5794831409901949382.png?image_original_width=1080&image_original_height=138",
+              "linkUrl": "/giftbox/trial-campaign",
+              "useOriginalImage": false
+            }
+          ]
+        },
+        "title": "더 많은 체험단보기",
+        "code": "1368300",
+        "isComponentSlot": false
+      }
+    ],
+    "last": true,
+    "condition": {
+      "size": 20,
+      "context": { "pagingStartedAt": "1792304797", "lastItemKey": "1368300" },
+      "page": 1
+    }
+  },
+  "shares": [],
+  "name": "체험단 LNB",
+  "version": 102,
+  "dktPromotions": false,
+  "ad": false,
+  "pageAdBrandInfos": [],
+  "requireLogin": false,
+  "isLux": false,
+  "isSecretStore": false,
+  "abTest": false,
+  "feedbackData": {}
+}

@@ -21,6 +21,33 @@ describe('status extras', () => {
     expect(out).toContain('연결 글 답글 실패: 2건')
     expect(out).toContain('연결 글 답글 멈춤: 1건')
   })
+  it('shows campaign counts and the last collection', () => {
+    const quiet = formatStatus(base, 'Asia/Seoul')
+    expect(quiet).toContain('체험단 마지막 수집: 기록 없음')
+    expect(quiet).not.toContain('신청함')
+    const out = formatStatus(
+      {
+        ...base,
+        campaigns: {
+          ...base.campaigns,
+          lastCollectedAt: new Date('2026-10-08T21:05:00Z'),
+          pendingReview: 2,
+          applied: 1,
+          draftReview: 1,
+          postedLast30d: 4,
+        },
+      },
+      'Asia/Seoul',
+    )
+    expect(out).toContain('체험단 마지막 수집: 10-09 06:05')
+    expect(out).toContain('검수 대기: 2건')
+    expect(out).toContain('신청함·결과 대기: 1건')
+    expect(out).toContain('리뷰 초안: 1건')
+    expect(out).toContain('최근 30일 리뷰 완료: 4건')
+    expect(out).not.toContain('선정·리뷰 전')
+    expect(out).not.toContain('[선물하기]')
+    expect(out).not.toContain('로컬 워커')
+  })
   it('parses key info, preferring monthly usage', () => {
     expect(parseLlmCost({ data: { usage: 9, usage_monthly: 2, limit: null } })).toEqual({
       usd: 2,
@@ -61,6 +88,15 @@ const base: Status = {
   chainParts: { failed: 0, stuck: 0 },
   threads: { dryRun: true, tokenExpiresAt: new Date('2026-12-01T00:00:00Z') },
   lastDaily: { state: 'completed', at: new Date('2026-10-08T21:05:00Z') },
+  campaigns: {
+    lastCollectedAt: null,
+    pendingReview: 0,
+    applied: 0,
+    selected: 0,
+    draftReview: 0,
+    postedLast30d: 0,
+    bySource: [],
+  },
 }
 
 describe('formatStatus', () => {
@@ -87,7 +123,7 @@ describe('formatStatus', () => {
     )
     expect(out).toContain('Threads: 실제 발행')
     expect(out).toContain('발행 예정: 없음')
-    expect(out).not.toContain('마지막 수집')
+    expect(out).not.toMatch(/^마지막 수집/m)
     expect(out).toContain('- #9 xxx')
     expect(out).toContain('…')
   })
@@ -104,5 +140,39 @@ describe('final failure alert', () => {
       '❌ 초안 생성 (topic #12) 실패 (재시도 소진): boom bad',
     )
     expect(formatFinalFailure('x', 'y'.repeat(400)).length).toBeLessThan(330)
+  })
+})
+
+describe('formatStatus per source', () => {
+  it('lists active counts per source', () => {
+    const out = formatStatus(
+      {
+        ...base,
+        campaigns: {
+          ...base.campaigns,
+          bySource: [
+            {
+              source: 'kakao-gift',
+              lastCollectedAt: new Date('2026-10-08T21:05:00Z'),
+              pendingReview: 2,
+              applied: 0,
+              selected: 0,
+              draftReview: 0,
+            },
+            {
+              source: 'musinsa',
+              lastCollectedAt: null,
+              pendingReview: 1,
+              applied: 3,
+              selected: 0,
+              draftReview: 0,
+            },
+          ],
+        },
+      },
+      'Asia/Seoul',
+    )
+    expect(out).toContain('[선물하기] 검수 대기 2 · 마지막 수집 10-09 06:05')
+    expect(out).toContain('[무신사] 검수 대기 1 · 신청함 3')
   })
 })

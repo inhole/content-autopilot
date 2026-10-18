@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sourceInfo } from '../campaigns/types.ts'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 
@@ -66,6 +67,82 @@ export type Status = {
   threads: { dryRun: boolean; tokenExpiresAt: Date | null }
   /** Absent when pg-boss could not be queried or has no run yet. */
   lastDaily?: { state: string; at: Date }
+  campaigns: CampaignCounts
+}
+
+export type CampaignCounts = {
+  /** Newest last_seen_at of any campaign; null when nothing was ever collected. */
+  lastCollectedAt: Date | null
+  pendingReview: number
+  applied: number
+  selected: number
+  draftReview: number
+  postedLast30d: number
+  /** Active campaigns per source (sources without rows are left out). */
+  bySource: SourceCampaignCounts[]
+}
+
+export type SourceCampaignCounts = {
+  source: string
+  /** Newest last_seen_at of this source's campaigns. */
+  lastCollectedAt: Date | null
+  pendingReview: number
+  applied: number
+  selected: number
+  draftReview: number
+}
+
+export async function loadCampaignCounts(now = new Date()): Promise<CampaignCounts> {
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000)
+  const [row] = await query<{
+    last_collected_at: Date | null
+    pending_review: number
+    applied: number
+    selected: number
+    draft_review: number
+    posted_30d: number
+  }>(
+    `select max(last_seen_at) as last_collected_at,
+            count(*) filter (where status = 'PENDING_REVIEW') as pending_review,
+            count(*) filter (where status = 'APPLIED') as applied,
+            count(*) filter (where status = 'SELECTED') as selected,
+            count(*) filter (where status = 'DRAFT_REVIEW') as draft_review,
+            count(*) filter (where status = 'POSTED'
+                               and coalesce(posted_at, updated_at) >= $1) as posted_30d
+       from campaigns`,
+    [monthAgo],
+  )
+  const sourceRows = await query<{
+    source: string
+    last_collected_at: Date | null
+    pending_review: number
+    applied: number
+    selected: number
+    draft_review: number
+  }>(
+    `select source, max(last_seen_at) as last_collected_at,
+            count(*) filter (where status = 'PENDING_REVIEW') as pending_review,
+            count(*) filter (where status = 'APPLIED') as applied,
+            count(*) filter (where status = 'SELECTED') as selected,
+            count(*) filter (where status = 'DRAFT_REVIEW') as draft_review
+       from campaigns group by source order by source`,
+  )
+  return {
+    bySource: sourceRows.map((r) => ({
+      source: r.source,
+      lastCollectedAt: r.last_collected_at ?? null,
+      pendingReview: Number(r.pending_review),
+      applied: Number(r.applied),
+      selected: Number(r.selected),
+      draftReview: Number(r.draft_review),
+    })),
+    lastCollectedAt: row?.last_collected_at ?? null,
+    pendingReview: row?.pending_review ?? 0,
+    applied: row?.applied ?? 0,
+    selected: row?.selected ?? 0,
+    draftReview: row?.draft_review ?? 0,
+    postedLast30d: row?.posted_30d ?? 0,
+  }
 }
 
 /** Unfinished parts that have not moved for this long are reported as stuck. */
@@ -90,7 +167,7 @@ const FAILED_SHOWN = 5
 export async function loadStatus(now = new Date()): Promise<Status> {
   const since = new Date(now.getTime() - 24 * 3600 * 1000)
   const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000)
-  const [pending, scheduled, published, failed, account, expired, llmCost, chainParts] =
+  const [pending, scheduled, published, failed, account, expired, llmCost, chainParts, campaigns] =
     await Promise.all([
       query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
       query<{ id: number; scheduled_at: Date; text: string }>(
@@ -115,6 +192,7 @@ export async function loadStatus(now = new Date()): Promise<Status> {
       ),
       fetchLlmCost(),
       loadChainParts(now),
+      loadCampaignCounts(now),
     ])
 
   // pg-boss internals may change between versions, so this is best-effort.
@@ -143,6 +221,7 @@ export async function loadStatus(now = new Date()): Promise<Status> {
     lastDaily,
     expiredLast7d: expired[0]?.n ?? 0,
     llmCost: llmCost ?? undefined,
+    campaigns,
   }
 }
 
@@ -199,6 +278,33 @@ export function formatStatus(status: Status, timeZone: string): string {
     lines.push(
       `${label}: $${usd.toFixed(2)}${limitRemaining != null ? ` (한도 잔여 $${limitRemaining.toFixed(2)})` : ''}`,
     )
+  }
+  const c = status.campaigns
+  const campaignLines = [
+    ['검수 대기', c.pendingReview],
+    ['신청함·결과 대기', c.applied],
+    ['선정·리뷰 전', c.selected],
+    ['리뷰 초안', c.draftReview],
+    ['최근 30일 리뷰 완료', c.postedLast30d],
+  ] as const
+  lines.push('', '🎁 체험단')
+  lines.push(
+    `체험단 마지막 수집: ${c.lastCollectedAt ? fmt(c.lastCollectedAt, timeZone) : '기록 없음'}`,
+  )
+  for (const [label, n] of campaignLines) if (n > 0) lines.push(`${label}: ${n}건`)
+  for (const b of c.bySource ?? []) {
+    const parts = (
+      [
+        ['검수 대기', b.pendingReview],
+        ['신청함', b.applied],
+        ['선정', b.selected],
+        ['초안', b.draftReview],
+      ] as const
+    )
+      .filter(([, n]) => n > 0)
+      .map(([label, n]) => `${label} ${n}`)
+    const seen = b.lastCollectedAt ? ` · 마지막 수집 ${fmt(b.lastCollectedAt, timeZone)}` : ''
+    lines.push(`  [${sourceInfo(b.source).label}] ${parts.join(' · ') || '진행 중 없음'}${seen}`)
   }
   return lines.join('\n')
 }

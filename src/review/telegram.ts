@@ -1,4 +1,6 @@
 import { Bot, GrammyError, InlineKeyboard } from 'grammy'
+import { REVIEW_HELP_LINES } from '../campaigns/review-telegram.ts'
+import { CAMPAIGN_BOT_COMMANDS, CAMPAIGN_HELP_LINES } from '../campaigns/telegram.ts'
 import { config } from '../config.ts'
 import { query, transaction } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
@@ -70,6 +72,10 @@ export const HELP_TEXT = [
   '',
   '💬 Threads 답글 알림에 답장하기',
   '- 답장한 내용이 그대로 Threads 답글로 달려요 (답글당 1회)',
+  '',
+  ...CAMPAIGN_HELP_LINES,
+  '',
+  ...REVIEW_HELP_LINES,
 ].join('\n')
 
 const BOT_COMMANDS = [
@@ -77,6 +83,7 @@ const BOT_COMMANDS = [
   { command: 'add', description: '기사 URL로 초안 만들기: /add <url> [의견]' },
   { command: 'help', description: '사용법 보기' },
   { command: 'report', description: '주간 성과 리포트 보기' },
+  ...CAMPAIGN_BOT_COMMANDS,
 ]
 
 type ScheduleAction = 'unsched' | 'pubnow'
@@ -336,6 +343,11 @@ export function parseCallback(
 export function createReviewer(opts: {
   onRegenerate: (topicId: number, feedback?: string) => Promise<void>
   onAddTopic: (topicId: number) => Promise<void>
+  /**
+   * Registers more handlers (the campaign pipeline) after the chat filter and before this bot's
+   * own commands and handlers, so they see a reply or button press first and call next() to pass.
+   */
+  extend?: (bot: Bot) => void
 }): Reviewer {
   const token = config.TELEGRAM_BOT_TOKEN
   const chatId = config.TELEGRAM_CHAT_ID
@@ -374,6 +386,7 @@ export function createReviewer(opts: {
   bot.use(async (ctx, next) => {
     if (chatId && ctx.chat?.id === chatId) await next()
   })
+  opts.extend?.(bot)
 
   bot.command('status', async (ctx) => {
     try {

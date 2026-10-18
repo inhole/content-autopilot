@@ -51,6 +51,26 @@ const schema = z.object({
     .max(200)
     .optional()
     .transform((s) => s?.replace(/\\n/g, '\n').trim() || undefined),
+
+  // Kakao gift trial campaigns (docs/plans/campaign-autopilot.md). The list is a public page;
+  // applying and reviewing happen by hand in the KakaoTalk mobile app.
+  GIFT_COLLECT_CRON: z.string().default('0 9,15,21 * * *'),
+  // gift.kakao.com/page/<id>: the 체험단 tab of 선물하기.
+  GIFT_TRIAL_PAGE_ID: z.coerce.number().int().default(33325),
+  CAMPAIGN_DAILY_MAX: z.coerce.number().int().min(1).max(20).default(5),
+  CAMPAIGN_PROFILE_PATH: z.string().default('config/campaign-profile.json'),
+
+  // Musinsa preuser trials (docs/plans/campaign-autopilot.md). The list needs the owner's Musinsa
+  // login, so it is read through the Aside browser on the owner's Windows PC (WORKER_ROLE=local).
+  WORKER_ROLE: z.enum(['cloud', 'local']).default('cloud'),
+  MUSINSA_COLLECT_CRON: z.string().default('0 10,16,22 * * *'),
+  // Default: %LOCALAPPDATA%\Aside\CLI\current\aside.exe when it exists, else `aside` from PATH.
+  ASIDE_BIN: z.string().optional(),
+  ASIDE_ACCOUNT: z.string().optional(),
+
+  // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
+  PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  DASHBOARD_PASSWORD: z.string().optional(),
 })
 
 export type Config = z.infer<typeof schema>

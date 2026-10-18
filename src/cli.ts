@@ -1,3 +1,15 @@
+import { collectMusinsaCampaigns } from './campaigns/collect.ts'
+import { fetchGiftTrialList } from './campaigns/gift.ts'
+import { runGiftCollect } from './campaigns/jobs.ts'
+import { fetchMusinsaList, musinsaTitle } from './campaigns/musinsa.ts'
+import { rankCollected as rankCampaigns } from './campaigns/rank.ts'
+import { runCampaignReminders } from './campaigns/reminders.ts'
+import { generateReviewDraft, requestDraftRegeneration } from './campaigns/review-draft.ts'
+import { sendDraft } from './campaigns/review-telegram.ts'
+import { loadCampaign } from './campaigns/store.ts'
+import { formatCampaignCard, sendCampaignCard } from './campaigns/telegram.ts'
+import { sendCampaignMessage } from './campaigns/tg.ts'
+import { competition } from './campaigns/types.ts'
 import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { publishChain } from './pipeline/chain.ts'
@@ -39,7 +51,17 @@ const USAGE = `usage: npm run cli -- <command>
   threads:refresh             refresh the Threads token if it is close to expiry
   insights                    collect Threads post insights now and print the latest numbers
   report                      print the weekly insights report (same text as Telegram /report)
-  replies                     poll new Threads replies now and notify Telegram`
+  replies                     poll new Threads replies now and notify Telegram
+
+  gift:list                   fetch the Kakao gift trial list and print it (writes nothing)
+  musinsa:list                fetch the Musinsa preuser list via Aside and print it (writes nothing)
+  musinsa:collect             collect the Musinsa list (via Aside), rank new campaigns and send cards
+  campaign:collect            collect the gift list, rank new campaigns and send their cards
+  campaign:rank               rank COLLECTED campaigns (no Telegram)
+  campaign:show <id>          print status, skip reason and the card text
+  campaign:card <id>          (re)send the campaign card to Telegram
+  campaign:remind             send due campaign reminders now
+  review:draft <id> [feedback]  write (or rewrite) the gift review draft and send it`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
 const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
@@ -65,6 +87,12 @@ const [command, ...args] = process.argv.slice(2)
 const id = () => {
   const n = Number(args[0])
   if (!Number.isInteger(n)) throw new Error('postId is required')
+  return n
+}
+
+const campaignId = () => {
+  const n = Number(args[0])
+  if (!Number.isInteger(n)) throw new Error('campaign id is required')
   return n
 }
 
@@ -218,6 +246,80 @@ try {
       console.log(`${fresh.length} new reply(ies)`)
       for (const r of fresh)
         console.log(`- @${r.username ?? '?'} (post #${r.post_id}): ${r.text ?? '-'}`)
+      break
+    }
+    case 'gift:list': {
+      const list = await fetchGiftTrialList()
+      console.log(
+        `${list.items.length} campaign(s) of ${list.totalCount ?? '?'}, ${list.invalid} invalid`,
+      )
+      console.table(
+        list.items.slice(0, 30).map((i) => ({
+          id: i.campaignId,
+          title: i.campaignTitle.slice(0, 40),
+          brand: i.brand?.name ?? '-',
+          days: i.remainingDays,
+          slots: i.recruitmentCount,
+          applicants: i.applicationCount,
+        })),
+      )
+      break
+    }
+    case 'musinsa:list': {
+      const list = await fetchMusinsaList()
+      console.log(`${list.items.length} campaign(s), ${list.invalid} invalid`)
+      console.table(
+        list.items.slice(0, 40).map((i) => ({
+          id: i.campaignId,
+          title: musinsaTitle(i).slice(0, 40),
+          brand: i.brandName ?? '-',
+          ends: i.campaignEndDate,
+          type: i.contentType ?? '-',
+        })),
+      )
+      break
+    }
+    case 'musinsa:collect': {
+      const collected = await collectMusinsaCampaigns()
+      const picked = await rankCampaigns()
+      for (const id of picked) await sendCampaignCard(id)
+      console.log({ ...collected, created: collected.created.length, picked })
+      break
+    }
+    case 'campaign:collect':
+      console.log(await runGiftCollect(sendCampaignCard))
+      break
+    case 'campaign:rank':
+      console.log('shortlisted:', await rankCampaigns())
+      break
+    case 'campaign:show': {
+      const c = await loadCampaign(campaignId())
+      if (!c) throw new Error(`campaign ${args[0]} not found`)
+      const ratio = competition(c)
+      const shown = ratio === null ? '-' : Math.round(ratio)
+      console.log(`[${c.status}] skip: ${c.skip_reason ?? '-'} · competition: ${shown}\n`)
+      console.log(formatCampaignCard(c, new Date(), config.TZ_NAME))
+      break
+    }
+    case 'campaign:card':
+      await sendCampaignCard(campaignId())
+      console.log('card sent')
+      break
+    case 'campaign:remind':
+      console.log(`sent ${await runCampaignReminders(sendCampaignMessage)} reminder(s)`)
+      break
+    case 'review:draft': {
+      const id = campaignId()
+      const seq = await requestDraftRegeneration(id)
+      if (seq === null) throw new Error(`campaign ${id} is not SELECTED or DRAFT_REVIEW`)
+      const written = await generateReviewDraft(id, {
+        feedback: args.slice(1).join(' ') || undefined,
+        seq,
+      })
+      if (written) await sendDraft(id)
+      console.log(
+        written ? 'draft written' : 'nothing written (no memo yet, or the campaign moved on)',
+      )
       break
     }
     default:

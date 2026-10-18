@@ -25,7 +25,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   const { pool } = await import('../../src/db/pool.ts')
-  await pool.query('truncate posts, topics, platform_accounts restart identity cascade')
+  await pool.query('truncate posts, topics, platform_accounts, campaigns restart identity cascade')
 })
 
 afterAll(async () => {
