@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { runCampaignReminders } from '../../src/campaigns/reminders.ts'
 import {
-  approveApply,
-  expirePastDeadline,
+  expireCampaigns,
   loadActiveCampaigns,
-  markAppliedManually,
+  markApplied,
   markCardSent,
+  markResult,
   rejectCampaign,
-  replaceApplyMessage,
-  retryApply,
+  setReviewDeadline,
 } from '../../src/campaigns/review.ts'
+import { query } from '../../src/db/pool.ts'
 import { getCampaign, seedCampaign, seedCardCampaign } from './campaign-helpers-review.ts'
 
 describe('markCardSent', () => {
@@ -36,141 +37,178 @@ describe('markCardSent', () => {
   })
 })
 
-describe('owner decisions', () => {
-  it('markAppliedManually sets APPLIED and applied_at', async () => {
+describe('owner decisions on the card', () => {
+  it('markApplied sets APPLIED and applied_at', async () => {
     const id = await seedCardCampaign()
-    expect(await markAppliedManually(id, 0)).toBe(true)
+    expect(await markApplied(id, 0)).toBe(true)
     const c = await getCampaign(id)
     expect(c.status).toBe('APPLIED')
     expect(c.applied_at).not.toBeNull()
-    expect(await markAppliedManually(id, 0)).toBe(false)
   })
-  it('approveApply sets APPROVED with attempts reset', async () => {
-    const id = await seedCardCampaign({ attempts: 2, last_error: 'old' })
-    expect(await approveApply(id, 0)).toBe(true)
+  it('markApplied refuses a stale revision or a second press', async () => {
+    const stale = await seedCardCampaign({ revision: 1, review_revision: 0 })
+    expect(await markApplied(stale, 0)).toBe(false)
+    expect(await markApplied(stale, 1)).toBe(false)
+    expect((await getCampaign(stale)).status).toBe('PENDING_REVIEW')
+
+    const id = await seedCardCampaign({ revision: 1, review_revision: 1 })
+    expect(await markApplied(id, 1)).toBe(true)
+    expect(await markApplied(id, 1)).toBe(false)
+  })
+  it('rejectCampaign stores the reason and respects the revision', async () => {
+    const id = await seedCardCampaign({ revision: 1, review_revision: 1 })
+    expect(await rejectCampaign(id, 0, 'brand')).toBe(false)
+    expect(await rejectCampaign(id, 1, 'brand')).toBe(true)
     const c = await getCampaign(id)
-    expect([c.status, c.attempts, c.last_error]).toEqual(['APPROVED', 0, null])
-    expect(await approveApply(id, 0)).toBe(false)
-  })
-  it('rejectCampaign stores the reason', async () => {
-    const id = await seedCardCampaign()
-    expect(await rejectCampaign(id, 0, 'reward')).toBe(true)
-    const c = await getCampaign(id)
-    expect([c.status, c.reject_reason]).toEqual(['REJECTED', 'reward'])
-  })
-  it('refuses every decision on a stale revision', async () => {
-    const id = await seedCardCampaign({ revision: 1, review_revision: 0 })
-    expect(await markAppliedManually(id, 0)).toBe(false)
-    expect(await approveApply(id, 0)).toBe(false)
-    expect(await rejectCampaign(id, 0, 'other')).toBe(false)
-    expect(await approveApply(id, 1)).toBe(false) // card for revision 1 was never sent
-    expect((await getCampaign(id)).status).toBe('PENDING_REVIEW')
-  })
-  it('refuses decisions once the campaign left PENDING_REVIEW', async () => {
-    const id = await seedCardCampaign({ status: 'EXPIRED' })
-    expect(await approveApply(id, 0)).toBe(false)
-    expect(await rejectCampaign(id, 0, 'other')).toBe(false)
+    expect([c.status, c.reject_reason]).toEqual(['REJECTED', 'brand'])
+    expect(await rejectCampaign(id, 1, 'other')).toBe(false)
   })
 })
 
-describe('replaceApplyMessage', () => {
-  it('replaces verbatim and bumps revision', async () => {
-    const id = await seedCardCampaign()
-    const r = await replaceApplyMessage(id, 100, '  새 메시지  ', 50)
-    expect(r).toEqual({ ok: true, revision: 1 })
+describe('markResult', () => {
+  it('APPLIED to SELECTED sets selected_at and result_at', async () => {
+    const id = await seedCampaign({ status: 'APPLIED' })
+    expect(await markResult(id, true)).toBe(true)
     const c = await getCampaign(id)
-    expect(c.apply_message).toBe('새 메시지')
-    expect(c.revision).toBe(1)
-    expect(c.review_revision).toBe(0)
-    // the old card's buttons no longer match
-    expect(await approveApply(id, 0)).toBe(false)
+    expect(c.status).toBe('SELECTED')
+    expect(c.selected_at).not.toBeNull()
+    expect(c.result_at).not.toBeNull()
   })
-  it('rejects text over the limit without writing', async () => {
-    const id = await seedCardCampaign()
-    const r = await replaceApplyMessage(id, 100, 'a'.repeat(51), 50)
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.message).toContain('50자')
-    expect((await getCampaign(id)).revision).toBe(0)
+  it('APPLIED to NOT_SELECTED leaves selected_at empty', async () => {
+    const id = await seedCampaign({ status: 'APPLIED' })
+    expect(await markResult(id, false)).toBe(true)
+    const c = await getCampaign(id)
+    expect(c.status).toBe('NOT_SELECTED')
+    expect(c.selected_at).toBeNull()
+    expect(c.result_at).not.toBeNull()
   })
-  it('rejects empty text', async () => {
-    const id = await seedCardCampaign()
-    expect((await replaceApplyMessage(id, 100, '   ', 50)).ok).toBe(false)
-  })
-  it('refuses a reply to an older card or a decided campaign', async () => {
-    const id = await seedCardCampaign()
-    expect((await replaceApplyMessage(id, 99, 'x', 50)).ok).toBe(false)
-    await approveApply(id, 0)
-    expect((await replaceApplyMessage(id, 100, 'x', 50)).ok).toBe(false)
+  it('applies once and only to APPLIED rows', async () => {
+    const id = await seedCampaign({ status: 'APPLIED' })
+    expect(await markResult(id, true)).toBe(true)
+    expect(await markResult(id, false)).toBe(false)
+    expect((await getCampaign(id)).status).toBe('SELECTED')
+    const pending = await seedCardCampaign()
+    expect(await markResult(pending, true)).toBe(false)
   })
 })
 
-describe('retryApply', () => {
-  it('moves APPLY_FAILED back to APPROVED and clears the error', async () => {
-    const id = await seedCampaign({ status: 'APPLY_FAILED', attempts: 3, last_error: 'boom' })
-    expect(await retryApply(id)).toBe(true)
-    const c = await getCampaign(id)
-    expect([c.status, c.attempts, c.last_error]).toEqual(['APPROVED', 0, null])
-    expect(await retryApply(id)).toBe(false)
+describe('setReviewDeadline', () => {
+  it('sets the deadline for APPLIED, SELECTED and DRAFT_REVIEW only', async () => {
+    const due = new Date('2026-10-30T14:59:00Z')
+    for (const status of ['APPLIED', 'SELECTED', 'DRAFT_REVIEW']) {
+      const id = await seedCampaign({ status })
+      expect(await setReviewDeadline(id, due)).toBe(true)
+      expect((await getCampaign(id)).review_deadline?.toISOString()).toBe(due.toISOString())
+    }
+    for (const status of ['PENDING_REVIEW', 'POSTED', 'REJECTED']) {
+      const id = await seedCampaign({ status })
+      expect(await setReviewDeadline(id, due)).toBe(false)
+    }
   })
 })
 
-describe('expirePastDeadline', () => {
-  it('expires only cards past their deadline and returns their messages', async () => {
+describe('expireCampaigns', () => {
+  it('expires open campaigns past their deadline and returns the cards', async () => {
     const now = new Date('2026-10-20T00:00:00Z')
-    const past = await seedCardCampaign({ apply_deadline: new Date('2026-10-19T00:00:00Z') })
-    const shortlisted = await seedCampaign({
-      status: 'SHORTLISTED',
-      apply_deadline: new Date('2026-10-19T12:00:00Z'),
-    })
-    const future = await seedCardCampaign({
-      review_message_id: 101,
-      apply_deadline: new Date('2026-10-25T00:00:00Z'),
-    })
-    const applied = await seedCampaign({
-      status: 'APPLIED',
-      apply_deadline: new Date('2026-10-01T00:00:00Z'),
-    })
-    const noDeadline = await seedCardCampaign({ review_message_id: 102 })
+    const past = new Date('2026-10-19T14:59:00Z')
+    const future = new Date('2026-10-25T14:59:00Z')
+    const card = await seedCardCampaign({ apply_deadline: past })
+    const collected = await seedCampaign({ status: 'COLLECTED', apply_deadline: past })
+    const shortlisted = await seedCampaign({ status: 'SHORTLISTED', apply_deadline: past })
+    const open = await seedCardCampaign({ apply_deadline: future })
+    const applied = await seedCampaign({ status: 'APPLIED', apply_deadline: past })
+    const noDeadline = await seedCardCampaign()
 
-    const expired = await expirePastDeadline(now)
-    expect(expired.map((e) => e.id).sort()).toEqual([past, shortlisted].sort())
-    expect(expired.find((e) => e.id === past)).toMatchObject({
+    const rows = await expireCampaigns(now)
+    expect(rows.map((r) => r.id).sort()).toEqual([card, collected, shortlisted].sort())
+    expect(rows.find((r) => r.id === card)).toMatchObject({
       review_chat_id: 1,
       review_message_id: 100,
     })
-    expect((await getCampaign(future)).status).toBe('PENDING_REVIEW')
+    expect((await getCampaign(card)).status).toBe('EXPIRED')
+    expect((await getCampaign(open)).status).toBe('PENDING_REVIEW')
     expect((await getCampaign(applied)).status).toBe('APPLIED')
     expect((await getCampaign(noDeadline)).status).toBe('PENDING_REVIEW')
-    expect(await expirePastDeadline(now)).toEqual([])
   })
 })
 
 describe('loadActiveCampaigns', () => {
-  it('lists in-progress campaigns by next deadline and hides finished ones', async () => {
-    const later = await seedCampaign({
-      status: 'PENDING_REVIEW',
-      apply_deadline: new Date('2026-10-30T00:00:00Z'),
-    })
-    const sooner = await seedCampaign({
-      status: 'APPLIED',
-      announce_at: new Date('2026-10-22T00:00:00Z'),
-    })
-    const review = await seedCampaign({
-      status: 'DRAFT_SAVED',
-      review_deadline: new Date('2026-11-05T00:00:00Z'),
-    })
-    const undated = await seedCampaign({ status: 'SELECTED' })
-    for (const status of [
-      'REJECTED',
-      'EXPIRED',
-      'NOT_SELECTED',
-      'POSTED',
-      'SKIPPED',
-      'SHORTLISTED',
-    ])
-      await seedCampaign({ status })
+  it('returns active statuses ordered by the next relevant date, nulls last', async () => {
+    const d = (day: number) => new Date(`2026-11-${String(day).padStart(2, '0')}T14:59:00Z`)
+    const selectedLate = await seedCampaign({ status: 'SELECTED', review_deadline: d(20) })
+    const pendingSoon = await seedCardCampaign({ apply_deadline: d(2) })
+    const selectedNone = await seedCampaign({ status: 'SELECTED' })
+    const appliedMid = await seedCampaign({ status: 'APPLIED', apply_deadline: d(10) })
+    const draft = await seedCampaign({ status: 'DRAFT_REVIEW', review_deadline: d(15) })
+    await seedCampaign({ status: 'POSTED' })
+    await seedCampaign({ status: 'REJECTED' })
+    // review_deadline must not affect an APPLIED row's position.
+    await query('update campaigns set review_deadline = $2 where id = $1', [appliedMid, d(1)])
 
     const rows = await loadActiveCampaigns()
-    expect(rows.map((r) => r.id)).toEqual([sooner, later, review, undated])
+    expect(rows.map((r) => r.id)).toEqual([
+      pendingSoon,
+      appliedMid,
+      draft,
+      selectedLate,
+      selectedNone,
+    ])
+  })
+})
+
+describe('runCampaignReminders', () => {
+  const tz = 'Asia/Seoul'
+
+  it('sends each reminder once', async () => {
+    const id = await seedCampaign({
+      status: 'SELECTED',
+      selected_at: new Date('2026-10-20T00:00:00Z'),
+      review_deadline: new Date('2026-10-30T14:59:00Z'),
+    })
+    const sent: string[] = []
+    const send = async (text: string) => {
+      sent.push(text)
+    }
+    const now = new Date('2026-10-27T03:00:00Z') // 3 days before
+    expect(await runCampaignReminders(send, now, tz)).toBe(1)
+    expect(await runCampaignReminders(send, now, tz)).toBe(0)
+    expect(sent).toHaveLength(1)
+    const kinds = await query<{ kind: string }>(
+      'select kind from campaign_reminders where campaign_id = $1',
+      [id],
+    )
+    expect(kinds.map((k) => k.kind)).toEqual(['review-d3'])
+    // The day before the deadline yields the next, more specific reminder.
+    expect(await runCampaignReminders(send, new Date('2026-10-29T03:00:00Z'), tz)).toBe(1)
+  })
+
+  it('retries after a failed send and still sends the others', async () => {
+    const a = await seedCampaign({
+      status: 'APPLIED',
+      apply_deadline: new Date('2026-10-10T14:59:00Z'),
+    })
+    const b = await seedCampaign({
+      status: 'APPLIED',
+      apply_deadline: new Date('2026-10-10T14:59:00Z'),
+    })
+    const now = new Date('2026-10-18T00:00:00Z')
+    const delivered: string[] = []
+    let failFirst = true
+    const send = async (text: string) => {
+      if (failFirst && text.includes(`#${a} `)) {
+        failFirst = false
+        throw new Error('telegram down')
+      }
+      delivered.push(text)
+    }
+    expect(await runCampaignReminders(send, now, tz)).toBe(1)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toContain(`#${b} `)
+    const left = await query('select 1 from campaign_reminders where campaign_id = $1', [a])
+    expect(left).toHaveLength(0)
+
+    expect(await runCampaignReminders(send, now, tz)).toBe(1)
+    expect(delivered).toHaveLength(2)
+    expect(delivered[1]).toContain(`#${a} `)
   })
 })

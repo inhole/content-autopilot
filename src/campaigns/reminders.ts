@@ -2,28 +2,17 @@ import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { localDate } from '../lib/time.ts'
 import type { CampaignButton } from './tg.ts'
-import type { Campaign, CampaignStatus } from './types.ts'
+import type { Campaign } from './types.ts'
 
 export type Reminder = { kind: string; text: string; buttons: CampaignButton[] }
 
 export type ReminderInput = Pick<
   Campaign,
-  'id' | 'status' | 'title' | 'review_deadline' | 'selected_at' | 'received_at'
-> &
-  Partial<Pick<Campaign, 'keywords' | 'detail'>>
+  'id' | 'status' | 'title' | 'apply_deadline' | 'selected_at' | 'review_deadline'
+>
 
-/** Statuses in which the review is still owed. */
-export const REVIEW_PENDING_STATUSES: CampaignStatus[] = [
-  'SELECTED',
-  'RECEIVED',
-  'DRAFT_REVIEW',
-  'DRAFT_APPROVED',
-  'DRAFT_SAVING',
-  'DRAFT_SAVED',
-  'DRAFT_FAILED',
-]
-export const RECEIVED_CHECK_AFTER_DAYS = 3
 const DAY_MS = 24 * 60 * 60 * 1000
+const REMINDER_STATUSES = ['APPLIED', 'SELECTED', 'DRAFT_REVIEW']
 
 /** Whole calendar days from `from` to `to` in `tz` (0 = same local day). */
 export function calendarDaysBetween(from: Date, to: Date, tz: string): number {
@@ -42,24 +31,33 @@ function formatDay(d: Date, tz: string): string {
 }
 
 function label(c: ReminderInput): string {
-  return c.title?.trim() || `체험단 #${c.id}`
+  return `#${c.id} ${c.title?.trim() || '체험단'}`
 }
 
-function btn(c: ReminderInput, text: string, action: 'received' | 'draft'): CampaignButton {
-  return { text, callback: { ns: 'blog', action, campaignId: c.id, revision: 0 } }
-}
+const resultButtons = (c: ReminderInput): CampaignButton[] => [
+  { text: '🎉 선정', callback: { ns: 'camp', action: 'sel', campaignId: c.id, revision: 0 } },
+  { text: '😢 미선정', callback: { ns: 'camp', action: 'unsel', campaignId: c.id, revision: 0 } },
+]
 
-function deadlineKind(left: number): string | null {
-  if (left === 0) return 'review-d0'
+const draftButton = (c: ReminderInput): CampaignButton => ({
+  text: '📝 리뷰 초안 쓰기',
+  callback: { ns: 'rev', action: 'draft', campaignId: c.id, revision: 0 },
+})
+
+/** Deadline reminder kinds from least to most specific. */
+const DEADLINE_KINDS = ['review-d3', 'review-d1', 'review-d0'] as const
+
+function deadlineKind(left: number): (typeof DEADLINE_KINDS)[number] | null {
+  if (left <= 0) return 'review-d0'
   if (left === 1) return 'review-d1'
-  if (left >= 2 && left <= 3) return 'review-d3'
+  if (left <= 3) return 'review-d3'
   return null
 }
 
 /**
  * Pure: the reminders a campaign is due for. Deadline reminders (d3, d1, d0 by calendar day in
- * `tz`) send only the most specific due kind, and nothing once that one has gone out, so a
- * campaign selected one day before its deadline never gets a stale "3 days left".
+ * `tz`) send only the most specific due kind, and nothing once that or a more specific one has
+ * gone out, so a campaign selected one day before its deadline never gets a stale "3 days left".
  */
 export function dueReminders(
   c: ReminderInput,
@@ -69,47 +67,46 @@ export function dueReminders(
 ): Reminder[] {
   const out: Reminder[] = []
 
-  if (c.status === 'SELECTED' && !sent.has('selected')) {
-    const lines = ['🎉 체험단에 선정됐어요!', label(c)]
-    if (c.review_deadline) lines.push(`리뷰 마감: ${formatDay(c.review_deadline, tz)}`)
-    const keywords = c.keywords?.length ? c.keywords : (c.detail?.keywords ?? [])
-    if (keywords.length) lines.push(`키워드: ${keywords.join(', ')}`)
-    const guide = c.detail?.guide?.trim()
-    if (guide) lines.push(`가이드: ${guide.length > 300 ? `${guide.slice(0, 300)}…` : guide}`)
+  if (
+    c.status === 'APPLIED' &&
+    c.apply_deadline &&
+    now.getTime() >= c.apply_deadline.getTime() + DAY_MS &&
+    !sent.has('result-check')
+  ) {
     out.push({
-      kind: 'selected',
-      text: lines.join('\n'),
-      buttons: [btn(c, '📝 초안 쓰기', 'draft')],
+      kind: 'result-check',
+      text: `📮 ${label(c)}\n신청 마감이 지났어요. 결과가 나왔나요? 카카오톡에서 확인하고 눌러주세요.`,
+      buttons: resultButtons(c),
     })
   }
 
   if (
     c.status === 'SELECTED' &&
-    c.received_at === null &&
+    c.review_deadline === null &&
     c.selected_at !== null &&
-    now.getTime() >= c.selected_at.getTime() + RECEIVED_CHECK_AFTER_DAYS * DAY_MS &&
-    !sent.has('received-check')
+    now.getTime() >= c.selected_at.getTime() + DAY_MS &&
+    !sent.has('due-missing')
   ) {
     out.push({
-      kind: 'received-check',
-      text: `📦 ${label(c)}\n선정된 지 ${RECEIVED_CHECK_AFTER_DAYS}일이 지났어요. 제품 받으셨나요?`,
-      buttons: [btn(c, '📦 받음', 'received'), btn(c, '📝 초안 쓰기', 'draft')],
+      kind: 'due-missing',
+      text: `⏳ ${label(c)}\n리뷰 기한을 아직 몰라요. /due ${c.id} 10/30 처럼 알려주세요.`,
+      buttons: [],
     })
   }
 
-  if (c.review_deadline && REVIEW_PENDING_STATUSES.includes(c.status)) {
+  if (c.review_deadline && (c.status === 'SELECTED' || c.status === 'DRAFT_REVIEW')) {
     const left = calendarDaysBetween(now, c.review_deadline, tz)
     const kind = deadlineKind(left)
-    if (kind && !sent.has(kind)) {
-      const when = left === 0 ? '오늘' : left === 1 ? '내일' : `${left}일 뒤`
-      out.push({
-        kind,
-        text: `⏰ ${label(c)}\n리뷰 마감이 ${when}(${formatDay(c.review_deadline, tz)})이에요.`,
-        buttons:
-          c.status === 'SELECTED' || c.status === 'RECEIVED'
-            ? [btn(c, '📝 초안 쓰기', 'draft')]
-            : [],
-      })
+    if (kind) {
+      const moreSpecific = DEADLINE_KINDS.slice(DEADLINE_KINDS.indexOf(kind))
+      if (!moreSpecific.some((k) => sent.has(k))) {
+        const when = left <= 0 ? '오늘' : left === 1 ? '내일' : `${left}일 뒤`
+        out.push({
+          kind,
+          text: `⏰ ${label(c)}\n리뷰 마감이 ${when}(${formatDay(c.review_deadline, tz)})이에요.`,
+          buttons: c.status === 'SELECTED' ? [draftButton(c)] : [],
+        })
+      }
     }
   }
   return out
@@ -126,9 +123,9 @@ export async function runCampaignReminders(
   tz: string = config.TZ_NAME,
 ): Promise<number> {
   const campaigns = await query<ReminderInput>(
-    `select id, status, title, review_deadline, selected_at, received_at, keywords, detail
+    `select id, status, title, apply_deadline, selected_at, review_deadline
      from campaigns where status = any($1::text[]) order by id`,
-    [REVIEW_PENDING_STATUSES],
+    [REMINDER_STATUSES],
   )
   let sentCount = 0
   for (const c of campaigns) {

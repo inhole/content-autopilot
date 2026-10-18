@@ -1,117 +1,95 @@
 import { describe, expect, it } from 'vitest'
-import {
-  calendarDaysBetween,
-  dueReminders,
-  type ReminderInput,
-} from '../src/campaigns/reminders.ts'
+import { dueReminders, type ReminderInput } from '../src/campaigns/reminders.ts'
 
 const TZ = 'Asia/Seoul'
-const at = (kstDate: string, kstTime = '12:00') => new Date(`${kstDate}T${kstTime}:00+09:00`)
 
-function camp(over: Partial<ReminderInput> = {}): ReminderInput {
+function c(over: Partial<ReminderInput> = {}): ReminderInput {
   return {
     id: 7,
-    status: 'RECEIVED',
+    status: 'SELECTED',
     title: '무선 이어폰',
-    review_deadline: at('2026-10-20', '23:59'),
-    selected_at: at('2026-10-01'),
-    received_at: at('2026-10-05'),
+    apply_deadline: new Date('2026-10-10T14:59:00Z'),
+    selected_at: new Date('2026-10-20T00:00:00Z'),
+    review_deadline: null,
     ...over,
   }
 }
-const kinds = (c: ReminderInput, sent: string[], now: Date) =>
-  dueReminders(c, new Set(sent), now, TZ).map((r) => r.kind)
+const kinds = (input: ReminderInput, sent: string[], now: string) =>
+  dueReminders(input, new Set(sent), new Date(now), TZ).map((r) => r.kind)
 
-describe('calendarDaysBetween', () => {
-  it('counts KST calendar days, not 24h spans', () => {
-    expect(calendarDaysBetween(at('2026-10-19', '23:59'), at('2026-10-20', '00:01'), TZ)).toBe(1)
-    expect(calendarDaysBetween(at('2026-10-20', '00:00'), at('2026-10-20', '23:59'), TZ)).toBe(0)
+describe('result-check', () => {
+  const applied = c({ status: 'APPLIED', selected_at: null })
+  it('waits a day after the apply deadline', () => {
+    expect(kinds(applied, [], '2026-10-11T14:58:00Z')).toEqual([])
+    expect(kinds(applied, [], '2026-10-11T14:59:00Z')).toEqual(['result-check'])
+  })
+  it('has sel/unsel buttons with revision 0 and goes out once', () => {
+    const [r] = dueReminders(applied, new Set(), new Date('2026-10-15T00:00:00Z'), TZ)
+    expect(r?.buttons.map((b) => ('callback' in b ? b.callback.action : 'url'))).toEqual([
+      'sel',
+      'unsel',
+    ])
+    expect(kinds(applied, ['result-check'], '2026-10-15T00:00:00Z')).toEqual([])
+  })
+  it('needs an apply deadline', () => {
+    expect(kinds({ ...applied, apply_deadline: null }, [], '2026-12-01T00:00:00Z')).toEqual([])
   })
 })
 
-describe('dueReminders: review deadline', () => {
-  it('sends the most specific kind for the day', () => {
-    expect(kinds(camp(), [], at('2026-10-17'))).toEqual(['review-d3'])
-    expect(kinds(camp(), [], at('2026-10-18'))).toEqual(['review-d3'])
-    expect(kinds(camp(), [], at('2026-10-19'))).toEqual(['review-d1'])
-    expect(kinds(camp(), [], at('2026-10-20'))).toEqual(['review-d0'])
+describe('due-missing', () => {
+  it('asks for /due one day after selection while no deadline is known', () => {
+    expect(kinds(c(), [], '2026-10-20T23:59:00Z')).toEqual([])
+    const [r] = dueReminders(c(), new Set(), new Date('2026-10-21T00:00:00Z'), TZ)
+    expect(r?.kind).toBe('due-missing')
+    expect(r?.text).toContain('/due 7')
   })
-
-  it('sends nothing too early or after the day', () => {
-    expect(kinds(camp(), [], at('2026-10-16'))).toEqual([])
-    expect(kinds(camp(), [], at('2026-10-21'))).toEqual([])
-  })
-
-  it('skips d3 when already at d1, and never goes back to an older kind', () => {
-    expect(kinds(camp(), [], at('2026-10-19'))).toEqual(['review-d1'])
-    expect(kinds(camp(), ['review-d1'], at('2026-10-19'))).toEqual([])
-    expect(kinds(camp(), ['review-d0'], at('2026-10-20'))).toEqual([])
-    expect(kinds(camp(), ['review-d3'], at('2026-10-19'))).toEqual(['review-d1'])
-  })
-
-  it('handles the KST midnight edge', () => {
-    expect(kinds(camp(), [], at('2026-10-19', '23:59'))).toEqual(['review-d1'])
-    expect(kinds(camp(), [], at('2026-10-20', '00:00'))).toEqual(['review-d0'])
-    // 15:00Z is exactly 00:00 KST of the next day.
-    expect(kinds(camp(), [], new Date('2026-10-19T15:00:00Z'))).toEqual(['review-d0'])
-    expect(kinds(camp(), [], new Date('2026-10-19T14:59:00Z'))).toEqual(['review-d1'])
-  })
-
-  it('only applies to statuses that still owe the review', () => {
-    for (const status of ['POSTED', 'APPLIED', 'NOT_SELECTED', 'EXPIRED'] as const) {
-      expect(kinds(camp({ status }), [], at('2026-10-20'))).toEqual([])
-    }
-    for (const status of ['DRAFT_REVIEW', 'DRAFT_SAVED', 'DRAFT_FAILED'] as const) {
-      expect(kinds(camp({ status }), [], at('2026-10-20'))).toEqual(['review-d0'])
-    }
-  })
-
-  it('does nothing without a deadline', () => {
-    expect(kinds(camp({ review_deadline: null }), [], at('2026-10-20'))).toEqual([])
+  it('stops once the deadline is set or it was sent', () => {
+    expect(kinds(c(), ['due-missing'], '2026-10-25T00:00:00Z')).toEqual([])
+    expect(
+      kinds(c({ review_deadline: new Date('2026-12-30T14:59:00Z') }), [], '2026-10-25T00:00:00Z'),
+    ).toEqual([])
   })
 })
 
-describe('dueReminders: selected and received-check', () => {
-  const selected = (over: Partial<ReminderInput> = {}) =>
-    camp({ status: 'SELECTED', received_at: null, selected_at: at('2026-10-10'), ...over })
+describe('review deadline reminders', () => {
+  // Deadline 10/30 23:59 KST.
+  const input = c({ review_deadline: new Date('2026-10-30T14:59:00Z'), selected_at: null })
+  const at = (iso: string, sent: string[] = [], over: Partial<ReminderInput> = {}) =>
+    kinds({ ...input, ...over }, sent, iso)
 
-  it('congratulates once right after selection with deadline, keywords and guide', () => {
-    const c = selected({
-      keywords: ['이어폰', '가성비'],
-      detail: { guide: '사진 5장 이상' } as ReminderInput['detail'],
-    })
-    const [r] = dueReminders(c, new Set(), at('2026-10-10'), TZ)
-    expect(r?.kind).toBe('selected')
-    expect(r?.text).toContain('선정')
-    expect(r?.text).toContain('이어폰, 가성비')
-    expect(r?.text).toContain('사진 5장 이상')
-    expect(r?.text).toContain('10월 20일')
-    expect(r?.buttons.map((b) => b.callback)).toEqual([
-      { ns: 'blog', action: 'draft', campaignId: 7, revision: 0 },
+  it('picks the kind by KST calendar day, across midnight', () => {
+    expect(at('2026-10-26T14:59:00Z')).toEqual([]) // 10/26 23:59 KST: 4 days left
+    expect(at('2026-10-26T15:00:00Z')).toEqual(['review-d3']) // 10/27 00:00 KST
+    expect(at('2026-10-27T15:00:00Z')).toEqual(['review-d3']) // 10/28 00:00 KST: 2 days
+    expect(at('2026-10-28T14:59:00Z')).toEqual(['review-d3']) // 10/28 23:59 KST
+    expect(at('2026-10-28T15:00:00Z')).toEqual(['review-d1']) // 10/29 00:00 KST
+    expect(at('2026-10-29T15:00:00Z')).toEqual(['review-d0']) // 10/30 00:00 KST
+  })
+  it('only sends the most specific kind not yet sent', () => {
+    expect(at('2026-10-29T15:00:00Z', ['review-d3'])).toEqual(['review-d0'])
+    expect(at('2026-10-29T15:00:00Z', ['review-d0'])).toEqual([])
+    // Selected a day before the deadline: no stale "3 days left" after d1 went out.
+    expect(at('2026-10-27T15:00:00Z', ['review-d1'])).toEqual([])
+    expect(at('2026-10-28T15:00:00Z', ['review-d0'])).toEqual([])
+  })
+  it('fires d0 for an overdue deadline too', () => {
+    expect(at('2026-11-02T00:00:00Z')).toEqual(['review-d0'])
+  })
+  it('adds the draft button only while SELECTED', () => {
+    const now = new Date('2026-10-29T15:00:00Z')
+    const sel = dueReminders(input, new Set(), now, TZ)[0]
+    expect(sel?.buttons).toEqual([
+      {
+        text: '📝 리뷰 초안 쓰기',
+        callback: { ns: 'rev', action: 'draft', campaignId: 7, revision: 0 },
+      },
     ])
-    expect(kinds(c, ['selected'], at('2026-10-10'))).toEqual([])
+    const draft = dueReminders({ ...input, status: 'DRAFT_REVIEW' }, new Set(), now, TZ)[0]
+    expect(draft?.kind).toBe('review-d0')
+    expect(draft?.buttons).toEqual([])
   })
-
-  it('asks whether the product arrived after 3 days, with received and draft buttons', () => {
-    const c = selected()
-    expect(kinds(c, ['selected'], at('2026-10-13', '11:59'))).toEqual([])
-    const [r] = dueReminders(c, new Set(['selected']), at('2026-10-13', '12:00'), TZ)
-    expect(r?.kind).toBe('received-check')
-    expect(r?.text).toContain('받으셨나요')
-    expect(r?.buttons.map((b) => `${b.callback.ns}:${b.callback.action}`)).toEqual([
-      'blog:received',
-      'blog:draft',
-    ])
-  })
-
-  it('does not ask once the product is received or the check was sent', () => {
-    const received = selected({ received_at: at('2026-10-11') })
-    expect(kinds(received, ['selected'], at('2026-10-14'))).toEqual([])
-    expect(kinds(selected(), ['selected', 'received-check'], at('2026-10-14'))).toEqual([])
-  })
-
-  it('can send selected and a deadline reminder together', () => {
-    const c = selected({ review_deadline: at('2026-10-11', '23:00') })
-    expect(kinds(c, [], at('2026-10-10'))).toEqual(['selected', 'review-d1'])
+  it('ignores other statuses', () => {
+    expect(at('2026-10-29T15:00:00Z', [], { status: 'POSTED' })).toEqual([])
+    expect(at('2026-10-29T15:00:00Z', [], { status: 'APPLIED' })).not.toContain('review-d0')
   })
 })

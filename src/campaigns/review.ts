@@ -1,6 +1,10 @@
 import { query } from '../db/pool.ts'
-import { loadCampaignProfile } from './profile.ts'
-import type { Campaign, CampaignRejectReason } from './types.ts'
+import {
+  ACTIVE_CAMPAIGN_STATUSES,
+  type Campaign,
+  type CampaignRejectReason,
+  type CampaignStatus,
+} from './types.ts'
 
 /**
  * State transitions of the Telegram card (docs/plans/campaign-autopilot.md). Every one is a
@@ -11,7 +15,7 @@ import type { Campaign, CampaignRejectReason } from './types.ts'
 
 const CURRENT_CARD = "status = 'PENDING_REVIEW' and revision = $2 and review_revision = $2"
 
-/** Registers a freshly sent card, only if the apply message is still the revision it shows. */
+/** Registers a freshly sent card, only if the revision it shows is still current. */
 export async function markCardSent(
   id: number,
   chatId: number,
@@ -28,20 +32,10 @@ export async function markCardSent(
   return rows.length > 0
 }
 
-/** The owner applied on revu by hand. */
-export async function markAppliedManually(id: number, revision: number): Promise<boolean> {
+/** The owner applied in the KakaoTalk app by hand. */
+export async function markApplied(id: number, revision: number): Promise<boolean> {
   const rows = await query(
     `update campaigns set status = 'APPLIED', applied_at = now(), updated_at = now()
-     where id = $1 and ${CURRENT_CARD} returning id`,
-    [id, revision],
-  )
-  return rows.length > 0
-}
-
-/** The owner approved an automatic application; the local worker (Aside) submits it. */
-export async function approveApply(id: number, revision: number): Promise<boolean> {
-  const rows = await query(
-    `update campaigns set status = 'APPROVED', attempts = 0, last_error = null, updated_at = now()
      where id = $1 and ${CURRENT_CARD} returning id`,
     [id, revision],
   )
@@ -61,46 +55,24 @@ export async function rejectCampaign(
   return rows.length > 0
 }
 
-export type ReplaceApplyMessageResult =
-  | { ok: true; revision: number }
-  | { ok: false; message: string }
-
-/**
- * Replaces the apply message verbatim (a `수정:` reply). Bound to the card the reply was sent to;
- * bumps revision so the old card's buttons stop working until the new card is sent.
- */
-export async function replaceApplyMessage(
-  id: number,
-  reviewMessageId: number,
-  text: string,
-  maxChars?: number,
-): Promise<ReplaceApplyMessageResult> {
-  const next = text.trim()
-  if (!next) {
-    return { ok: false, message: '신청 메시지가 비어 있어요. 수정: 뒤에 내용을 적어주세요.' }
-  }
-  const max = maxChars ?? (await loadCampaignProfile()).applyMessage.maxChars
-  const length = [...next].length
-  if (length > max) {
-    return { ok: false, message: `신청 메시지가 ${length}자예요. ${max}자 이하로 줄여주세요.` }
-  }
-  const rows = await query<{ revision: number }>(
-    `update campaigns set apply_message = $3, revision = revision + 1, updated_at = now()
-     where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $2
-     returning revision`,
-    [id, reviewMessageId, next],
+/** Records the owner-reported result of an application. Gated by status alone. */
+export async function markResult(id: number, selected: boolean): Promise<boolean> {
+  const rows = await query(
+    `update campaigns set status = $2,
+       selected_at = case when $2 = 'SELECTED' then now() else selected_at end,
+       result_at = now(), updated_at = now()
+     where id = $1 and status = 'APPLIED' returning id`,
+    [id, selected ? 'SELECTED' : 'NOT_SELECTED'],
   )
-  const row = rows[0]
-  if (!row) return { ok: false, message: '이미 처리됐거나 최신 카드가 아니에요.' }
-  return { ok: true, revision: row.revision }
+  return rows.length > 0
 }
 
-/** Retry after a failed application. Not bound to a revision: the owner did not edit anything. */
-export async function retryApply(id: number): Promise<boolean> {
+/** Sets the review deadline given by the owner with /due. */
+export async function setReviewDeadline(id: number, deadline: Date): Promise<boolean> {
   const rows = await query(
-    `update campaigns set status = 'APPROVED', attempts = 0, last_error = null, updated_at = now()
-     where id = $1 and status = 'APPLY_FAILED' returning id`,
-    [id],
+    `update campaigns set review_deadline = $2, updated_at = now()
+     where id = $1 and status in ('APPLIED', 'SELECTED', 'DRAFT_REVIEW') returning id`,
+    [id, deadline],
   )
   return rows.length > 0
 }
@@ -111,28 +83,25 @@ export type ExpiredCard = {
   review_message_id: number | null
 }
 
-/** Cards whose application window closed. The caller strips their keyboards. */
-export async function expirePastDeadline(now: Date): Promise<ExpiredCard[]> {
+/** Campaigns whose application window closed. The caller strips their keyboards. */
+export async function expireCampaigns(now: Date): Promise<ExpiredCard[]> {
   return query<ExpiredCard>(
     `update campaigns set status = 'EXPIRED', updated_at = now()
-     where status in ('PENDING_REVIEW', 'SHORTLISTED') and apply_deadline < $1
+     where status in ('COLLECTED', 'SHORTLISTED', 'PENDING_REVIEW') and apply_deadline < $1
      returning id, review_chat_id, review_message_id`,
     [now],
   )
 }
 
-/** Campaigns still in progress (for /camps), ordered by the deadline that matters next. */
+/** Campaigns still in progress, ordered by the date that matters next (nulls last). */
 export async function loadActiveCampaigns(): Promise<Campaign[]> {
   return query<Campaign>(
     `select * from campaigns
-     where status in ('PENDING_REVIEW', 'APPROVED', 'APPLYING', 'APPLIED', 'APPLY_FAILED',
-       'SELECTED', 'RECEIVED', 'DRAFT_REVIEW', 'DRAFT_APPROVED', 'DRAFT_SAVING', 'DRAFT_SAVED',
-       'DRAFT_FAILED')
-     order by coalesce(
-       case
-         when status in ('PENDING_REVIEW', 'APPROVED', 'APPLYING', 'APPLY_FAILED') then apply_deadline
-         when status = 'APPLIED' then announce_at
+     where status = any($1::text[])
+     order by case
+         when status in ('PENDING_REVIEW', 'APPLIED') then apply_deadline
          else review_deadline
-       end, 'infinity'::timestamptz), id`,
+       end asc nulls last, id`,
+    [[...ACTIVE_CAMPAIGN_STATUSES] satisfies CampaignStatus[]],
   )
 }
