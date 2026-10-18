@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Content Autopilot is a personal internal tool, not a SaaS. It collects AI and developer news from RSS, has an LLM pick topics and write Korean Threads posts, sends each draft to a Telegram bot for approval, and publishes approved posts at fixed time slots. The MVP covers **Threads only** and does **not use n8n**: all scheduling and retries live in this codebase on pg-boss.
+Content Autopilot is a personal internal tool, not a SaaS. It collects AI and developer news from RSS, has an LLM pick topics and write Korean Threads posts, sends each draft to a Telegram bot for approval, and publishes approved posts at fixed time slots. The Threads pipeline covers **Threads only**. A second pipeline handles **review campaigns (체험단)** on revu.net: it reads campaign links from KakaoTalk rooms, ranks them, sends cards to Telegram, applies after approval, tracks selection and deadlines, and saves Naver blog review drafts (temp save only, never published). Neither pipeline **uses n8n**: all scheduling and retries live in this codebase on pg-boss. The campaign plan and its status are in `docs/plans/campaign-autopilot.md`.
 
 Human-facing docs (Korean) live in `docs/`: `setup.md` (external services and tokens), `architecture.md`, `operations.md` (CLI, troubleshooting, deployment), `decisions.md` (why Threads-only and no n8n, plus the roadmap) and `conventions.md`. Update them when behavior they describe changes.
 
@@ -29,6 +29,10 @@ Useful CLI commands:
 - `add-topic "<title>" [url] [note]`: create a draft from a manual topic (same as Telegram `/add`)
 - `show <postId>`, `approve <postId>`, `publish-now <postId>`
 - `threads:check`: verify the Threads token
+
+Campaign CLI: `campaign:collect | add <url> | fetch <id> | rank | show <id> | card <id> | apply <id> | selection | remind`, `blog:draft <id> [feedback]`, `blog:save <id>`, and read-only spike helpers `kakao:read <room>` / `aside:read <url>`.
+
+`WORKER_ROLE=cloud|local` (default `cloud`) picks what `npm start` runs: `cloud` is the Railway worker (migrate, Threads pipeline, Telegram polling, cloud campaign queues); `local` is the Windows PC with KakaoTalk PC and Aside (no migrate, no polling, local queues only).
 
 Config is loaded from `.env` (see `.env.example`) and validated in `src/config.ts`. An empty `KEY=` line counts as unset.
 
@@ -63,6 +67,29 @@ Key design points that span several files:
 - **Telegram review.** Buttons and replies act only on the post's current `review_message_id` while it is `PENDING_REVIEW` and `review_revision = revision`. Every text change bumps `revision`, and approval passes the revision the reviewer saw to `approvePost`. `sendForReview` registers a message only if the revision it displays is still current. Sending a new review message strips the previous message's keyboard. Replying to a review message with `수정: <text>` (or `수정1:`) replaces the draft verbatim; for a chain, `수정2:`/`수정3:` replace a follow-up and `삭제2`/`삭제3` delete one (renumbered), and the single message shows [1/3] [2/3] [3/3] with char counts. Any other reply is treated as feedback and triggers regeneration. The bot ignores every chat except `TELEGRAM_CHAT_ID`; `/start` prints the chat id. `/status` shows pipeline state (`src/pipeline/status.ts`). `/add <url> [note]` creates a manual topic whose `topics.note` (the owner's opinion) becomes the post's angle, but never a source of facts. Commands must be registered before the `message:text` handler, which ends the middleware chain for non-reply text. **Threads reply notifications:** `pollReplies` stores new replies in `threads_replies` (reply id is the PK, so only unseen ones are notified) and sends each to Telegram, saving `telegram_message_id`. A Telegram reply to such a message is handled by `answerReply` BEFORE the review-reply logic: it claims `answer_state` null→ANSWERING atomically (one answer per reply) and posts a `reply_to_id` text post through `driveContainer`, saving `answer_container_id` first. On failure the container is re-checked: PUBLISHED means answered (lost response), a known non-publish releases the claim, an unknown outcome keeps it until it goes stale (10 min) and the next attempt reconciles. Notify claims (`notify_claimed_at`) expire the same way; `notified_at` is set only after the message id is saved. Replies are read newest first (first page only). Needs the `threads_read_replies` / `threads_manage_replies` scopes. Without `TELEGRAM_BOT_TOKEN`, review falls back to console output plus the CLI.
 - **After approval**, the confirmation message has `unsched:<id>:<epoch>` / `pubnow:<id>:<epoch>` buttons. They are bound to that exact `scheduled_at`. Un-scheduling bumps `revision` and re-sends review. Publish-now only moves `scheduled_at` to now and still goes through the sweep and claim.
 - **Final-failure alerts.** `alertOnFinalFailure` in `jobs.ts` notifies Telegram when the daily, generate or review job throws on its last attempt. The retry-limit constants there are shared with `createQueue`.
+
+Campaign pipeline (`src/campaigns/`, `src/kakao/`, `src/aside/`, migration `014`), split across two workers that share one Postgres and pg-boss:
+
+```
+local  kakao-collect (KAKAO_COLLECT_CRON) → read rooms → revu links → campaigns DISCOVERED → campaign-fetch
+local  campaign-fetch {id}   → Aside reads the revu page → LLM detail → DETAILED / UNREADABLE
+cloud  campaign-rank         → rule filter + one LLM call → top CAMPAIGN_DAILY_MAX SHORTLISTED → PENDING_REVIEW
+cloud  campaign-card {id}    → Telegram card: applied (manual) / apply (auto) / pass
+cloud  campaign-rewrite {id} → regenerate the apply message from feedback
+local  campaign-apply {id}   → APPROVED → APPLYING → APPLIED (retryLimit 0; the sweep retries)
+local  campaign-sweep (*/5)  → heartbeat, due applies, due blog saves, re-fetch DISCOVERED stuck 30+ min
+local  campaign-selection (10:00, 19:00) → revu "accepted" list → SELECTED / NOT_SELECTED
+cloud  campaign-maintenance (hourly) → expire PENDING_REVIEW past apply deadline, reminders (09-21h only)
+cloud  blog-draft {id}       → draft from memo + photos (regen_seq bumped at request time) → DRAFT_REVIEW card
+local  blog-save {id}        → DRAFT_APPROVED → DRAFT_SAVING → DRAFT_SAVED (Naver temp draft)
+```
+
+- **The `campaigns` row is the source of truth**, same model as `posts`. `applyCampaign` and `saveBlogDraft` claim with `update … status='APPLYING'|'DRAFT_SAVING', attempts+1, claim_seq+1`; later writes are conditioned on status and `claim_seq`, ownership is re-checked right before the browser side effect, 3 attempts then `APPLY_FAILED`/`DRAFT_FAILED` (the Telegram retry button resets `attempts`), stale claims (>10 min) are resumed. Apply reads revu's `request`/`accepted` lists (`/mypage/campaigns?status=…`) both before submitting (a lost response may already have applied) and after (the script's own answer is never trusted); only the lists move the row to `APPLIED`. A blog save with an unknown outcome is retried and may leave a duplicate temp draft, which is harmless.
+- **Dry-run:** with `ASIDE_DRY_RUN=true`, side-effect scripts/tasks are skipped (the agent returns null) and reads still run. Apply then ends `APPLY_FAILED` with last_error `드라이런: 제출하지 않음`, and a blog save ends `DRAFT_FAILED` with `드라이런: 저장하지 않음`, instead of looping back to the approved state every sweep.
+- **Aside is used through `BrowserAgent`** (`src/aside/client.ts`), like `ThreadsApi`: `readPage`, `runScript` (`aside repl`, deterministic; the script's return value is printed as a `__ASIDE_RESULT__` JSON line) and `runTask` (`aside "<task>"` agent mode, used only for the Naver editor). Aside cannot read the KakaoTalk desktop app, so `src/kakao/read-room.ps1` finds the room window, copies the transcript with Ctrl+A/Ctrl+C and prints the clipboard (exit 2 locked, 3 no KakaoTalk window, 4 room not found, 5 nothing copied, 1 other). It never types into the chat. `kakao_messages.hash` keeps already-seen messages so only new ones are processed.
+- **Telegram:** callbacks are `camp:<action>:<id>:<revision>` and `blog:…`; the revision binds a button to the card it was sent with (stale presses are refused). Replies to a card: `수정: <text>` replaces the apply message/draft body verbatim, `제목: <text>` replaces the draft title, anything else is feedback and regenerates. Photos plus a memo replied to the intake message feed the blog draft; the local worker downloads photos from Telegram to `CAMPAIGN_PHOTO_DIR` because Aside uploads from disk. Commands: `/camp <url>`, `/camps`, `/posted <id> <url>`; `/status` adds campaign counts and the local worker's last heartbeat (`worker_heartbeats`).
+- **Disclosure is code, not LLM:** the profile's `disclosure` line (`config/campaign-profile.json`) is prepended to every blog draft. Drafts are grounded in the owner's memo and the revu guide only; saves are temp drafts, the owner publishes by hand and reports it with `/posted`.
+- **Cloud/local split:** both roles create all campaign queues and schedules idempotently, but only register `work()` for their own queues, so jobs for a switched-off PC just wait. Telegram polling stays in cloud (two pollers give 409 Conflict); the local worker only calls `sendMessage`. Only cloud runs migrations, so deploy cloud first. Campaign handlers are registered through the `extend` hook of `createReviewer` (`src/review/telegram.ts`), which runs before the review `message:text` handler; each campaign/blog text handler calls `next()` for replies that are not theirs.
 
 ## Environment notes
 

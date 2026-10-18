@@ -2,6 +2,21 @@
 
 2026-10-18 인터뷰 결과를 바탕으로 쓴 계획이다. 구현하면서 바뀌는 결정은 이 문서와 `decisions.md`에 같이 적는다.
 
+## 구현 현황
+
+Phase 1~4는 `feat/campaign-autopilot` 브랜치에 구현했다(마이그레이션 `014`, `src/campaigns/`, `src/kakao/`, `src/aside/`, `WORKER_ROLE` 분리). 동작 설명은 [architecture.md](../architecture.md), 운영은 [operations.md](../operations.md), 결정은 [decisions.md](../decisions.md) 9~13이다.
+
+**아직 실제로 확인하지 못한 것 (Phase 0 스파이크)**
+- Aside REPL 페이지 API: `openTab`이 돌려주는 객체와 출력 형식. 코드는 Playwright 비슷한 페이지(`evaluate`, `title`, `url`, `fill`, `click`, `setInputFiles`, `screenshot`)와 `__ASIDE_RESULT__` JSON 줄을 가정한다.
+- 레뷰 상세 페이지 DOM과 신청 폼 필드. `revu-scripts.ts`의 신청 스크립트가 가정한 것이다.
+- 네이버 블로그 에디터 자동화. 에디터가 복잡해서 고정 스크립트 대신 에이전트 모드(`aside "<작업>"`)에 맡기며, 임시저장만 하고 `RESULT: SAVED` 줄로 결과를 받는다.
+- 카카오톡 PC 복사 형식과 `read-room.ps1`의 창 찾기·클릭 위치.
+- 무인 실행 시 Aside의 승인 대기(게시·제출) 동작.
+
+**웹 번들에서 확인한 것 (2026-10):** 레뷰 캠페인 상세 `https://www.revu.net/campaign/<id>`, 내 캠페인 `https://www.revu.net/mypage/campaigns?status=request|accepted|posted|complete` (신청함 / 선정됨 / 후기 등록 / 완료). 신청 여부와 선정 여부는 이 목록의 캠페인 id로 대조한다.
+
+운영은 `ASIDE_DRY_RUN=true`로 시작한다. 스파이크 체크리스트는 operations.md에 있고, 결과는 9절에 적는다.
+
 ## 1. 인터뷰로 정한 것
 
 | 항목 | 결정 |
@@ -16,7 +31,7 @@
 | 내 프로필 | 레포의 설정 파일(관심 카테고리, 제외 키워드, 블로그 소개, 신청 문구 톤) |
 | 실행 구조 | 클라우드(Railway)와 로컬(Windows PC)로 역할을 나눈다 |
 | 코드 위치 | 이 레포에 파이프라인을 하나 더 추가한다 (별도 패키지로 분리하지 않음) |
-| MVP | 수집 → 선별 → Telegram 알림 + 신청 문구 초안. 제출은 수동으로 한다 |
+| MVP | 수집 → 선별 → Telegram 알림 + 신청 문구 초안. 제출은 수동으로 한다 (구현에서는 Phase 2~4까지 함께 들어갔다) |
 
 ## 2. 전제 확인 결과
 
@@ -34,12 +49,14 @@
 ```
 [로컬 PC · WORKER_ROLE=local]                     [Railway · WORKER_ROLE=cloud (지금 워커)]
  kakao-collect (cron 09·13·20)                      campaign-rank  → LLM 선별 (chatJson)
-   카톡방 읽기 → 레뷰 링크 추출 → campaigns 행          campaign-review → Telegram 공고 카드
+   카톡방 읽기 → 레뷰 링크 추출 → campaigns 행          campaign-card → Telegram 공고 카드
  campaign-fetch {campaignId}                          버튼: 신청 승인 / 패스 / 신청함(수동)
-   Aside로 상세 페이지 읽기 → 조건 파싱               campaign-remind → 마감 리마인더
+   Aside로 상세 페이지 읽기 → 조건 파싱               campaign-maintenance → 만료 + 마감 리마인더 (매시, 09~21시에만 전송)
  campaign-apply {campaignId}        (Phase 2)        Telegram polling은 여기서만
- campaign-check-selection (daily)   (Phase 3)
- blog-draft-save {campaignId}       (Phase 4)
+ campaign-selection (10:00, 19:00)    (Phase 3)
+ blog-save {campaignId}             (Phase 4)
+ campaign-sweep (*/5)  heartbeat, 신청·저장 대기분, 멈춘 DISCOVERED 재시도
+ [클라우드] blog-draft, campaign-rewrite  후기 초안, 신청 문구 재작성
                  \                                   /
                   └──── 같은 Supabase Postgres + pg-boss 큐 ────┘
 ```
@@ -56,9 +73,9 @@ DISCOVERED (카톡에서 링크 발견)
   → DETAILED (Aside로 상세 파싱) / UNREADABLE
   → SHORTLISTED / SKIPPED (LLM 선별 + 규칙 필터: 배송형만, 제외 키워드, 신청 마감 지남)
   → PENDING_REVIEW (Telegram 카드 발송)
-  → APPROVED → APPLYING → APPLIED      (MVP는 "신청함" 버튼으로 바로 APPLIED)
+  → APPROVED → APPLYING → APPLIED / APPLY_FAILED   ("신청함(직접)" 버튼은 바로 APPLIED)
   → SELECTED / NOT_SELECTED            (Phase 3)
-  → DRAFTING → DRAFT_REVIEW → DRAFT_SAVED → POSTED   (Phase 4)
+  → RECEIVED(선택) → DRAFT_REVIEW → DRAFT_APPROVED → DRAFT_SAVING → DRAFT_SAVED → POSTED   (Phase 4)
   거절·만료: REJECTED / EXPIRED
 ```
 
@@ -109,6 +126,8 @@ config/campaign-profile.json
 | `ASIDE_ACCOUNT` | (없음) | `--account`로 넘길 계정 |
 | `ASIDE_DRY_RUN` | `false` | 제출·저장 없이 기록만 |
 | `CAMPAIGN_DAILY_MAX` | `5` | 하루 Telegram으로 보낼 공고 최대 개수 |
+| `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 프로필 파일 경로 |
+| `CAMPAIGN_PHOTO_DIR` | `%LOCALAPPDATA%content-autopilotphotos` | 후기 사진을 내려받는 폴더 |
 
 ### 프로필 파일 `config/campaign-profile.json`
 
@@ -119,7 +138,8 @@ config/campaign-profile.json
   "interests": ["IT 액세서리", "생활용품", "식품"],
   "excludeKeywords": ["다이어트 보조제", "주류"],
   "minRewardWon": 20000,
-  "applyMessage": { "maxChars": 300, "points": ["사진 퀄리티", "실사용 후기"] }
+  "applyMessage": { "maxChars": 300, "points": ["사진 퀄리티", "실사용 후기"] },
+  "disclosure": "본 포스팅은 레뷰를 통해 제품을 무상으로 제공받아 작성한 솔직한 후기입니다."
 }
 ```
 
@@ -159,8 +179,8 @@ config/campaign-profile.json
 4. `src/aside/client.ts`: `readPage(url): Promise<string>`부터 만든다. `execFile`로 CLI를 호출하고 타임아웃(90초)과 stderr 로그를 남긴다.
 5. `src/campaigns/revu.ts`: 상세 텍스트를 `chatJson` + zod로 구조화한다(유형, 제공 내역, 금액, 모집 인원, 신청 마감, 발표일, 리뷰 마감, 필수 키워드). 읽지 못하면 `UNREADABLE`로 두고 재시도하지 않는다 (`SkipTopicError`와 같은 원칙). 일시 오류는 재시도한다.
 6. `src/campaigns/rank.ts`: 규칙 필터를 적용하고, 남은 후보를 한 번의 LLM 호출로 평가한다. 상위 `CAMPAIGN_DAILY_MAX`개만 `SHORTLISTED`로 둔다. 같은 호출에서 신청 문구 초안도 만든다.
-7. Telegram 카드: 제목, 제공 내역, 금액, 마감일(D-n), 선별 이유, 신청 문구, 레뷰 링크. 버튼은 `✅ 신청함`(→ APPLIED, 수동 신청 완료 기록), `🙅 패스`(→ REJECTED, 이유 버튼), `✏️ 문구 수정`(답장으로 수정) 세 개다. 카드도 `review_revision`처럼 `revision`으로 오래된 버튼을 막는다.
-8. 큐: 로컬 `kakao-collect`, `campaign-fetch`. 클라우드 `campaign-rank`, `campaign-review`. 마지막 시도 실패는 `alertOnFinalFailure`로 알린다.
+7. Telegram 카드: 제목, 제공 내역, 금액, 마감일(D-n), 선별 이유, 신청 문구, 레뷰 링크. 버튼은 `✅ 신청함 (직접)`(→ APPLIED, 수동 신청 완료 기록), `🚀 신청 승인 (자동)`(Phase 2), `🙅 패스`(→ REJECTED, 이유 버튼)이고, 문구 수정은 카드에 `수정:` 답장으로 한다. 카드도 `review_revision`처럼 `revision`으로 오래된 버튼을 막는다.
+8. 큐: 로컬 `kakao-collect`, `campaign-fetch`. 클라우드 `campaign-rank`, `campaign-card`. 마지막 시도 실패는 `alertOnFinalFailure`로 알린다.
 9. CLI: `campaign:collect`(카톡 읽기 1회), `campaign:add <url>`(링크 직접 추가, Telegram `/camp <url>`도 같은 동작), `campaign:show <id>`.
 10. `/status`에 체험단 단계별 개수를 추가한다.
 
@@ -171,22 +191,22 @@ config/campaign-profile.json
 
 ### Phase 2 · 승인 후 자동 신청
 
-1. 카드에 `🚀 신청 승인` 버튼을 추가한다 → `APPROVED` → 로컬 `campaign-apply` 큐.
+1. 카드의 `🚀 신청 승인 (자동)` 버튼 → `APPROVED` → 로컬 `campaign-apply` 큐.
 2. `campaign-apply`는 `APPLYING`으로 선점(`claim_seq`)한 다음 Aside로 신청 폼을 채우고 제출한다.
    - 결정적인 단계(페이지 열기, 필드 채우기)는 REPL로 하고, 폼이 예상과 다를 때만 에이전트 모드(`aside "<작업>"`)로 넘긴다. 에이전트 모드는 크레딧과 비결정성 비용이 크다.
    - 제출 직전 소유권을 다시 확인한다. 제출 후에는 레뷰 "신청 내역"에서 신청 여부를 확인해야 `APPLIED`로 바꾼다. 응답을 잃어도 다음 시도는 먼저 신청 내역을 보고 판단한다 (Threads `decideAfterFailure`와 같은 원칙).
    - 스크린샷을 남기고 Telegram 결과 메시지에 첨부한다.
-3. 3회 실패하면 `FAILED`로 바꾸고, 수동 신청 링크와 `재시도` 버튼을 보낸다.
+3. 3회 실패하면 `APPLY_FAILED`로 바꾸고, 수동 신청 링크와 `재시도` 버튼을 보낸다.
 4. 처음에는 `ASIDE_DRY_RUN=true`로 일주일 운영하고 로그를 확인한 다음 켠다.
 
 **완료 기준:** 승인한 공고가 레뷰 신청 내역에 한 번만 나타난다. 같은 job을 두 번 돌려도 중복 신청이 없다.
 
 ### Phase 3 · 선정 확인과 일정 관리
 
-1. 로컬 `campaign-check-selection` (매일 1회): Aside로 레뷰 마이페이지를 읽어서 신청한 캠페인의 선정 여부를 반영한다 (`SELECTED` / `NOT_SELECTED`).
+1. 로컬 `campaign-selection` (10:00, 19:00): Aside로 레뷰 마이페이지를 읽어서 신청한 캠페인의 선정 여부를 반영한다 (`SELECTED` / `NOT_SELECTED`).
 2. 선정되면 Telegram으로 알린다. 리뷰 마감일과 필수 키워드, 가이드를 요약해 보낸다.
-3. 클라우드 `campaign-remind` (매일 09시): 리뷰 마감 D-3, D-1, 당일, 그리고 "제품 받았나요?" 확인 질문을 보낸다. 버튼은 `📦 받음`, `📝 초안 쓰기`다.
-4. `/camps` 명령: 진행 중인 체험단과 마감일을 정렬해서 보여준다.
+3. 클라우드 `campaign-maintenance` (매시, 리마인더는 09~21시에만): 리뷰 마감 D-3, D-1, 당일, 그리고 "제품 받았나요?" 확인 질문을 보낸다. 버튼은 `📦 받음`, `📝 초안 쓰기`다.
+4. `/camps` 명령: 진행 중인 체험단과 마감일을 정렬해서 보여준다. 신청 후 발표일이 2일 넘게 지났는데 선정 목록에 없으면 `NOT_SELECTED`로 둔다.
 
 ### Phase 4 · 네이버 블로그 리뷰 초안 → 임시저장
 
@@ -194,8 +214,8 @@ config/campaign-profile.json
    - 클라우드 워커는 Telegram `file_id`만 저장한다. 로컬 워커가 파일을 받아 `%LOCALAPPDATA%\content-autopilot\photos\<campaignId>\`에 저장한다 (Aside가 업로드하려면 로컬 파일이 필요함).
 2. LLM이 레뷰 가이드(필수 키워드, 분량, 사진 수)와 내 메모를 근거로 초안을 쓴다. 메모와 가이드에 없는 사용 경험은 지어내지 않는다 (Threads의 "본문에 있는 사실만" 원칙과 같음).
 3. **광고 표기를 코드로 맨 앞에 넣는다** (공정위 추천·보증 심사지침: 경제적 대가를 받았다는 사실을 첫머리에 표시). LLM이 쓰게 두지 않고, 빠질 수 없게 한다. CTA를 코드로 붙이는 방식과 같다.
-4. Telegram으로 초안을 검수한다(승인 / 수정 답장 / 재생성) → 로컬 `blog-draft-save`가 Aside로 네이버 블로그 에디터를 열고, 본문과 사진을 넣고, **임시저장만** 한다. 발행 버튼은 누르지 않는다.
-5. 내가 발행한 다음 Telegram에 블로그 URL을 보내면 `POSTED`로 바꾼다. 레뷰에 URL을 등록하는 일은 Phase 5 후보로 둔다.
+4. Telegram으로 초안을 검수한다(승인 / 수정 답장 / 재생성) → 로컬 `blog-save`가 Aside로 네이버 블로그 에디터를 열고, 본문과 사진을 넣고, **임시저장만** 한다. 발행 버튼은 누르지 않는다.
+5. 내가 발행한 다음 Telegram에 `/posted <id> <블로그 URL>`을 보내면 `POSTED`로 바꾼다. 레뷰에 URL을 등록하는 일은 Phase 5 후보로 둔다.
 
 **완료 기준:** 네이버 블로그 임시저장함에 초안 1개가 사진과 함께 생기고, 광고 표기가 맨 위에 있다.
 
