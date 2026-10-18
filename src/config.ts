@@ -75,6 +75,10 @@ const schema = z.object({
   CAMPAIGN_PROFILE_PATH: z.string().default('config/campaign-profile.json'),
   // Where the local worker keeps downloaded review photos.
   CAMPAIGN_PHOTO_DIR: z.string().optional(),
+
+  // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
+  PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  DASHBOARD_PASSWORD: z.string().optional(),
 })
 
 export type Config = z.infer<typeof schema>
