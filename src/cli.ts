@@ -10,6 +10,7 @@ import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
 import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts'
+import { ThreadsClient } from './threads/client.ts'
 import {
   authorizeUrl,
   cleanCode,
@@ -17,6 +18,7 @@ import {
   lookupTokenOwner,
   writeEnv,
 } from './threads/oauth.ts'
+import { formatProbe, runProbe } from './threads/probe.ts'
 
 const USAGE = `usage: npm run cli -- <command>
 
@@ -33,6 +35,7 @@ const USAGE = `usage: npm run cli -- <command>
   threads:token <code|url>    exchange the code for a long-lived token and save it to .env
   threads:fill-user-id        look up the owner of THREADS_ACCESS_TOKEN and save THREADS_USER_ID
   threads:check               verify the Threads token (GET /me)
+  threads:probe               read-only check of the API behaviour publishing relies on (.env token)
   threads:refresh             refresh the Threads token if it is close to expiry
   insights                    collect Threads post insights now and print the latest numbers
   report                      print the weekly insights report (same text as Telegram /report)
@@ -181,6 +184,17 @@ try {
     case 'threads:check':
       console.log(await (await getThreadsApi()).me())
       break
+    case 'threads:probe': {
+      // Uses the .env token directly and never the DB: probing with a non-publishing account
+      // (e.g. the owner's personal one) must not seed it into platform_accounts.
+      const api = new ThreadsClient({
+        baseUrl: config.THREADS_API_BASE,
+        userId: config.THREADS_USER_ID ?? 'me',
+        accessToken: requireValue('THREADS_ACCESS_TOKEN'),
+      })
+      console.log(formatProbe(await runProbe(api)))
+      break
+    }
     case 'threads:refresh':
       console.log(await refreshThreadsTokenIfNeeded())
       break
