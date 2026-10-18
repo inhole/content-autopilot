@@ -1,6 +1,6 @@
 # 외부 서비스 준비
 
-워커를 돌리려면 서비스 4개가 필요하다. 체험단은 별도 준비가 필요 없다. Supabase만 있으면 수집과 dry-run 발행은 바로 돌아가고, 나머지는 하나씩 붙이면 된다.
+워커를 돌리려면 서비스 4개가 필요하다. 선물하기 체험단은 별도 준비가 필요 없다. 무신사 체험단만 내 PC에 Aside를 설치하고 무신사에 로그인해 두어야 한다(5-4절). Supabase만 있으면 수집과 dry-run 발행은 바로 돌아가고, 나머지는 하나씩 붙이면 된다.
 
 | 서비스 | 용도 | 없을 때 동작 |
 |---|---|---|
@@ -9,6 +9,7 @@
 | Telegram 봇 | 초안 검수 (승인/재생성/폐기) | 콘솔 출력 + CLI로 검수 |
 | Meta 앱 (Threads API) | 실제 발행 | `THREADS_DRY_RUN=true`로 로그만 남김 |
 | 카카오톡 선물하기 (5절) | 체험단 공개 목록 | 계정·토큰 필요 없음. 읽기만 한다 |
+| 무신사 + Aside (5-4절) | 무신사 프리유저 체험단 목록 | 내 PC의 Aside 브라우저와 무신사 로그인이 필요하다. 없으면 무신사만 수집이 안 된다 |
 
 모든 값은 `.env`에 넣는다. 형식은 `.env.example`을 참고한다. `.env`는 git에 올라가지 않는다.
 
@@ -106,9 +107,9 @@
 
 ---
 
-## 5. 체험단 (카카오톡 선물하기)
+## 5. 체험단 (카카오톡 선물하기, 무신사 프리유저)
 
-선물하기 체험단은 계정이나 토큰이 필요 없다. 공개 목록을 읽기만 한다. 위의 Supabase, OpenRouter, Telegram 설정이 되어 있으면 바로 돈다. 워커 하나가 Threads와 체험단을 같이 처리하고, 별도 PC나 브라우저 자동화는 쓰지 않는다.
+선물하기 체험단은 계정이나 토큰이 필요 없다. 공개 목록을 읽기만 한다. 위의 Supabase, OpenRouter, Telegram 설정이 되어 있으면 바로 돈다. 클라우드 워커 하나가 Threads와 선물하기 체험단을 같이 처리하고, 선물하기에는 별도 PC나 브라우저 자동화를 쓰지 않는다. 무신사는 로그인이 필요해서 내 PC의 Aside와 로컬 워커를 쓴다(5-4절).
 
 신청과 리뷰 작성은 카카오톡 **모바일 앱**에서만 된다. 폰에 카카오톡이 있고 선물하기에서 체험단에 신청할 수 있는 계정이면 된다. Telegram은 그 폰에도 깔려 있어야 카드의 링크를 바로 열 수 있다.
 
@@ -120,7 +121,11 @@
 |---|---|---|
 | `GIFT_COLLECT_CRON` | `0 9,15,21 * * *` | 공개 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `GIFT_TRIAL_PAGE_ID` | `33325` | 선물하기 체험단 탭의 페이지 번호. `gift.kakao.com/page/<번호>`다. 탭이 바뀌면 이 값을 고친다. |
-| `CAMPAIGN_DAILY_MAX` | `5` | 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
+| `CAMPAIGN_DAILY_MAX` | `5` | 출처(선물하기, 무신사)마다 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
+| `WORKER_ROLE` | `cloud` | `cloud` 또는 `local`. 내 PC의 무신사 수집 워커만 `local`이다(5-4절) |
+| `MUSINSA_COLLECT_CRON` | `0 10,16,22 * * *` | 무신사 목록을 읽는 시각 (`TZ_NAME` 기준) |
+| `ASIDE_BIN` | (자동) | Aside CLI 경로. 비우면 `%LOCALAPPDATA%\Aside\CLI\current\aside.exe`가 있을 때 그것, 없으면 PATH의 `aside` |
+| `ASIDE_ACCOUNT` | (없음) | Aside CLI 계정. 계정이 여러 개일 때만 넣는다 |
 | `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 선별 규칙과 리뷰 문체, 광고 표기를 담은 프로필 파일 |
 
 선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
@@ -163,3 +168,16 @@
 1. `npm run cli -- gift:list`로 목록이 읽히는지 본다. DB에는 쓰지 않는다.
 2. `npm run cli -- campaign:collect`로 수집·선별·카드 전송을 한 번 돌린다. `TELEGRAM_BOT_TOKEN`과 `TELEGRAM_CHAT_ID`가 있어야 카드가 간다(없으면 콘솔에 출력만 한다).
 3. 이후는 워커가 `GIFT_COLLECT_CRON`대로 돈다. 쓰는 법은 [operations.md](operations.md#체험단)를 본다.
+
+### 5-4. 무신사 프리유저 (내 PC + Aside)
+
+무신사 목록(`influencer.musinsa.com`)은 내 무신사 로그인이 있어야 읽힌다. 클라우드에서는 읽을 수 없어서, 이미 로그인된 내 Windows PC의 Aside 브라우저로 읽는다([결정 13](decisions.md#13-무신사는-로그인이-필요해-이-pc의-aside로만-읽는다)). 비밀번호나 쿠키를 코드나 `.env`에 넣지 않는다.
+
+1. **Aside CLI 설치**: PowerShell에서 서명된 설치 스크립트(`https://releases.aside.com/install.ps1`)를 실행한다. Authenticode 서명자가 `AT YOUR SIDE INC`인지 확인한다. `%LOCALAPPDATA%\Aside\CLI\current\aside.exe`에 설치되고 사용자 PATH에 추가된다. 새 터미널을 연다.
+2. **Aside 앱 로그인**: Aside 브라우저 앱을 켜 두고 musinsa.com에 로그인한다. CLI는 앱이 떠 있어야 동작한다.
+3. **계정 확인**: `aside account list`로 CLI 계정이 보이는지 본다. 여러 개면 쓸 것을 `ASIDE_ACCOUNT`에 넣는다.
+4. **로컬 `.env`**: 이 PC의 레포 `.env`에 클라우드와 같은 `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`를 넣고 `WORKER_ROLE=local`을 추가한다. Threads, OpenRouter 값은 필요 없다. `MUSINSA_COLLECT_CRON`, `ASIDE_BIN`, `ASIDE_ACCOUNT`는 필요할 때만 넣는다.
+5. **확인**: `npm run cli -- musinsa:list`로 목록이 나오는지 본다(DB에는 쓰지 않는다). 그다음 `npm run cli -- musinsa:collect`로 수집·선별·카드 전송을 한 번 돌린다.
+6. **상시 실행**: `npm start`를 로그온 때 자동으로 켜는 방법은 [operations.md](operations.md#무신사-로컬-워커)를 본다.
+
+무신사 프리유저 **가입**은 별도다. 상세, 신청, 내 신청 내역은 가입한 계정만 쓸 수 있고, 가입하려면 스냅을 한 번 올려야 한다(`MCMP_001_006 작성한 스냅이 있는 회원만 신청할 수 있습니다`). 가입 전에는 카드의 링크를 PC에서 열어 직접 신청하고 `✅ 신청함`을 누른다. 가입 뒤 자동 신청은 후속 단계다([plans/campaign-autopilot.md](plans/campaign-autopilot.md)).
