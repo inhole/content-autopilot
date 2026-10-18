@@ -15,9 +15,25 @@ export function classifyStatus(status: number): 'ok' | 'transient' | 'permanent'
   return 'permanent'
 }
 
+// Bot-check interstitials answer 200 with a "making sure you're not a bot" page instead of the
+// article, and Readability happily extracts that notice as the body (seen with lore.kernel.org).
+// Matched on markup only these pages have (element ids, asset paths, exact titles), never on
+// words an article about them could contain. Cloudflare's /cdn-cgi/challenge-platform/ script
+// also runs on normal pages, so only its challenge options object counts.
+const BOT_CHALLENGE_MARKERS = [
+  /id=["']anubis_challenge["']/i,
+  /\/\.within\.website\/x\/cmd\/anubis\//i,
+  /window\._cf_chl_opt/,
+  /<title>\s*(Just a moment\.\.\.|Attention Required! \| Cloudflare)\s*<\/title>/i,
+]
+
+export function isBotChallenge(html: string): boolean {
+  return BOT_CHALLENGE_MARKERS.some((m) => m.test(html))
+}
+
 /**
  * Fetches a page and extracts its main text. Returns null for permanent outcomes (non-HTML,
- * too short, 4xx other than 408/429) and throws TransientFetchError for retryable ones.
+ * too short, a bot-check page, 4xx other than 408/429) and throws TransientFetchError for retryable ones.
  */
 export async function fetchArticle(url: string): Promise<Article | null> {
   let html: string
@@ -40,6 +56,12 @@ export async function fetchArticle(url: string): Promise<Article | null> {
     if (err instanceof TransientFetchError) throw err
     // fetch rejects on DNS/connection errors and timeouts; body reads can fail too.
     throw new TransientFetchError(`fetch ${url} failed: ${(err as Error).message}`)
+  }
+
+  // A retry meets the same check, so it is unreadable rather than transient.
+  if (isBotChallenge(html)) {
+    console.warn(`[article] ${url}: bot-check page instead of the article`)
+    return null
   }
 
   const { document } = parseHTML(html)

@@ -90,7 +90,7 @@ export function buildStylePrompt(ctx: StyleContext): string {
       (e, i) => `[예시 ${i + 1}${e.edited ? ' · 직접 수정함' : ''}]\n${clip(e.text, EXAMPLE_MAX)}`,
     )
     parts.push(
-      `## 문체 참고\n아래는 승인된 과거 글이에요. 말투만 참고하세요. 첫 줄과 마무리 같은 구성은 작성 규칙을 따르고, 문장이나 사실을 그대로 가져오지 마세요.\n\n${items.join('\n\n')}`,
+      `## 문체 참고\n아래는 승인된 과거 글이에요. 단어 선택과 문장 리듬만 참고하세요. 어미는 작성 규칙의 음슴체를 따르고, 예시의 어미가 규칙과 다르면 어미는 따라 하지 마세요. 첫 줄과 마무리 같은 구성은 작성 규칙을 따르고, 문장이나 사실을 그대로 가져오지 마세요.\n\n${items.join('\n\n')}`,
     )
   }
 
@@ -104,7 +104,7 @@ export function buildStylePrompt(ctx: StyleContext): string {
       .slice(0, LAST_LINE_COUNT)
       .map((l) => `- ${clip(l, LAST_LINE_MAX)}`)
     parts.push(
-      `## 최근 마지막 줄\n아래와 비슷한 질문이나 문장으로 끝내지 마세요. 묻는 대상과 어미도 바꾸세요.\n${lines.join('\n')}`,
+      `## 최근 마지막 줄\n아래와 비슷한 질문이나 문장으로 끝내지 마세요. 음슴체는 유지하고, 묻는 대상과 질문 형식을 바꾸세요.\n${lines.join('\n')}`,
     )
   }
 

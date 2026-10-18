@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { classifyStatus, fetchArticle, TransientFetchError } from '../src/pipeline/article.ts'
+import {
+  classifyStatus,
+  fetchArticle,
+  isBotChallenge,
+  TransientFetchError,
+} from '../src/pipeline/article.ts'
 
 const html = (body: string) =>
   new Response(
@@ -48,10 +53,45 @@ describe('fetchArticle', () => {
     expect(await fetchArticle('https://x.test')).toBeNull()
   })
 
+  it('treats a bot-check page as unreadable instead of extracting its notice', async () => {
+    const notice = `<p>${'You are seeing this because the administrator set up Anubis. '.repeat(20)}</p>`
+    const page = new Response(
+      `<html><head><title>Making sure you&#39;re not a bot!</title></head><body>
+        <script id="anubis_challenge" type="application/json">{}</script>
+        <article>${notice}</article></body></html>`,
+      { status: 200, headers: { 'content-type': 'text/html' } },
+    )
+    vi.stubGlobal('fetch', async () => page)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await fetchArticle('https://lore.kernel.org/x')).toBeNull()
+  })
+
   it('extracts long article text', async () => {
     const para = `<p>${'Readable sentence about AI news. '.repeat(30)}</p>`
     vi.stubGlobal('fetch', async () => html(para))
     const article = await fetchArticle('https://x.test')
     expect(article?.text.length).toBeGreaterThan(200)
+  })
+})
+
+describe('isBotChallenge', () => {
+  it('recognises Anubis and Cloudflare challenge pages', () => {
+    expect(isBotChallenge('<script id="anubis_challenge"></script>')).toBe(true)
+    expect(isBotChallenge('<img src="/.within.website/x/cmd/anubis/static/img/happy.webp">')).toBe(
+      true,
+    )
+    expect(isBotChallenge('<script>window._cf_chl_opt={cvId:"3"}</script>')).toBe(true)
+    expect(isBotChallenge('<title>Just a moment...</title>')).toBe(true)
+  })
+
+  it('does not flag an article about them or a normal Cloudflare page', () => {
+    expect(
+      isBotChallenge(
+        '<title>Anubis blocks AI scrapers with proof-of-work</title><p>Anubis uses a proof-of-work challenge.</p>',
+      ),
+    ).toBe(false)
+    expect(
+      isBotChallenge('<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'),
+    ).toBe(false)
   })
 })
