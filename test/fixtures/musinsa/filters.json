@@ -1,0 +1,30 @@
+{
+  "data": {
+    "categories": [
+      { "id": "ALL", "code": "", "description": "전체", "hasSample": true },
+      { "id": "BEAUTY", "code": "104", "description": "뷰티", "hasSample": true },
+      { "id": "SHOE", "code": "103", "description": "신발", "hasSample": false },
+      { "id": "TOP", "code": "001", "description": "상의", "hasSample": false },
+      { "id": "OUTER", "code": "002", "description": "아우터", "hasSample": false },
+      { "id": "PANTS", "code": "003", "description": "바지", "hasSample": false },
+      {
+        "id": "DRESS_AND_SKIRT",
+        "code": "100",
+        "description": "원피스/스커트",
+        "hasSample": false
+      },
+      { "id": "BAG", "code": "004", "description": "가방", "hasSample": false },
+      { "id": "FASHION_ACCESSORY", "code": "101", "description": "패션 소품", "hasSample": false },
+      { "id": "UNDERWEAR", "code": "026", "description": "속옷/홈웨어", "hasSample": false },
+      { "id": "SPORTS", "code": "017", "description": "스포츠/레저", "hasSample": false },
+      { "id": "DIGITAL_LIFE", "code": "102", "description": "디지털/라이프", "hasSample": false },
+      { "id": "KIDS", "code": "106", "description": "키즈", "hasSample": false }
+    ],
+    "eventTypes": [{ "id": "SAMPLE", "description": "샘플 상품", "isShow": true }],
+    "genders": [
+      { "id": "P", "description": "공용" },
+      { "id": "M", "description": "남성" },
+      { "id": "F", "description": "여성" }
+    ]
+  }
+}

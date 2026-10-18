@@ -23,19 +23,50 @@ import type { CampaignDetailResponse } from '@/lib/types.ts'
 
 type Campaign = CampaignDetailResponse['campaign']
 
-/** Musinsa-only facts out of `campaigns.detail`; null for other sources. */
+const MUSINSA_CATEGORY_LABELS: Record<string, string> = {
+  BEAUTY: '뷰티',
+  SHOE: '신발',
+  TOP: '상의',
+  OUTER: '아우터',
+  PANTS: '바지',
+  DRESS_AND_SKIRT: '원피스/스커트',
+  BAG: '가방',
+  FASHION_ACCESSORY: '패션 소품',
+  UNDERWEAR: '속옷/홈웨어',
+  SPORTS: '스포츠/레저',
+  DIGITAL_LIFE: '디지털/라이프',
+  KIDS: '키즈',
+}
+
+const asString = (v: unknown) => (typeof v === 'string' && v ? v : null)
+
+/** Musinsa-only facts out of `campaigns.detail` (same reading as src/campaigns/types.ts). */
 export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>) {
   if (c.source !== 'musinsa') return null
   const d = (c.detail ?? {}) as {
-    representativeGoods?: { price?: unknown } | null
-    goodsCount?: unknown
-    contentType?: unknown
+    products?: {
+      isRepresentative?: boolean | null
+      prices?: { normalPrice?: { value?: unknown }; salePrice?: { value?: unknown } } | null
+    }[]
+    eventCategory?: unknown
+    winnerDrawDate?: unknown
+    reviewStartDate?: unknown
+    reviewEndDate?: unknown
   }
-  const price = d.representativeGoods?.price
+  const products = Array.isArray(d.products) ? d.products : []
+  const rep = products.find((p) => p?.isRepresentative) ?? products[0]
+  const normal = rep?.prices?.normalPrice?.value
+  const sale = rep?.prices?.salePrice?.value
+  const price = typeof normal === 'number' ? normal : null
+  const category = asString(d.eventCategory)
   return {
-    price: typeof price === 'number' ? price : null,
-    goodsCount: typeof d.goodsCount === 'number' ? d.goodsCount : null,
-    contentType: d.contentType === 'VIDEO' || d.contentType === 'IMAGE' ? d.contentType : null,
+    price,
+    salePrice: typeof sale === 'number' && price !== null && sale < price ? sale : null,
+    goodsCount: products.length || null,
+    category: category ? (MUSINSA_CATEGORY_LABELS[category] ?? category) : null,
+    winnerDrawDate: asString(d.winnerDrawDate),
+    reviewStartDate: asString(d.reviewStartDate),
+    reviewEndDate: asString(d.reviewEndDate),
   }
 }
 
@@ -112,21 +143,24 @@ export function CampaignDetailView({ data, now }: { data: CampaignDetailResponse
           <Field label="브랜드">{text(c.brand)}</Field>
           {m && (
             <>
-              <Field label="정가">{m.price != null ? formatWon(m.price) : '-'}</Field>
+              <Field label="품목">{m.category ?? '-'}</Field>
+              <Field label="정가">
+                {m.price != null ? formatWon(m.price) : '-'}
+                {m.price != null && m.salePrice != null && ` → ${formatWon(m.salePrice)}`}
+              </Field>
               <Field label="상품 수">{m.goodsCount ?? '-'}</Field>
-              <Field label="리뷰 형식">
-                {m.contentType === 'VIDEO' ? '영상' : m.contentType === 'IMAGE' ? '사진' : '-'}
+              <Field label="발표일">{m.winnerDrawDate ?? '-'}</Field>
+              <Field label="리뷰 기간">
+                {m.reviewStartDate || m.reviewEndDate
+                  ? `${m.reviewStartDate ?? '?'} ~ ${m.reviewEndDate ?? '?'}`
+                  : '-'}
               </Field>
             </>
           )}
           <Field label="상품 ID">{c.product_id ?? '-'}</Field>
-          {!m && (
-            <>
-              <Field label="모집 인원">{formatNumber(c.recruit_count)}</Field>
-              <Field label="신청자">{formatNumber(c.application_count)}</Field>
-              <Field label="경쟁률">{formatCompetition(competitionOf(c))}</Field>
-            </>
-          )}
+          <Field label="모집 인원">{formatNumber(c.recruit_count)}</Field>
+          <Field label="신청자">{formatNumber(c.application_count)}</Field>
+          <Field label="경쟁률">{formatCompetition(competitionOf(c))}</Field>
           <Field label="남은 일수">
             {c.remaining_days != null ? `${c.remaining_days}일` : '-'}
           </Field>

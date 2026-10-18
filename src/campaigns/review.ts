@@ -1,4 +1,5 @@
 import { query, transaction } from '../db/pool.ts'
+import { endOfLocalDay } from './musinsa.ts'
 import {
   ACTIVE_CAMPAIGN_STATUSES,
   type Campaign,
@@ -55,14 +56,32 @@ export async function rejectCampaign(
   return rows.length > 0
 }
 
-/** Records the owner-reported result of an application. Gated by status alone. */
+/**
+ * Records the owner-reported result of an application. Gated by status alone. A selected Musinsa
+ * campaign gets its review deadline from the source (end of the KST day detail.reviewEndDate) when
+ * none was set; /due still overrides it.
+ */
 export async function markResult(id: number, selected: boolean): Promise<boolean> {
+  const [src] = await query<{ review_end: string | null }>(
+    "select detail->>'reviewEndDate' as review_end from campaigns where id = $1",
+    [id],
+  )
+  let sourceDeadline: Date | null = null
+  if (selected && src?.review_end) {
+    try {
+      sourceDeadline = endOfLocalDay(src.review_end)
+    } catch {
+      // A malformed date from the source is ignored; the owner can still set /due.
+    }
+  }
   const rows = await query(
     `update campaigns set status = $2,
        selected_at = case when $2 = 'SELECTED' then now() else selected_at end,
+       review_deadline = case when $2 = 'SELECTED' then coalesce(review_deadline, $3::timestamptz)
+         else review_deadline end,
        result_at = now(), updated_at = now()
      where id = $1 and status = 'APPLIED' returning id`,
-    [id, selected ? 'SELECTED' : 'NOT_SELECTED'],
+    [id, selected ? 'SELECTED' : 'NOT_SELECTED', sourceDeadline],
   )
   return rows.length > 0
 }

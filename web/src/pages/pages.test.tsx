@@ -101,8 +101,10 @@ describe('CampaignDetailView', () => {
     if (!data) throw new Error('fixture')
     render(wrap(<CampaignDetailView data={data} />))
     expect(screen.getByRole('link', { name: '무신사에서 열기' })).toBeInTheDocument()
-    expect(screen.getByText('59,000원')).toBeInTheDocument()
-    expect(screen.getByText('영상')).toBeInTheDocument()
+    expect(screen.getByText(/59,000원 → 41,300원/)).toBeInTheDocument()
+    expect(screen.getByText('패션 소품')).toBeInTheDocument()
+    expect(screen.getByText('2026-10-27')).toBeInTheDocument()
+    expect(screen.getByText('2026-10-31 ~ 2026-11-14')).toBeInTheDocument()
   })
 })
 
