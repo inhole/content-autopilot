@@ -14,12 +14,15 @@ import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
+import { buildWeeklyDigest } from './pipeline/digest.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
 import { loadParts, retryFailedParts } from './pipeline/parts.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
+import { judgeExpired, reviveDraft } from './pipeline/revive.ts'
+import { formatReviveList } from './pipeline/revive-bot.ts'
 import { createReviewer, formatReview } from './review/telegram.ts'
 import { getThreadsApi, refreshThreadsTokenIfNeeded } from './threads/account.ts'
 import { ThreadsClient } from './threads/client.ts'
@@ -51,7 +54,9 @@ const USAGE = `usage: npm run cli -- <command>
   threads:refresh             refresh the Threads token if it is close to expiry
   insights                    collect Threads post insights now and print the latest numbers
   report                      print the weekly insights report (same text as Telegram /report)
+  digest                      build the weekly "missed news" chain from expired drafts and print it (no Telegram)
   replies                     poll new Threads replies now and notify Telegram
+  revive [postId]             judge expired drafts and print the list, or revive one now (no Telegram)
 
   gift:list                   fetch the Kakao gift trial list and print it (writes nothing)
   musinsa:list                fetch the Musinsa preuser list via Aside and print it (writes nothing)
@@ -73,7 +78,7 @@ async function sendReview(postId: number) {
 
 async function show(postId: number) {
   const [post] = await query<Parameters<typeof formatReview>[0] & { status: string }>(
-    `select p.id, p.topic_id, p.text, p.angle, p.source_url, p.status, t.score,
+    `select p.id, p.topic_id, p.text, p.angle, p.source_url, p.status, p.origin, t.score,
             array(select jsonb_array_elements_text(p.generation->'caveats')) as caveats
      from posts p join topics t on t.id = p.topic_id where p.id = $1`,
     [postId],
@@ -241,11 +246,27 @@ try {
     case 'report':
       console.log(await weeklyReport())
       break
+    case 'digest': {
+      const postId = await buildWeeklyDigest()
+      if (postId === null) console.log('fewer than 2 expired drafts to fold, nothing built')
+      else await show(postId)
+      break
+    }
     case 'replies': {
       const fresh = await pollReplies((text) => reviewer.notifyWithId(text))
       console.log(`${fresh.length} new reply(ies)`)
       for (const r of fresh)
         console.log(`- @${r.username ?? '?'} (post #${r.post_id}): ${r.text ?? '-'}`)
+      break
+    }
+    case 'revive': {
+      if (!args[0]) {
+        console.log(formatReviveList(await judgeExpired(), new Date(), config.TZ_NAME))
+        break
+      }
+      const postId = id()
+      if (!(await reviveDraft(postId))) throw new Error(`post ${postId} cannot be revived`)
+      await show(postId)
       break
     }
     case 'gift:list': {

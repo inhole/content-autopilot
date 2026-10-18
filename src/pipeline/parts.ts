@@ -21,6 +21,8 @@ export type PostPart = {
   attempts: number
   claim_seq: number
   last_error: string | null
+  /** The part's own link_attachment (digest chains only); null for the default link rule. */
+  link_url: string | null
 }
 
 const length = (text: string) => [...text].length
@@ -49,15 +51,26 @@ export function composeChain(input: {
   topicTag: string | null
   sourceUrl: string | null
   followups: string[]
+  /**
+   * Each follow-up's own link (digest chains), index-aligned with `followups`. When any is set,
+   * every follow-up uses its own link (or none), the main post gets `sourceUrl`, and the default
+   * "source on the last follow-up" rule does not apply.
+   */
+  followupLinks?: (string | null)[] | undefined
   cta?: string | undefined
 }): ChainPost[] {
   const cta = 'cta' in input ? input.cta : config.THREAD_CTA_TEXT
   const main: ChainPost = { text: input.text, topicTag: input.topicTag }
   if (input.followups.length === 0) return [{ ...main, linkAttachment: input.sourceUrl }]
-  const parts: ChainPost[] = input.followups.map((text) => ({ text }))
+  const perPart = input.followupLinks?.some(Boolean) === true
+  const parts: ChainPost[] = input.followups.map((text, i) => {
+    const link = perPart ? (input.followupLinks?.[i] ?? null) : null
+    return link ? { text, linkAttachment: link } : { text }
+  })
   const last = parts[parts.length - 1] as ChainPost
   const withCta = `${last.text}${ctaSuffix(cta)}`
   last.text = length(withCta) <= THREADS_TEXT_LIMIT ? withCta : last.text
+  if (perPart) return [{ ...main, linkAttachment: input.sourceUrl }, ...parts]
   last.linkAttachment = input.sourceUrl
   return [main, ...parts]
 }
@@ -65,27 +78,34 @@ export function composeChain(input: {
 /** Follow-up parts of a post, in order. */
 export async function loadParts(postId: number, q: Query = query): Promise<PostPart[]> {
   return q<PostPart>(
-    `select idx, text, status, container_id, platform_post_id, attempts, claim_seq, last_error
+    `select idx, text, status, container_id, platform_post_id, attempts, claim_seq, last_error,
+       link_url
      from post_parts where post_id = $1 order by idx`,
     [postId],
   )
 }
 
 /**
- * Replaces all follow-ups of a draft with `texts` (renumbered from FIRST_FOLLOWUP_IDX). Only for
+ * Replaces all follow-ups of a draft with `texts` (and optional per-part `links`) (renumbered from FIRST_FOLLOWUP_IDX). Only for
  * drafts under review: published parts must never be rewritten. Run it in the same transaction as
  * the posts update it belongs to, so text and parts cannot drift apart.
  */
-export async function replaceParts(q: Query, postId: number, texts: string[]): Promise<void> {
+export async function replaceParts(
+  q: Query,
+  postId: number,
+  texts: string[],
+  links?: (string | null)[],
+): Promise<void> {
   if (texts.length > MAX_FOLLOWUPS) {
     throw new Error(`a chain has at most ${MAX_FOLLOWUPS} follow-ups, got ${texts.length}`)
   }
   await q('delete from post_parts where post_id = $1', [postId])
   if (texts.length === 0) return
   await q(
-    `insert into post_parts (post_id, idx, text)
-     select $1, $3 + ord::int - 1, t from unnest($2::text[]) with ordinality as u(t, ord)`,
-    [postId, texts, FIRST_FOLLOWUP_IDX],
+    `insert into post_parts (post_id, idx, text, link_url)
+     select $1, $3 + ord::int - 1, t, l
+     from unnest($2::text[], $4::text[]) with ordinality as u(t, l, ord)`,
+    [postId, texts, FIRST_FOLLOWUP_IDX, texts.map((_, i) => links?.[i] ?? null)],
   )
 }
 

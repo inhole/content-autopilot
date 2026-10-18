@@ -18,6 +18,8 @@
                collect-insights (05:00) ──▶ 게시물 성과 스냅샷           │
                weekly-report (월 09:00) ──▶ 주간 리포트 Telegram        │
                poll-replies (5분마다) ──▶ 새 답글을 Telegram으로 알림    │
+               revive-check / revive (/revive) ──▶ 상록 만료 초안 재검수 │
+               weekly-digest (일 18:00) ──▶ 만료 초안 묶음 연결 글        │
                     └──────────────────────────────────────────────────┘
                                        │
                                Supabase Postgres
@@ -52,7 +54,27 @@ posts:   PENDING_REVIEW ─▶ SCHEDULED ─▶ PUBLISHING ─▶ PUBLISHED
            │ │  └ 재생성 / 수정
            │ └─▶ REJECTED
            └───▶ EXPIRED (48시간 동안 손대지 않음, review-maintenance)
+                    ├─▶ PENDING_REVIEW (상록 판정 후 /revive로 재검수, origin = revived)
+                    └─▶ (주간 묶음 글의 재료, digest_post_id 기록. 원래 글은 EXPIRED 그대로)
 ```
+
+## 만료 초안 다시 쓰기
+
+검수를 못 해서 만료된 초안을 버리지 않고 두 가지로 다시 쓴다(결정 14, `016`). `posts.origin`이 글이 어디서 왔는지를 남기고(`news` / `revived` / `digest`), 검수 메시지 맨 위에 `♻️ 재활용` / `🗞 주간 묶음` 라벨로 보인다.
+
+- **상록 초안 재검수** (`src/pipeline/revive*.ts`)
+  - `/revive`(또는 CLI `revive`)를 실행하면 `revive-check` job이 지난 30일 안에 만료된 뉴스 초안을 판정한다. 대상은 아직 재활용하지 않았고 묶음에도 쓰이지 않은 초안이다. 판정은 LLM 한 번 호출로 한다. 몇 주 뒤에 읽어도 가치가 있으면 `evergreen`(사용법, 연구 결과, 설계 교훈, 관행에 대한 의견), 그 시점에 묶였으면 `stale`(출시·버그·장애·가격·행사 소식)이다. 애매하면 `stale`로 본다.
+  - 판정 결과는 `revive_verdict` / `revive_reason` / `revive_checked_at`에 한 번만 저장하고, 목록 메시지를 보낸다. 상록 초안마다 `♻️ #id 살리기` 버튼이 있다.
+  - 버튼을 누르면 `revive` job(글마다 하나씩)이 LLM으로 **시점에 묶인 표현만** 고친다("방금", "이번 주", "최근 나온" 같은 표현). 사실, 수치, 첫 줄의 아이디어, 마지막 질문, 음슴체 말투는 그대로 둔다.
+  - 고친 글은 조건부 UPDATE 하나로 저장된다. 조건은 아직 `EXPIRED`이고 재활용·묶음에 쓰이지 않았을 것이다. 상태는 `PENDING_REVIEW`, `origin`은 `revived`가 되고 `revision`이 오른다. 그다음 재시도가 있는 `review` 큐로 검수 메시지를 보낸다.
+  - `generation.text`도 새 글로 바꾸고 원래 글은 `generation.revived.from_text`에 남긴다. `style.ts`가 `generation->>'text' <> text`를 "주인이 고친 글"로 보고 말투를 배우기 때문에, LLM이 고친 글을 주인의 수정으로 오인하지 않게 하려는 것이다. 답글 조각은 그대로 둔다.
+- **주간 "이번 주 놓친 소식"** (`src/pipeline/digest*.ts`)
+  - `weekly-digest` job(일요일 18:00, `/digest`로 바로 실행)이 지난 10일 안에 만료된 뉴스 초안을 모은다. 재활용·묶음에 쓰이지 않았고 `revive_verdict`가 없거나 `stale`인 것이 대상이다. 상록 초안은 따로 살리도록 남겨 둔다.
+  - 주제 점수 순으로 최대 3개를 고른다. 2개 미만이면 만들지 않는다.
+  - LLM이 연결 글 하나로 엮는다. 본글은 묶음 소개 훅, 1번 소식, 질문 하나로 끝나고, 답글 2개가 2·3번 소식이다. 사실은 원래 초안에 있던 것만 쓴다.
+  - 한 트랜잭션 안에서 묶음용 주제(MANUAL, `이번 주 놓친 소식 (YYYY-MM-DD)`), 글(`origin = digest`), 조각을 만들고 재료 초안에 `digest_post_id`를 기록한다. 재료를 2개 이상 선점하지 못하면 통째로 되돌린다. 그래서 같은 초안이 두 묶음에 들어가지 않는다.
+  - 검수 메시지는 `review` 큐로 보낸다. 🔁 재생성과 피드백 답장은 평소처럼 generate job으로 가지만, 묶음 글의 주제면 `regenerateDigest`가 같은 재료로 다시 쓴다(`regen_seq` 조건은 같다).
+  - **링크:** 출처가 소식마다 달라서 조각마다 자기 링크를 단다(`post_parts.link_url`). 본글은 1번 소식의 `source_url`, 답글은 각자 `link_url`이다. 조각 중 하나라도 `link_url`이 있으면 "출처는 마지막 답글에" 규칙(결정 8)을 쓰지 않는다. CTA는 그대로 마지막 답글에만 붙는다.
 
 ## 중복 발행 방지
 

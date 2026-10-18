@@ -6,6 +6,7 @@ import { query, transaction } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
 import { fetchArticle } from '../pipeline/article.ts'
 import { addManualTopic } from '../pipeline/collect.ts'
+import { DIGEST_BOT_COMMANDS, DIGEST_HELP_LINES } from '../pipeline/digest-jobs.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
 import {
   ctaSuffix,
@@ -17,6 +18,7 @@ import {
 } from '../pipeline/parts.ts'
 import { approvePost, publishNow, rejectPost, unschedulePost } from '../pipeline/publish.ts'
 import { answerReply } from '../pipeline/replies.ts'
+import { REVIVE_BOT_COMMANDS, REVIVE_HELP_LINES } from '../pipeline/revive-bot.ts'
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
@@ -36,6 +38,14 @@ type ReviewPost = {
   source_url: string | null
   caveats: string[] | null
   score: number | null
+  /** posts.origin (migration 016); absent means a normal news draft. */
+  origin?: string | null
+}
+
+/** Header label for drafts that did not come straight from the news pipeline. */
+export const ORIGIN_LABELS: Record<string, string> = {
+  revived: '♻️ 재활용',
+  digest: '🗞 주간 묶음',
 }
 
 const ADD_USAGE = '사용법: /add <url> [한 줄 의견]'
@@ -73,6 +83,10 @@ export const HELP_TEXT = [
   '💬 Threads 답글 알림에 답장하기',
   '- 답장한 내용이 그대로 Threads 답글로 달려요 (답글당 1회)',
   '',
+  '♻️ 만료된 초안 다시 쓰기',
+  ...REVIVE_HELP_LINES,
+  ...DIGEST_HELP_LINES,
+  '',
   ...CAMPAIGN_HELP_LINES,
   '',
   ...REVIEW_HELP_LINES,
@@ -83,6 +97,8 @@ const BOT_COMMANDS = [
   { command: 'add', description: '기사 URL로 초안 만들기: /add <url> [의견]' },
   { command: 'help', description: '사용법 보기' },
   { command: 'report', description: '주간 성과 리포트 보기' },
+  ...REVIVE_BOT_COMMANDS,
+  ...DIGEST_BOT_COMMANDS,
   ...CAMPAIGN_BOT_COMMANDS,
 ]
 
@@ -183,6 +199,8 @@ export function formatReview(
   const cta = opts.cta || undefined
   const score = p.score != null ? ` · 점수 ${p.score}` : ''
   const lines: string[] = []
+  const origin = p.origin ? ORIGIN_LABELS[p.origin] : undefined
+  if (origin) lines.push(origin)
   if (parts.length === 0) {
     lines.push(`📝 초안 #${p.id}${score} · ${len(p.text)}/${THREADS_TEXT_LIMIT}자`, '', p.text)
   } else {
@@ -576,7 +594,7 @@ export function createReviewer(opts: {
     async sendForReview(postId) {
       if (!chatId) throw new Error('TELEGRAM_CHAT_ID is not set (send /start to the bot)')
       const [post] = await query<ReviewPost>(
-        `select p.id, p.topic_id, p.revision, p.text, p.angle, p.source_url, t.score,
+        `select p.id, p.topic_id, p.revision, p.text, p.angle, p.source_url, p.origin, t.score,
                 array(select jsonb_array_elements_text(p.generation->'caveats')) as caveats
          from posts p join topics t on t.id = p.topic_id where p.id = $1`,
         [postId],
