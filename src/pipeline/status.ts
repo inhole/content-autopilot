@@ -66,6 +66,45 @@ export type Status = {
   threads: { dryRun: boolean; tokenExpiresAt: Date | null }
   /** Absent when pg-boss could not be queried or has no run yet. */
   lastDaily?: { state: string; at: Date }
+  campaigns: CampaignCounts
+  /** Last heartbeat of the local worker (Kakao + Aside); null when it never reported. */
+  localWorkerSeenAt: Date | null
+}
+
+export type CampaignCounts = {
+  pendingReview: number
+  applying: number
+  applyFailed: number
+  selected: number
+  reviewing: number
+  saveFailed: number
+}
+
+/** Campaign statuses behind each count shown in /status. */
+const CAMPAIGN_COUNT_STATUSES: Record<keyof CampaignCounts, readonly string[]> = {
+  pendingReview: ['PENDING_REVIEW'],
+  applying: ['APPROVED', 'APPLYING'],
+  applyFailed: ['APPLY_FAILED'],
+  selected: ['SELECTED'],
+  reviewing: ['RECEIVED', 'DRAFT_REVIEW', 'DRAFT_APPROVED', 'DRAFT_SAVING', 'DRAFT_SAVED'],
+  saveFailed: ['DRAFT_FAILED'],
+}
+
+export async function loadCampaignCounts(): Promise<CampaignCounts> {
+  const rows = await query<{ status: string; n: number }>(
+    'select status, count(*) as n from campaigns group by status',
+  )
+  const byStatus = new Map(rows.map((r) => [r.status, r.n]))
+  const total = (statuses: readonly string[]) =>
+    statuses.reduce((sum, st) => sum + (byStatus.get(st) ?? 0), 0)
+  return {
+    pendingReview: total(CAMPAIGN_COUNT_STATUSES.pendingReview),
+    applying: total(CAMPAIGN_COUNT_STATUSES.applying),
+    applyFailed: total(CAMPAIGN_COUNT_STATUSES.applyFailed),
+    selected: total(CAMPAIGN_COUNT_STATUSES.selected),
+    reviewing: total(CAMPAIGN_COUNT_STATUSES.reviewing),
+    saveFailed: total(CAMPAIGN_COUNT_STATUSES.saveFailed),
+  }
 }
 
 /** Unfinished parts that have not moved for this long are reported as stuck. */
@@ -90,32 +129,44 @@ const FAILED_SHOWN = 5
 export async function loadStatus(now = new Date()): Promise<Status> {
   const since = new Date(now.getTime() - 24 * 3600 * 1000)
   const weekAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000)
-  const [pending, scheduled, published, failed, account, expired, llmCost, chainParts] =
-    await Promise.all([
-      query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
-      query<{ id: number; scheduled_at: Date; text: string }>(
-        `select id, scheduled_at, left(text, 30) as text from posts
+  const [
+    pending,
+    scheduled,
+    published,
+    failed,
+    account,
+    expired,
+    llmCost,
+    chainParts,
+    campaigns,
+    heartbeat,
+  ] = await Promise.all([
+    query<{ id: number }>("select id from posts where status = 'PENDING_REVIEW' order by id"),
+    query<{ id: number; scheduled_at: Date; text: string }>(
+      `select id, scheduled_at, left(text, 30) as text from posts
        where status = 'SCHEDULED' order by scheduled_at limit $1`,
-        [SCHEDULED_SHOWN],
-      ),
-      query<{ n: number }>(
-        "select count(*) as n from posts where status = 'PUBLISHED' and published_at >= $1",
-        [since],
-      ),
-      query<{ id: number; last_error: string | null }>(
-        "select id, last_error from posts where status = 'FAILED' order by id desc limit $1",
-        [FAILED_SHOWN],
-      ),
-      query<{ expires_at: Date | null }>(
-        "select expires_at from platform_accounts where platform = 'THREADS'",
-      ),
-      query<{ n: number }>(
-        "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
-        [weekAgo],
-      ),
-      fetchLlmCost(),
-      loadChainParts(now),
-    ])
+      [SCHEDULED_SHOWN],
+    ),
+    query<{ n: number }>(
+      "select count(*) as n from posts where status = 'PUBLISHED' and published_at >= $1",
+      [since],
+    ),
+    query<{ id: number; last_error: string | null }>(
+      "select id, last_error from posts where status = 'FAILED' order by id desc limit $1",
+      [FAILED_SHOWN],
+    ),
+    query<{ expires_at: Date | null }>(
+      "select expires_at from platform_accounts where platform = 'THREADS'",
+    ),
+    query<{ n: number }>(
+      "select count(*) as n from posts where status = 'EXPIRED' and updated_at >= $1",
+      [weekAgo],
+    ),
+    fetchLlmCost(),
+    loadChainParts(now),
+    loadCampaignCounts(),
+    query<{ seen_at: Date }>("select seen_at from worker_heartbeats where role = 'local'"),
+  ])
 
   // pg-boss internals may change between versions, so this is best-effort.
   let lastDaily: Status['lastDaily']
@@ -143,6 +194,8 @@ export async function loadStatus(now = new Date()): Promise<Status> {
     lastDaily,
     expiredLast7d: expired[0]?.n ?? 0,
     llmCost: llmCost ?? undefined,
+    campaigns,
+    localWorkerSeenAt: heartbeat[0]?.seen_at ?? null,
   }
 }
 
@@ -200,5 +253,19 @@ export function formatStatus(status: Status, timeZone: string): string {
       `${label}: $${usd.toFixed(2)}${limitRemaining != null ? ` (한도 잔여 $${limitRemaining.toFixed(2)})` : ''}`,
     )
   }
+  const c = status.campaigns
+  const campaignLines = [
+    ['검수 대기', c.pendingReview],
+    ['신청 대기/진행', c.applying],
+    ['신청 실패', c.applyFailed],
+    ['선정', c.selected],
+    ['리뷰 진행', c.reviewing],
+    ['저장 실패', c.saveFailed],
+  ] as const
+  lines.push('', '🎁 체험단')
+  for (const [label, n] of campaignLines) if (n > 0) lines.push(`${label}: ${n}건`)
+  if (campaignLines.every(([, n]) => n === 0)) lines.push('진행 중인 체험단 없음')
+  const seen = status.localWorkerSeenAt
+  lines.push(`로컬 워커 마지막 응답: ${seen ? fmt(seen, timeZone) : '기록 없음'}`)
   return lines.join('\n')
 }

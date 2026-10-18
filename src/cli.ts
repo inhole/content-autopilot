@@ -1,5 +1,20 @@
+import { getBrowserAgent } from './aside/client.ts'
+import { applyCampaign } from './campaigns/apply.ts'
+import { generateBlogDraft } from './campaigns/blog.ts'
+import { saveBlogDraft } from './campaigns/blog-save.ts'
+import { sendDraftCard } from './campaigns/blog-telegram.ts'
+import { addCampaignUrl, collectFromKakao } from './campaigns/collect.ts'
+import { extractRevuCampaignLinks } from './campaigns/kakao-links.ts'
+import { rankDetailed } from './campaigns/rank.ts'
+import { runCampaignReminders } from './campaigns/reminders.ts'
+import { fetchCampaignDetail } from './campaigns/revu.ts'
+import { checkSelections } from './campaigns/selection.ts'
+import { loadCampaign } from './campaigns/store.ts'
+import { formatCampaignCard, sendCampaignCard } from './campaigns/telegram.ts'
+import { sendCampaignMessage } from './campaigns/tg.ts'
 import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
+import { parseKakaoTranscript, readKakaoRoom } from './kakao/reader.ts'
 import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
@@ -36,7 +51,21 @@ const USAGE = `usage: npm run cli -- <command>
   threads:refresh             refresh the Threads token if it is close to expiry
   insights                    collect Threads post insights now and print the latest numbers
   report                      print the weekly insights report (same text as Telegram /report)
-  replies                     poll new Threads replies now and notify Telegram`
+  replies                     poll new Threads replies now and notify Telegram
+
+  campaign:collect            read the KakaoTalk rooms now and print what was found
+  campaign:add <url>          add a revu campaign link and read its detail now
+  campaign:fetch <id>         read a DISCOVERED campaign's detail page
+  campaign:rank               rank DETAILED campaigns (no queue, no Telegram)
+  campaign:show <id>          print status, last error and the review card
+  campaign:card <id>          (re)send the review card to Telegram
+  campaign:apply <id>         apply to an APPROVED campaign now (respects ASIDE_DRY_RUN)
+  campaign:selection          check the revu accepted list for selected campaigns
+  campaign:remind             send due reminders now
+  blog:draft <id> [feedback]  write (or rewrite) the review draft and send its card
+  blog:save <id>              save an approved draft to Naver (respects ASIDE_DRY_RUN)
+  kakao:read <room>           print a room's parsed messages and revu links (writes nothing)
+  aside:read <url>            print the page title and text Aside reads (writes nothing)`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
 const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
@@ -62,6 +91,12 @@ const [command, ...args] = process.argv.slice(2)
 const id = () => {
   const n = Number(args[0])
   if (!Number.isInteger(n)) throw new Error('postId is required')
+  return n
+}
+
+const campaignId = () => {
+  const n = Number(args[0])
+  if (!Number.isInteger(n)) throw new Error('campaign id is required')
   return n
 }
 
@@ -204,6 +239,83 @@ try {
       console.log(`${fresh.length} new reply(ies)`)
       for (const r of fresh)
         console.log(`- @${r.username ?? '?'} (post #${r.post_id}): ${r.text ?? '-'}`)
+      break
+    }
+    case 'campaign:collect': {
+      const results = await collectFromKakao()
+      console.table(
+        results.map((r) => ({ ...r, newCampaignIds: r.newCampaignIds.join(',') || '-' })),
+      )
+      break
+    }
+    case 'campaign:add': {
+      if (!args[0]) throw new Error('url is required')
+      const added = await addCampaignUrl(args[0], 'cli')
+      if (!added) throw new Error('not a revu campaign link')
+      console.log(added.created ? `added #${added.id}` : `already known as #${added.id}`)
+      console.log(await fetchCampaignDetail(added.id))
+      break
+    }
+    case 'campaign:fetch':
+      console.log(await fetchCampaignDetail(campaignId()))
+      break
+    case 'campaign:rank':
+      console.log('shortlisted:', await rankDetailed())
+      break
+    case 'campaign:show': {
+      const c = await loadCampaign(campaignId())
+      if (!c) throw new Error(`campaign ${args[0]} not found`)
+      console.log(`[${c.status}] last_error: ${c.last_error ?? '-'}\n`)
+      console.log(formatCampaignCard(c, new Date(), config.TZ_NAME))
+      break
+    }
+    case 'campaign:card':
+      await sendCampaignCard(campaignId())
+      console.log('card sent')
+      break
+    case 'campaign:apply':
+      console.log(await applyCampaign(campaignId()))
+      break
+    case 'campaign:selection':
+      console.log(await checkSelections())
+      break
+    case 'campaign:remind':
+      console.log(`sent ${await runCampaignReminders(sendCampaignMessage)} reminder(s)`)
+      break
+    case 'blog:draft': {
+      const campaign = campaignId()
+      const written = await generateBlogDraft(campaign, {
+        feedback: args.slice(1).join(' ') || undefined,
+      })
+      if (written) await sendDraftCard(campaign)
+      console.log(written ? 'draft written' : 'nothing written (campaign moved on)')
+      break
+    }
+    case 'blog:save':
+      console.log(await saveBlogDraft(campaignId()))
+      break
+    case 'kakao:read': {
+      if (!args[0]) throw new Error('room is required')
+      const messages = parseKakaoTranscript(await readKakaoRoom(args.join(' ')))
+      console.table(
+        messages.map((m) => ({
+          date: m.date,
+          time: m.time,
+          sender: m.sender,
+          body: m.body.slice(0, 60),
+        })),
+      )
+      const links = messages.flatMap((m) => extractRevuCampaignLinks(m.body))
+      console.log(
+        `${messages.length} message(s), revu links:`,
+        links.map((l) => l.url),
+      )
+      break
+    }
+    case 'aside:read': {
+      if (!args[0]) throw new Error('url is required')
+      const page = await getBrowserAgent().readPage(args[0])
+      console.log(`${page.title}\n${page.url}\n\n${page.text.slice(0, 3000)}`)
       break
     }
     default:

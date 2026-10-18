@@ -21,6 +21,24 @@ describe('status extras', () => {
     expect(out).toContain('연결 글 답글 실패: 2건')
     expect(out).toContain('연결 글 답글 멈춤: 1건')
   })
+  it('shows campaign counts and the local worker heartbeat', () => {
+    const quiet = formatStatus(base, 'Asia/Seoul')
+    expect(quiet).toContain('진행 중인 체험단 없음')
+    expect(quiet).toContain('로컬 워커 마지막 응답: 기록 없음')
+    const out = formatStatus(
+      {
+        ...base,
+        campaigns: { ...base.campaigns, pendingReview: 2, applyFailed: 1, saveFailed: 1 },
+        localWorkerSeenAt: new Date('2026-10-08T21:05:00Z'),
+      },
+      'Asia/Seoul',
+    )
+    expect(out).toContain('검수 대기: 2건')
+    expect(out).toContain('신청 실패: 1건')
+    expect(out).toContain('저장 실패: 1건')
+    expect(out).not.toContain('선정:')
+    expect(out).toContain('로컬 워커 마지막 응답: 10-09 06:05')
+  })
   it('parses key info, preferring monthly usage', () => {
     expect(parseLlmCost({ data: { usage: 9, usage_monthly: 2, limit: null } })).toEqual({
       usd: 2,
@@ -61,6 +79,15 @@ const base: Status = {
   chainParts: { failed: 0, stuck: 0 },
   threads: { dryRun: true, tokenExpiresAt: new Date('2026-12-01T00:00:00Z') },
   lastDaily: { state: 'completed', at: new Date('2026-10-08T21:05:00Z') },
+  campaigns: {
+    pendingReview: 0,
+    applying: 0,
+    applyFailed: 0,
+    selected: 0,
+    reviewing: 0,
+    saveFailed: 0,
+  },
+  localWorkerSeenAt: null,
 }
 
 describe('formatStatus', () => {
