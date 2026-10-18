@@ -7,12 +7,11 @@ let seq = 0
 export async function seedCampaign(over: Record<string, unknown> = {}): Promise<number> {
   seq += 1
   const row: Record<string, unknown> = {
-    external_id: `rv-${seq}-${Date.now()}`,
-    url: `https://www.revu.net/campaign/${seq}`,
+    external_id: `gift-${seq}-${Date.now()}`,
+    url: `https://gift.kakao.com/campaign/${seq}`,
     url_hash: `hash-${seq}-${Date.now()}`,
     status: 'PENDING_REVIEW',
     title: `campaign ${seq}`,
-    apply_message: '안녕하세요, 정성껏 후기를 남기겠습니다.',
     ...over,
   }
   const cols = Object.keys(row)

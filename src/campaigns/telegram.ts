@@ -1,50 +1,47 @@
 import type { Bot } from 'grammy'
 import { config } from '../config.ts'
-import { query } from '../db/pool.ts'
-import { localDate } from '../lib/time.ts'
+import { localDate, zonedToUtc } from '../lib/time.ts'
 import { type CampaignCallback, parseCampaignCallback } from './callbacks.ts'
-import { loadCampaignProfile } from './profile.ts'
 import {
-  approveApply,
   loadActiveCampaigns,
-  markAppliedManually,
+  markApplied,
   markCardSent,
+  markResult,
   rejectCampaign,
-  replaceApplyMessage,
-  retryApply,
+  setReviewDeadline,
 } from './review.ts'
 import { loadCampaign } from './store.ts'
 import {
   buttonsKeyboard,
   type CampaignButton,
   clearButtons,
+  PHOTO_CAPTION_LIMIT,
   sendCampaignMessage,
-  sendCampaignPhoto,
+  sendCampaignPhotoMessage,
 } from './tg.ts'
 import {
   CAMPAIGN_REJECT_REASONS,
   type Campaign,
-  type CampaignRejectReason,
   type CampaignStatus,
+  competition,
   isCampaignRejectReason,
 } from './types.ts'
 
 const TELEGRAM_TEXT_LIMIT = 4000
-const REVU_CAMPAIGN_URL = /^https?:\/\/(?:www\.)?revu\.net\/campaign\/\d+/i
-const CAMP_USAGE = '사용법: /camp <레뷰 캠페인 링크>\n예: https://www.revu.net/campaign/123456'
 const STALE_PRESS_TEXT = '이전 카드예요. 최신 메시지에서 눌러주세요'
+const DUE_USAGE =
+  '사용법: /due <번호> <날짜>\n예: /due 12 10/30 (지원 형식: 10/30, 10-30, 10.30, 2026-10-30)'
 
 export const CAMPAIGN_HELP_LINES = [
   '🎁 체험단',
-  '/camp <링크> — 레뷰 캠페인 링크를 직접 추가',
   '/camps — 진행 중인 체험단 보기',
-  '- 카드에 "수정: <신청 메시지>" 답장 → 신청 메시지를 그대로 교체',
-  '- 카드에 그 외 답장 → 피드백으로 보고 신청 메시지를 다시 작성',
+  '/due <번호> <날짜> — 리뷰 기한 알려주기 (예: /due 12 10/30)',
+  '- 카드의 "📱 선물하기에서 열기"로 폰 카톡에서 신청한 뒤 "✅ 신청함"을 눌러요',
 ]
 
 export const CAMPAIGN_BOT_COMMANDS = [
-  { command: 'camp', description: '체험단 링크 추가: /camp <링크>' },
   { command: 'camps', description: '진행 중인 체험단 보기' },
+  { command: 'due', description: '리뷰 기한 알리기: /due <번호> <날짜>' },
 ]
 
 // ---------- formatting ----------
@@ -60,122 +57,119 @@ export function formatDday(days: number): string {
   return days > 0 ? `D-${days}` : `D+${-days}`
 }
 
-/** `10/25(토) 18:00` in `tz`. */
-export function formatKstDateTime(d: Date, tz: string): string {
+/** `10/25(토)` in `tz`. */
+export function formatKstDate(d: Date, tz: string): string {
   const parts = new Intl.DateTimeFormat('ko-KR', {
     timeZone: tz,
     month: 'numeric',
     day: 'numeric',
     weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
   }).formatToParts(d)
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
-  return `${get('month')}/${get('day')}(${get('weekday')}) ${get('hour')}:${get('minute')}`
+  return `${get('month')}/${get('day')}(${get('weekday')})`
 }
-
-const withDday = (d: Date, now: Date, tz: string) =>
-  `${formatKstDateTime(d, tz)} (${formatDday(daysUntil(d, now, tz))})`
 
 export const formatWon = (n: number) => `${n.toLocaleString('en-US')}원`
 
-export function formatCampaignCard(c: Campaign, now: Date, tz: string, maxChars?: number): string {
-  const lines: string[] = [`🎁 #${c.id} ${c.title ?? c.detail?.title ?? '(제목 없음)'}`]
-  const offer = c.detail?.offer
-  if (offer) lines.push(`제공: ${offer}`)
-  if (c.reward_won != null) lines.push(`제공가치: ${formatWon(c.reward_won)}`)
-  if (c.recruit_count != null) lines.push(`모집 인원: ${c.recruit_count}명`)
-  if (c.apply_deadline) lines.push(`신청 마감: ${withDday(c.apply_deadline, now, tz)}`)
-  if (c.announce_at) lines.push(`발표일: ${formatKstDateTime(c.announce_at, tz)}`)
-  if (c.review_deadline) lines.push(`리뷰 마감: ${formatKstDateTime(c.review_deadline, tz)}`)
-  if (c.reason) {
-    lines.push('', `선별 이유${c.score != null ? ` (점수 ${c.score})` : ''}: ${c.reason}`)
-  } else if (c.score != null) {
-    lines.push('', `점수: ${c.score}`)
+const count = (n: number) => n.toLocaleString('en-US')
+const clip = (s: string, max: number) =>
+  [...s].length > max ? `${[...s].slice(0, max - 1).join('')}…` : s
+
+/** `모집 100명 · 신청 1,234명 (경쟁률 12.3:1)`, leaving out what is unknown. */
+export function formatCounts(
+  c: Pick<Campaign, 'recruit_count' | 'application_count'>,
+): string | null {
+  const parts: string[] = []
+  if (c.recruit_count != null) parts.push(`모집 ${count(c.recruit_count)}명`)
+  if (c.application_count != null) {
+    const ratio = competition(c)
+    const tail =
+      ratio == null
+        ? ''
+        : ` (경쟁률 ${ratio.toLocaleString('en-US', { maximumFractionDigits: 1 })}:1)`
+    parts.push(`신청 ${count(c.application_count)}명${tail}`)
   }
-  if (c.keywords.length > 0) lines.push(`필수 키워드: ${c.keywords.join(', ')}`)
-  if (c.apply_message) {
-    const count = [...c.apply_message].length
-    lines.push('', `✍️ 신청 메시지 (${count}${maxChars ? `/${maxChars}` : ''}자)`, c.apply_message)
-  }
-  lines.push('', c.url)
-  return lines.join('\n').slice(0, TELEGRAM_TEXT_LIMIT)
+  return parts.length ? parts.join(' · ') : null
 }
 
-export function campaignCardButtons(c: Campaign): CampaignButton[] {
-  const cb = (action: 'applied' | 'apply' | 'pass'): CampaignCallback => ({
-    ns: 'camp',
-    action,
-    campaignId: c.id,
-    revision: c.revision,
-  })
+/** The review card; always fits a 1024-char photo caption. */
+export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
+  const lines: string[] = [`🎁 #${c.id} ${clip(c.title, 200)}`]
+  if (c.brand) lines.push(clip(c.brand, 80))
+  const counts = formatCounts(c)
+  if (counts) lines.push(counts)
+  if (c.apply_deadline) {
+    lines.push(`마감 ${formatDday(daysUntil(c.apply_deadline, now, tz))} (추정)`)
+  }
+  if (c.score != null || c.reason) {
+    const score = c.score != null ? `⭐ ${c.score}` : ''
+    const reason = c.reason ? clip(c.reason, 300) : ''
+    lines.push([score, reason].filter(Boolean).join(' · '))
+  }
+  lines.push('', '📱 폰 카톡에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
+  return [...lines.join('\n')].slice(0, PHOTO_CAPTION_LIMIT).join('')
+}
+
+const cb = (
+  c: Pick<Campaign, 'id'>,
+  action: CampaignCallback<'camp'>['action'],
+  revision: number,
+  arg?: string,
+): CampaignCallback => ({
+  ns: 'camp',
+  action,
+  campaignId: c.id,
+  revision,
+  ...(arg ? { arg } : {}),
+})
+
+export function campaignCardButtons(
+  c: Pick<Campaign, 'id' | 'url' | 'revision'>,
+): CampaignButton[] {
   return [
-    { text: '✅ 신청함 (직접)', callback: cb('applied') },
-    { text: '🚀 신청 승인 (자동)', callback: cb('apply') },
-    { text: '🙅 패스', callback: cb('pass') },
+    { text: '📱 선물하기에서 열기', url: c.url },
+    { text: '✅ 신청함', callback: cb(c, 'applied', c.revision) },
+    { text: '🙅 패스', callback: cb(c, 'pass', c.revision) },
   ]
 }
 
-export function rejectReasonButtons(c: Campaign): CampaignButton[] {
-  const buttons: CampaignButton[] = (
-    Object.entries(CAMPAIGN_REJECT_REASONS) as [CampaignRejectReason, string][]
-  ).map(([code, label]) => ({
-    text: label,
-    callback: { ns: 'camp', action: 'passr', campaignId: c.id, revision: c.revision, arg: code },
-  }))
-  buttons.push({
-    text: '↩️ 취소',
-    callback: { ns: 'camp', action: 'passc', campaignId: c.id, revision: c.revision },
-  })
-  return buttons
+export function rejectReasonButtons(c: Pick<Campaign, 'id' | 'revision'>): CampaignButton[] {
+  return [
+    ...Object.entries(CAMPAIGN_REJECT_REASONS).map(([key, text]) => ({
+      text,
+      callback: cb(c, 'passr', c.revision, key),
+    })),
+    { text: '↩️ 취소', callback: cb(c, 'passc', c.revision) },
+  ]
 }
 
-const STAGES: { title: string; statuses: CampaignStatus[]; when: (c: Campaign) => Date | null }[] =
-  [
-    {
-      title: '📝 신청 검토 대기',
-      statuses: ['PENDING_REVIEW'],
-      when: (c) => c.apply_deadline,
-    },
-    {
-      title: '🚀 신청 진행 중',
-      statuses: ['APPROVED', 'APPLYING', 'APPLY_FAILED'],
-      when: (c) => c.apply_deadline,
-    },
-    { title: '⏳ 발표 대기', statuses: ['APPLIED'], when: (c) => c.announce_at },
-    {
-      title: '✍️ 리뷰 작성',
-      statuses: [
-        'SELECTED',
-        'RECEIVED',
-        'DRAFT_REVIEW',
-        'DRAFT_APPROVED',
-        'DRAFT_SAVING',
-        'DRAFT_SAVED',
-        'DRAFT_FAILED',
-      ],
-      when: (c) => c.review_deadline,
-    },
-  ]
+const resultButtons = (id: number): CampaignButton[] => [
+  { text: '🎉 선정', callback: cb({ id }, 'sel', 0) },
+  { text: '😢 미선정', callback: cb({ id }, 'unsel', 0) },
+]
 
 const STATUS_LABEL: Partial<Record<CampaignStatus, string>> = {
-  APPROVED: '신청 대기',
-  APPLYING: '신청 중',
-  APPLY_FAILED: '신청 실패',
+  APPLIED: '신청함',
   SELECTED: '선정',
-  RECEIVED: '제품 수령',
+  NOT_SELECTED: '미선정',
   DRAFT_REVIEW: '초안 검수',
-  DRAFT_APPROVED: '초안 승인',
-  DRAFT_SAVING: '임시저장 중',
-  DRAFT_SAVED: '임시저장 완료',
-  DRAFT_FAILED: '임시저장 실패',
+  POSTED: '리뷰 완료',
 }
 
 export function statusLabel(status: CampaignStatus): string {
   return STATUS_LABEL[status] ?? status
 }
 
+type Stage = { title: string; statuses: CampaignStatus[]; when: (c: Campaign) => Date | null }
+
+const STAGES: Stage[] = [
+  { title: '🆕 신청 대기', statuses: ['PENDING_REVIEW'], when: (c) => c.apply_deadline },
+  { title: '📮 결과 대기', statuses: ['APPLIED'], when: (c) => c.apply_deadline },
+  { title: '🎉 선정 · 리뷰 작성', statuses: ['SELECTED'], when: (c) => c.review_deadline },
+  { title: '📝 초안 검수', statuses: ['DRAFT_REVIEW'], when: (c) => c.review_deadline },
+]
+
+/** /camps: active campaigns grouped by stage, with D-n and /due hints. */
 export function formatActiveCampaigns(rows: Campaign[], now: Date, tz: string): string {
   if (rows.length === 0) return '진행 중인 체험단이 없어요.'
   const sections: string[] = []
@@ -184,99 +178,103 @@ export function formatActiveCampaigns(rows: Campaign[], now: Date, tz: string): 
     if (inStage.length === 0) continue
     const lines = inStage.map((c) => {
       const at = stage.when(c)
-      const label = stage.statuses.length > 1 ? ` [${statusLabel(c.status)}]` : ''
       const dday = at ? ` · ${formatDday(daysUntil(at, now, tz))}` : ''
-      return `#${c.id} ${c.title ?? '(제목 없음)'}${label}${dday}`
+      const hint =
+        c.status === 'SELECTED' && !c.review_deadline ? ` · 기한 모름 (/due ${c.id} 10/30)` : ''
+      return `#${c.id} ${clip(c.title, 60)}${dday}${hint}`
     })
     sections.push(`${stage.title} (${inStage.length})\n${lines.join('\n')}`)
   }
-  return sections.join('\n\n')
+  return sections.join('\n\n').slice(0, TELEGRAM_TEXT_LIMIT)
 }
 
-export function formatApplyResult(
-  c: Pick<Campaign, 'id' | 'title' | 'url'>,
-  outcome: ApplyOutcome,
-): string {
-  const name = `#${c.id} ${c.title ?? ''}`.trim()
-  switch (outcome.kind) {
-    case 'applied':
-      return `✅ ${name} 신청을 완료했어요. 발표일을 기다려요.`
-    case 'dry-run':
-      return `🧪 ${name} 드라이런이라 실제로 신청하지 않았어요 (입력까지만 확인).`
-    case 'failed':
-      return [
-        `❌ ${name} 자동 신청에 실패했어요.`,
-        outcome.error ? `사유: ${outcome.error.slice(0, 500)}` : null,
-        `직접 신청하려면: ${c.url}`,
-      ]
-        .filter((l): l is string => l !== null)
-        .join('\n')
+// ---------- /due date parsing ----------
+
+const MONTH_DAY = /^(\d{1,2})[/.-](\d{1,2})$/
+const FULL_DATE = /^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$/
+
+function validDate(y: number, m: number, d: number): boolean {
+  const t = new Date(Date.UTC(y, m - 1, d))
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * Parses a /due date into the end (23:59) of that day in `tz`. Accepts `M/D`, `M-D`, `M.D`
+ * (a day already past this year means next year) and `YYYY-MM-DD` (also `/` or `.`). Anything
+ * else, including compact forms like `1030`, is rejected as ambiguous.
+ */
+export function parseDueDate(input: string, now: Date, tz: string): Date | null {
+  const text = input.trim()
+  let year: number
+  let month: number
+  let day: number
+  const full = text.match(FULL_DATE)
+  if (full) {
+    year = Number(full[1])
+    month = Number(full[2])
+    day = Number(full[3])
+    if (!validDate(year, month, day)) return null
+  } else {
+    const md = text.match(MONTH_DAY)
+    if (!md) return null
+    month = Number(md[1])
+    day = Number(md[2])
+    const today = localDate(now, tz)
+    year = Number(today.slice(0, 4))
+    // Feb 29 may only exist next year.
+    if (!validDate(year, month, day) && !validDate(year + 1, month, day)) return null
+    if (!validDate(year, month, day) || `${year}-${pad(month)}-${pad(day)}` < today) year += 1
+    if (!validDate(year, month, day)) return null
   }
+  return zonedToUtc(`${year}-${pad(month)}-${pad(day)}`, '23:59', tz)
 }
 
-// ---------- staleness and reply parsing ----------
+// ---------- staleness ----------
 
 export type PressVerdict = 'ok' | 'stale' | 'not-found'
 
+/** Actions bound to the card the owner saw (the rest are gated by status alone). */
+const REVISION_BOUND = new Set<string>(['applied', 'pass', 'passr', 'passc'])
+
 /**
- * A button only counts on the campaign's current card, while it is still waiting for review and
- * the apply message is still the revision the button was created for. Retry (APPLY_FAILED) is
- * the exception: it does not depend on what the owner saw, and retryApply guards the status.
+ * A card button only counts on the campaign's current card, while it is still waiting for review
+ * and the card is still the revision the button was created for. Result buttons (sel, unsel) do
+ * not depend on what the owner saw; their transitions guard the status.
  */
 export function judgeCampaignPress(
   c: Pick<Campaign, 'status' | 'review_message_id' | 'revision' | 'review_revision'> | null,
-  cb: Pick<CampaignCallback, 'action' | 'revision'>,
+  press: Pick<CampaignCallback, 'action' | 'revision'>,
   pressedMessageId: number | undefined,
 ): PressVerdict {
   if (!c) return 'not-found'
-  if (cb.action === 'retry') return 'ok'
+  if (!REVISION_BOUND.has(press.action)) return 'ok'
   const current =
     c.status === 'PENDING_REVIEW' &&
     pressedMessageId != null &&
     c.review_message_id === pressedMessageId &&
-    c.review_revision === cb.revision &&
-    c.revision === cb.revision
+    c.review_revision === press.revision &&
+    c.revision === press.revision
   return current ? 'ok' : 'stale'
 }
 
-export type CampaignReply = { kind: 'edit'; text: string } | { kind: 'feedback'; text: string }
-
-const EDIT_REPLY = /^수정\s*[:：]\s*/
-
-/** `수정: <text>` replaces the apply message verbatim; anything else is feedback. */
-export function parseCampaignReply(input: string): CampaignReply {
-  const text = input.trim()
-  const m = text.match(EDIT_REPLY)
-  return m ? { kind: 'edit', text: text.slice(m[0].length).trim() } : { kind: 'feedback', text }
-}
-
 // ---------- sending ----------
-
-export type ApplyOutcome = {
-  kind: 'applied' | 'dry-run' | 'failed'
-  error?: string
-  screenshotPath?: string | null
-}
-
-async function maxApplyChars(): Promise<number | undefined> {
-  try {
-    return (await loadCampaignProfile()).applyMessage.maxChars
-  } catch {
-    return undefined
-  }
-}
 
 /** Sends (or re-sends) the review card of a campaign and registers it as the current one. */
 export async function sendCampaignCard(campaignId: number): Promise<void> {
   const c = await loadCampaign(campaignId)
   if (!c) throw new Error(`campaign ${campaignId} not found`)
-  const text = formatCampaignCard(c, new Date(), config.TZ_NAME, await maxApplyChars())
-  const messageId = await sendCampaignMessage(text, campaignCardButtons(c))
+  const text = formatCampaignCard(c, new Date(), config.TZ_NAME)
+  const buttons = campaignCardButtons(c)
+  const messageId = c.image_url
+    ? await sendCampaignPhotoMessage(c.image_url, text, buttons)
+    : await sendCampaignMessage(text, buttons)
   const chatId = config.TELEGRAM_CHAT_ID
   if (messageId == null || chatId == null) return
   const registered = await markCardSent(c.id, chatId, messageId, c.revision)
   if (!registered) {
-    // The apply message moved on while sending; its own card is on the way.
+    // The card moved on while sending; its own card is on the way.
     await clearButtons(chatId, messageId)
     return
   }
@@ -289,67 +287,12 @@ export async function sendCampaignCard(campaignId: number): Promise<void> {
   }
 }
 
-export async function sendApplyResult(campaignId: number, outcome: ApplyOutcome): Promise<void> {
-  const c = await loadCampaign(campaignId)
-  if (!c) throw new Error(`campaign ${campaignId} not found`)
-  const buttons: CampaignButton[] =
-    outcome.kind === 'failed'
-      ? [
-          {
-            text: '🔁 다시 신청',
-            callback: { ns: 'camp', action: 'retry', campaignId: c.id, revision: 0 },
-          },
-        ]
-      : []
-  await sendCampaignMessage(formatApplyResult(c, outcome), buttons)
-  if (outcome.screenshotPath) {
-    await sendCampaignPhoto(outcome.screenshotPath, `#${c.id} 신청 화면`).catch((err) =>
-      console.error('[campaign] screenshot send failed', err),
-    )
-  }
-}
-
 // ---------- bot wiring ----------
-
-export type CampaignBotDeps = {
-  onApproveApply(id: number): Promise<void>
-  onRewriteApplyMessage(id: number, feedback: string): Promise<void>
-  onAddCampaign(id: number): Promise<void>
-  addCampaignUrl(url: string): Promise<{ id: number; created: boolean } | null>
-}
 
 const errText = (err: unknown) => (err as Error).message.slice(0, 180)
 
-/** Registers /camp, /camps, camp: buttons and replies to campaign cards. */
-export function registerCampaignBot(bot: Bot, deps: CampaignBotDeps): void {
-  bot.command('camp', async (ctx) => {
-    const url = ctx.match.trim().split(/\s+/)[0] ?? ''
-    if (!REVU_CAMPAIGN_URL.test(url)) {
-      await ctx.reply(CAMP_USAGE)
-      return
-    }
-    try {
-      const added = await deps.addCampaignUrl(url)
-      if (!added) {
-        await ctx.reply(`캠페인 링크로 읽을 수 없어요.\n${CAMP_USAGE}`)
-        return
-      }
-      if (added.created) {
-        await ctx.reply(`🔎 #${added.id} 새 캠페인을 추가했어요. 내용을 확인할게요.`)
-        await deps.onAddCampaign(added.id)
-        return
-      }
-      const known = await loadCampaign(added.id)
-      await ctx.reply(
-        `이미 알고 있는 캠페인이에요: #${added.id} ${known?.title ?? ''}`.trim() +
-          (known ? ` (${statusLabel(known.status)})` : ''),
-      )
-    } catch (err) {
-      console.error('[campaign] /camp failed', err)
-      await ctx.reply(`❌ 캠페인을 추가하지 못했어요: ${errText(err)}`)
-    }
-  })
-
+/** Registers /camps, /due and the camp: buttons. Call before any message:text handler. */
+export function registerCampaignBot(bot: Bot): void {
   bot.command('camps', async (ctx) => {
     try {
       await ctx.reply(
@@ -361,26 +304,52 @@ export function registerCampaignBot(bot: Bot, deps: CampaignBotDeps): void {
     }
   })
 
+  bot.command('due', async (ctx) => {
+    const [idText, dateText] = ctx.match.trim().split(/\s+/)
+    const id = Number(idText?.replace(/^#/, ''))
+    if (!idText || !Number.isInteger(id) || !dateText) {
+      await ctx.reply(DUE_USAGE)
+      return
+    }
+    const due = parseDueDate(dateText, new Date(), config.TZ_NAME)
+    if (!due) {
+      await ctx.reply(`날짜를 읽을 수 없어요: ${dateText}\n${DUE_USAGE}`)
+      return
+    }
+    try {
+      if (!(await setReviewDeadline(id, due))) {
+        await ctx.reply(
+          `#${id} 신청·선정 단계의 체험단이 아니에요. /camps 로 번호를 확인해 주세요.`,
+        )
+        return
+      }
+      await ctx.reply(`📅 #${id} 리뷰 기한을 ${formatKstDate(due, config.TZ_NAME)}로 기록했어요.`)
+    } catch (err) {
+      console.error('[campaign] /due failed', err)
+      await ctx.reply(`❌ 기한을 기록하지 못했어요: ${errText(err)}`)
+    }
+  })
+
   bot.callbackQuery(/^camp:/, async (ctx) => {
-    const cb = parseCampaignCallback(ctx.callbackQuery.data)
-    if (cb?.ns !== 'camp') {
+    const press = parseCampaignCallback(ctx.callbackQuery.data)
+    if (press?.ns !== 'camp') {
       await ctx.answerCallbackQuery({ text: '알 수 없는 버튼이에요' })
       return
     }
     try {
-      const campaign = await loadCampaign(cb.campaignId)
-      const verdict = judgeCampaignPress(campaign, cb, ctx.callbackQuery.message?.message_id)
-      if (verdict === 'not-found') {
+      const campaign = await loadCampaign(press.campaignId)
+      const verdict = judgeCampaignPress(campaign, press, ctx.callbackQuery.message?.message_id)
+      if (verdict === 'not-found' || !campaign) {
         await ctx.answerCallbackQuery({ text: '캠페인을 찾을 수 없어요' })
         return
       }
-      if (verdict === 'stale' || !campaign) {
+      if (verdict === 'stale') {
         await ctx.answerCallbackQuery({ text: STALE_PRESS_TEXT })
         await ctx.editMessageReplyMarkup().catch(() => {})
         return
       }
       const id = campaign.id
-      switch (cb.action) {
+      switch (press.action) {
         case 'pass':
           await ctx.editMessageReplyMarkup({
             reply_markup: buttonsKeyboard(rejectReasonButtons(campaign)),
@@ -394,89 +363,65 @@ export function registerCampaignBot(bot: Bot, deps: CampaignBotDeps): void {
           await ctx.answerCallbackQuery()
           return
         case 'passr': {
-          if (!cb.arg || !isCampaignRejectReason(cb.arg)) {
+          if (!press.arg || !isCampaignRejectReason(press.arg)) {
             await ctx.answerCallbackQuery({ text: '알 수 없는 사유예요' })
             return
           }
-          if (!(await rejectCampaign(id, cb.revision, cb.arg))) {
+          if (!(await rejectCampaign(id, press.revision, press.arg))) {
             await ctx.answerCallbackQuery({ text: '이미 처리된 카드예요' })
             return
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`🙅 #${id} 패스했어요 (${CAMPAIGN_REJECT_REASONS[cb.arg]})`)
+          await ctx.reply(`🙅 #${id} 패스했어요 (${CAMPAIGN_REJECT_REASONS[press.arg]})`)
           return
         }
         case 'applied': {
-          if (!(await markAppliedManually(id, cb.revision))) {
+          if (!(await markApplied(id, press.revision))) {
             await ctx.answerCallbackQuery({ text: '이미 처리된 카드예요' })
             return
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`✅ #${id} 직접 신청한 것으로 기록했어요. 발표일을 기다려요.`)
+          await ctx.reply(`✅ #${id} 신청 기록 · 결과가 나오면 눌러주세요`, {
+            reply_markup: buttonsKeyboard(resultButtons(id)),
+          })
           return
         }
-        case 'apply': {
-          if (!(await approveApply(id, cb.revision))) {
-            await ctx.answerCallbackQuery({ text: '이미 처리된 카드예요' })
+        case 'sel': {
+          if (!(await markResult(id, true))) {
+            await ctx.answerCallbackQuery({ text: '이미 처리됐어요' })
             return
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`🚀 #${id} 신청을 시작해요 (로컬 PC)`)
-          await deps.onApproveApply(id)
+          await ctx.reply(
+            `🎉 #${id} 선정 축하해요! 리뷰 기한을 /due ${id} 10/30 처럼 알려주세요.`,
+            {
+              reply_markup: buttonsKeyboard([
+                {
+                  text: '📝 리뷰 초안 쓰기',
+                  callback: { ns: 'rev', action: 'draft', campaignId: id, revision: 0 },
+                },
+              ]),
+            },
+          )
           return
         }
-        case 'retry': {
-          if (!(await retryApply(id))) {
-            await ctx.answerCallbackQuery({ text: '다시 신청할 수 있는 상태가 아니에요' })
+        case 'unsel': {
+          if (!(await markResult(id, false))) {
+            await ctx.answerCallbackQuery({ text: '이미 처리됐어요' })
             return
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`🔁 #${id} 다시 신청해요 (로컬 PC)`)
-          await deps.onApproveApply(id)
+          await ctx.reply(`😢 #${id} 미선정으로 기록했어요. 다음 기회에!`)
           return
         }
       }
     } catch (err) {
       console.error('[campaign] callback failed', err)
       await ctx.answerCallbackQuery({ text: errText(err) }).catch(() => {})
-    }
-  })
-
-  // Replies to a campaign card. Everything else falls through to the Threads review handlers.
-  bot.on('message:text', async (ctx, next) => {
-    const replyTo = ctx.message.reply_to_message?.message_id
-    if (!replyTo || ctx.message.text.startsWith('/')) {
-      await next()
-      return
-    }
-    const [row] = await query<{ id: number }>(
-      "select id from campaigns where review_message_id = $1 and status = 'PENDING_REVIEW'",
-      [replyTo],
-    )
-    if (!row) {
-      await next()
-      return
-    }
-    try {
-      const parsed = parseCampaignReply(ctx.message.text)
-      if (parsed.kind === 'feedback') {
-        await ctx.reply(`🔁 #${row.id} 피드백 반영해서 신청 메시지를 다시 쓰는 중…`)
-        await deps.onRewriteApplyMessage(row.id, parsed.text)
-        return
-      }
-      const result = await replaceApplyMessage(row.id, replyTo, parsed.text)
-      if (!result.ok) {
-        await ctx.reply(result.message)
-        return
-      }
-      await sendCampaignCard(row.id)
-    } catch (err) {
-      console.error('[campaign] card reply failed', err)
-      await ctx.reply(`❌ 처리하지 못했어요: ${errText(err)}`)
     }
   })
 }

@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { encodeCampaignCallback, parseCampaignCallback } from '../src/campaigns/callbacks.ts'
+import { encodeCampaignCallback } from '../src/campaigns/callbacks.ts'
 import {
   CAMPAIGN_BOT_COMMANDS,
   CAMPAIGN_HELP_LINES,
   campaignCardButtons,
   daysUntil,
   formatActiveCampaigns,
-  formatApplyResult,
   formatCampaignCard,
   formatDday,
   judgeCampaignPress,
-  parseCampaignReply,
+  parseDueDate,
   rejectReasonButtons,
 } from '../src/campaigns/telegram.ts'
 import { CAMPAIGN_REJECT_REASONS, type Campaign } from '../src/campaigns/types.ts'
@@ -20,260 +19,213 @@ const TZ = 'Asia/Seoul'
 function campaign(over: Partial<Campaign> = {}): Campaign {
   return {
     id: 12,
-    source: 'revu',
-    external_id: '12',
-    url: 'https://www.revu.net/campaign/12',
+    source: 'kakao-gift',
+    external_id: 'g12',
+    url: 'https://gift.kakao.com/product/12',
     url_hash: 'h',
-    found_in: null,
     status: 'PENDING_REVIEW',
     title: '무선 이어폰 체험단',
-    type: 'delivery',
-    category: null,
-    reward_won: 59000,
-    recruit_count: 10,
-    apply_deadline: new Date('2026-10-25T09:00:00Z'), // 10/25 18:00 KST
-    announce_at: new Date('2026-10-27T03:00:00Z'),
-    review_deadline: new Date('2026-11-10T14:59:00Z'),
-    keywords: ['이어폰', '음질'],
-    detail: { offer: '무선 이어폰 1개' } as Campaign['detail'],
+    brand: '사운드랩',
+    product_id: 12,
+    image_url: 'https://img.example/12.jpg',
+    recruit_count: 100,
+    application_count: 1234,
+    remaining_days: 3,
+    apply_deadline: new Date('2026-10-21T14:59:59Z'), // 10/21 23:59:59 KST
+    first_seen_at: new Date('2026-10-18T00:00:00Z'),
+    last_seen_at: new Date('2026-10-18T00:00:00Z'),
+    detail: null,
     score: 8.5,
-    reason: '관심 품목이고 제공가치가 높아요',
+    reason: '관심 품목이고 경쟁률이 낮아요',
     skip_reason: null,
-    apply_message: '안녕하세요 정성껏 리뷰하겠습니다',
     revision: 2,
     review_chat_id: null,
     review_message_id: null,
     review_revision: null,
     reject_reason: null,
-    claim_seq: 0,
-    attempts: 0,
-    last_error: null,
-    screenshot_path: null,
     applied_at: null,
     selected_at: null,
-    received_at: null,
+    result_at: null,
+    review_deadline: null,
     intake_message_id: null,
     memo: null,
-    draft_title: null,
-    draft_body: null,
+    draft_text: null,
     regen_seq: 0,
-    draft_saved_at: null,
-    blog_url: null,
     posted_at: null,
-    created_at: new Date(),
-    updated_at: new Date(),
+    created_at: new Date('2026-10-18T00:00:00Z'),
+    updated_at: new Date('2026-10-18T00:00:00Z'),
     ...over,
   }
 }
 
-describe('daysUntil', () => {
-  const now = new Date('2026-10-22T10:00:00Z') // 10/22 19:00 KST
-  it('counts local calendar days', () => {
-    expect(daysUntil(new Date('2026-10-25T09:00:00Z'), now, TZ)).toBe(3)
-    expect(daysUntil(new Date('2026-10-22T14:00:00Z'), now, TZ)).toBe(0)
+const NOW = new Date('2026-10-18T03:00:00Z') // 10/18 12:00 KST
+
+describe('formatCampaignCard', () => {
+  it('shows title, brand, counts, competition, D-n and instruction', () => {
+    const text = formatCampaignCard(campaign(), NOW, TZ)
+    expect(text).toContain('#12 무선 이어폰 체험단')
+    expect(text).toContain('사운드랩')
+    expect(text).toContain('모집 100명 · 신청 1,234명 (경쟁률 12.3:1)')
+    expect(text).toContain('마감 D-3 (추정)')
+    expect(text).toContain('⭐ 8.5 · 관심 품목이고 경쟁률이 낮아요')
+    expect(text).toContain('📱 폰 카톡에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
   })
-  it('crosses KST midnight, not UTC midnight', () => {
-    // 15:30Z is already the next day in KST even though UTC still says the 22nd
-    expect(daysUntil(new Date('2026-10-22T15:30:00Z'), now, TZ)).toBe(1)
-    // 23:30Z the 21st is 10/22 08:30 KST: same day
-    expect(daysUntil(new Date('2026-10-21T23:30:00Z'), now, TZ)).toBe(0)
+  it('leaves out what is unknown', () => {
+    const text = formatCampaignCard(
+      campaign({
+        brand: null,
+        recruit_count: null,
+        application_count: null,
+        apply_deadline: null,
+        score: null,
+        reason: null,
+      }),
+      NOW,
+      TZ,
+    )
+    expect(text).not.toMatch(/모집|신청 \d|마감|⭐/)
+    expect(formatCampaignCard(campaign({ application_count: null }), NOW, TZ)).toContain(
+      '모집 100명',
+    )
+    expect(formatCampaignCard(campaign({ recruit_count: null }), NOW, TZ)).toContain(
+      '신청 1,234명\n',
+    )
+    expect(formatCampaignCard(campaign({ recruit_count: null }), NOW, TZ)).not.toContain('(경쟁률')
   })
-  it('is negative once past', () => {
-    expect(daysUntil(new Date('2026-10-20T00:00:00Z'), now, TZ)).toBe(-2)
+  it('fits a 1024-char photo caption even with huge fields', () => {
+    const text = formatCampaignCard(
+      campaign({ title: '가'.repeat(900), brand: '나'.repeat(900), reason: '다'.repeat(2000) }),
+      NOW,
+      TZ,
+    )
+    expect([...text].length).toBeLessThanOrEqual(1024)
   })
-  it('formats D-n', () => {
-    expect(formatDday(3)).toBe('D-3')
+  it('counts D-n by KST calendar day across midnight', () => {
+    const deadline = new Date('2026-10-21T14:59:59Z') // 10/21 23:59 KST
+    expect(daysUntil(deadline, new Date('2026-10-17T14:59:00Z'), TZ)).toBe(4) // 10/17 23:59 KST
+    expect(daysUntil(deadline, new Date('2026-10-17T15:00:00Z'), TZ)).toBe(3) // 10/18 00:00 KST
+    expect(daysUntil(deadline, new Date('2026-10-21T15:00:00Z'), TZ)).toBe(-1)
     expect(formatDday(0)).toBe('D-day')
     expect(formatDday(-2)).toBe('D+2')
   })
 })
 
-describe('formatCampaignCard', () => {
-  const now = new Date('2026-10-22T10:00:00Z')
-  const card = formatCampaignCard(campaign(), now, TZ, 300)
-
-  it('shows the key facts', () => {
-    expect(card).toContain('#12 무선 이어폰 체험단')
-    expect(card).toContain('제공: 무선 이어폰 1개')
-    expect(card).toContain('59,000원')
-    expect(card).toContain('10명')
-    expect(card).toContain('10/25(일) 18:00 (D-3)')
-    expect(card).toContain('발표일: 10/27')
-    expect(card).toContain('리뷰 마감: 11/10')
-    expect(card).toContain('관심 품목이고 제공가치가 높아요')
-    expect(card).toContain('8.5')
-    expect(card).toContain('필수 키워드: 이어폰, 음질')
-    expect(card).toContain('https://www.revu.net/campaign/12')
-  })
-  it('shows the apply message with its char count', () => {
-    expect(card).toContain('(17/300자)')
-    expect(card).toContain('안녕하세요 정성껏 리뷰하겠습니다')
-  })
-  it('counts characters, not UTF-16 units', () => {
-    const c = formatCampaignCard(campaign({ apply_message: '😀😀😀' }), now, TZ, 300)
-    expect(c).toContain('(3/300자)')
-  })
-  it('omits missing fields without breaking', () => {
-    const bare = formatCampaignCard(
-      campaign({
-        title: null,
-        detail: null,
-        reward_won: null,
-        recruit_count: null,
-        apply_deadline: null,
-        announce_at: null,
-        review_deadline: null,
-        keywords: [],
-        score: null,
-        reason: null,
-        apply_message: null,
-      }),
-      now,
-      TZ,
-    )
-    expect(bare).toContain('#12 (제목 없음)')
-    expect(bare).not.toContain('undefined')
-    expect(bare).not.toContain('null')
-    expect(bare).not.toContain('신청 마감')
-    expect(bare).not.toContain('필수 키워드')
-    expect(bare).not.toContain('신청 메시지')
-    expect(bare).toContain('https://www.revu.net/campaign/12')
-  })
-  it('stays within the Telegram limit', () => {
-    const long = formatCampaignCard(campaign({ apply_message: 'a'.repeat(9000) }), now, TZ)
-    expect(long.length).toBeLessThanOrEqual(4000)
-  })
-})
-
 describe('buttons', () => {
-  it('card buttons carry the revision and fit 64 bytes', () => {
-    const buttons = campaignCardButtons(campaign({ revision: 7 }))
-    expect(buttons.map((b) => b.callback.action)).toEqual(['applied', 'apply', 'pass'])
-    for (const b of buttons) {
-      expect(b.callback.revision).toBe(7)
-      expect(Buffer.byteLength(encodeCampaignCallback(b.callback))).toBeLessThanOrEqual(64)
-    }
-  })
-  it('reason picker has one button per reason plus cancel', () => {
-    const buttons = rejectReasonButtons(campaign({ revision: 7 }))
-    expect(buttons).toHaveLength(Object.keys(CAMPAIGN_REJECT_REASONS).length + 1)
-    const last = buttons.at(-1)
-    expect(last?.callback.action).toBe('passc')
-    const args = buttons.slice(0, -1).map((b) => b.callback.arg)
-    expect(args).toEqual(Object.keys(CAMPAIGN_REJECT_REASONS))
-    for (const b of buttons) {
-      const data = encodeCampaignCallback(b.callback)
-      expect(parseCampaignCallback(data)).toEqual(b.callback)
-      expect(b.callback.revision).toBe(7)
-    }
-  })
-})
-
-describe('formatActiveCampaigns', () => {
-  const now = new Date('2026-10-22T10:00:00Z')
-  it('says so when empty', () => {
-    expect(formatActiveCampaigns([], now, TZ)).toContain('없어요')
-  })
-  it('groups by stage with D-n', () => {
-    const text = formatActiveCampaigns(
-      [
-        campaign({ id: 1, status: 'PENDING_REVIEW' }),
-        campaign({ id: 2, status: 'APPLY_FAILED', title: '실패건' }),
-        campaign({ id: 3, status: 'APPLIED', announce_at: new Date('2026-10-23T03:00:00Z') }),
-        campaign({
-          id: 4,
-          status: 'DRAFT_SAVED',
-          review_deadline: new Date('2026-10-30T00:00:00Z'),
-        }),
-      ],
-      now,
-      TZ,
+  it('card buttons: url, applied and pass bound to the revision', () => {
+    const [open, applied, pass] = campaignCardButtons(campaign())
+    expect(open).toEqual({ text: '📱 선물하기에서 열기', url: 'https://gift.kakao.com/product/12' })
+    expect(applied && 'callback' in applied && encodeCampaignCallback(applied.callback)).toBe(
+      'camp:applied:12:2',
     )
-    expect(text).toContain('신청 검토 대기 (1)')
-    expect(text).toContain('#1 무선 이어폰 체험단 · D-3')
-    expect(text).toContain('#2 실패건 [신청 실패] · D-3')
-    expect(text).toContain('발표 대기 (1)')
-    expect(text).toContain('#3 무선 이어폰 체험단 · D-1')
-    expect(text).toContain('리뷰 작성 (1)')
-    expect(text).toContain('#4 무선 이어폰 체험단 [임시저장 완료] · D-8')
+    expect(pass && 'callback' in pass && encodeCampaignCallback(pass.callback)).toBe(
+      'camp:pass:12:2',
+    )
   })
-  it('omits D-n when the date is unknown', () => {
-    const text = formatActiveCampaigns([campaign({ apply_deadline: null })], now, TZ)
-    expect(text).toContain('#12 무선 이어폰 체험단')
-    expect(text).not.toContain('D-')
-  })
-})
-
-describe('formatApplyResult', () => {
-  const c = { id: 5, title: '이어폰', url: 'https://www.revu.net/campaign/5' }
-  it('reports each outcome', () => {
-    expect(formatApplyResult(c, { kind: 'applied' })).toContain('신청을 완료')
-    expect(formatApplyResult(c, { kind: 'dry-run' })).toContain('드라이런')
-    const failed = formatApplyResult(c, { kind: 'failed', error: 'login expired' })
-    expect(failed).toContain('login expired')
-    expect(failed).toContain(c.url)
+  it('reject reasons: one per reason plus cancel, all bound to the revision', () => {
+    const data = rejectReasonButtons(campaign()).map((b) =>
+      'callback' in b ? encodeCampaignCallback(b.callback) : b.url,
+    )
+    expect(data).toEqual([
+      ...Object.keys(CAMPAIGN_REJECT_REASONS).map((k) => `camp:passr:12:2:${k}`),
+      'camp:passc:12:2',
+    ])
+    expect(data.every((d) => d.length <= 64)).toBe(true)
   })
 })
 
 describe('judgeCampaignPress', () => {
-  const current = {
+  const card = {
     status: 'PENDING_REVIEW' as const,
-    review_message_id: 10,
+    review_message_id: 100,
     revision: 2,
     review_revision: 2,
   }
-  const cb = { action: 'apply' as const, revision: 2 }
-
-  it('accepts the current card', () => {
-    expect(judgeCampaignPress(current, cb, 10)).toBe('ok')
+  it('accepts the current card and revision', () => {
+    expect(judgeCampaignPress(card, { action: 'applied', revision: 2 }, 100)).toBe('ok')
   })
-  it('rejects an older message', () => {
-    expect(judgeCampaignPress(current, cb, 9)).toBe('stale')
-    expect(judgeCampaignPress(current, cb, undefined)).toBe('stale')
-  })
-  it('rejects a button from an older revision', () => {
-    expect(judgeCampaignPress(current, { action: 'apply', revision: 1 }, 10)).toBe('stale')
-  })
-  it('rejects the current message once the text moved on', () => {
-    expect(judgeCampaignPress({ ...current, revision: 3 }, cb, 10)).toBe('stale')
-    expect(judgeCampaignPress({ ...current, review_revision: null }, cb, 10)).toBe('stale')
-  })
-  it('rejects decided campaigns', () => {
-    expect(judgeCampaignPress({ ...current, status: 'APPLIED' }, cb, 10)).toBe('stale')
-  })
-  it('lets retry through regardless of message and revision', () => {
+  it('refuses another message, an old revision or a finished campaign', () => {
+    expect(judgeCampaignPress(card, { action: 'applied', revision: 2 }, 99)).toBe('stale')
+    expect(judgeCampaignPress(card, { action: 'pass', revision: 1 }, 100)).toBe('stale')
     expect(
-      judgeCampaignPress(
-        { ...current, status: 'APPLY_FAILED' },
-        { action: 'retry', revision: 0 },
-        99,
-      ),
-    ).toBe('ok')
+      judgeCampaignPress({ ...card, revision: 3 }, { action: 'passr', revision: 2 }, 100),
+    ).toBe('stale')
+    expect(
+      judgeCampaignPress({ ...card, status: 'APPLIED' }, { action: 'applied', revision: 2 }, 100),
+    ).toBe('stale')
+    expect(judgeCampaignPress(card, { action: 'passc', revision: 2 }, undefined)).toBe('stale')
+  })
+  it('does not bind result buttons to a card', () => {
+    const applied = { ...card, status: 'APPLIED' as const }
+    expect(judgeCampaignPress(applied, { action: 'sel', revision: 0 }, 555)).toBe('ok')
+    expect(judgeCampaignPress(applied, { action: 'unsel', revision: 0 }, 555)).toBe('ok')
   })
   it('reports a missing campaign', () => {
-    expect(judgeCampaignPress(null, cb, 10)).toBe('not-found')
+    expect(judgeCampaignPress(null, { action: 'sel', revision: 0 }, 1)).toBe('not-found')
   })
 })
 
-describe('parseCampaignReply', () => {
-  it('treats 수정: as a verbatim edit', () => {
-    expect(parseCampaignReply('수정: 새 신청 메시지')).toEqual({
-      kind: 'edit',
-      text: '새 신청 메시지',
-    })
-    expect(parseCampaignReply('수정：전각 콜론')).toEqual({ kind: 'edit', text: '전각 콜론' })
+describe('parseDueDate', () => {
+  const now = new Date('2026-10-18T03:00:00Z') // 10/18 KST
+  const end = (d: string) => new Date(`${d}T14:59:00.000Z`) // 23:59 KST
+  it.each([
+    ['10/30', '2026-10-30'],
+    ['10-30', '2026-10-30'],
+    ['10.30', '2026-10-30'],
+    ['1/5', '2027-01-05'], // already past this year -> next year
+    ['10/18', '2026-10-18'], // today still counts
+    ['10/17', '2027-10-17'],
+    ['2026-10-30', '2026-10-30'],
+    ['2026/11/2', '2026-11-02'],
+    ['2026.12.31', '2026-12-31'],
+    ['2025-01-01', '2025-01-01'], // an explicit year is kept
+    ['  10/30 ', '2026-10-30'],
+  ])('%s', (input, day) => {
+    expect(parseDueDate(input, now, TZ)).toEqual(end(day))
   })
-  it('keeps an empty edit as an edit (the handler rejects it)', () => {
-    expect(parseCampaignReply('수정:')).toEqual({ kind: 'edit', text: '' })
-  })
-  it('treats anything else as feedback', () => {
-    expect(parseCampaignReply('더 짧게 써줘')).toEqual({ kind: 'feedback', text: '더 짧게 써줘' })
+  it.each(['', 'abc', '1030', '13/1', '10/32', '2/30', '2026-02-30', '10', '10/30/2026'])(
+    'rejects %j',
+    (input) => {
+      expect(parseDueDate(input, now, TZ)).toBeNull()
+    },
+  )
+  it('rolls Feb 29 to the next leap year only when valid', () => {
+    expect(parseDueDate('2/29', new Date('2027-03-01T00:00:00Z'), TZ)).toEqual(end('2028-02-29'))
   })
 })
 
-describe('exports for the lead', () => {
-  it('lists commands and help lines', () => {
-    expect(CAMPAIGN_BOT_COMMANDS.map((c) => c.command)).toEqual(['camp', 'camps'])
-    expect(CAMPAIGN_HELP_LINES.join('\n')).toContain('/camps')
+describe('formatActiveCampaigns', () => {
+  it('says so when empty', () => {
+    expect(formatActiveCampaigns([], NOW, TZ)).toMatch(/없어요/)
+  })
+  it('groups by stage with D-n and a /due hint', () => {
+    const text = formatActiveCampaigns(
+      [
+        campaign({ id: 1, title: 'A' }),
+        campaign({ id: 2, title: 'B', status: 'APPLIED' }),
+        campaign({ id: 3, title: 'C', status: 'SELECTED', review_deadline: null }),
+        campaign({
+          id: 4,
+          title: 'D',
+          status: 'SELECTED',
+          review_deadline: new Date('2026-10-20T14:59:00Z'),
+        }),
+        campaign({ id: 5, title: 'E', status: 'DRAFT_REVIEW', review_deadline: null }),
+      ],
+      NOW,
+      TZ,
+    )
+    expect(text).toContain('신청 대기 (1)\n#1 A · D-3')
+    expect(text).toContain('결과 대기 (1)\n#2 B · D-3')
+    expect(text).toContain('#3 C · 기한 모름 (/due 3 10/30)')
+    expect(text).toContain('#4 D · D-2')
+    expect(text).not.toMatch(/#4 D.*\/due/)
+    expect(text).toContain('초안 검수 (1)\n#5 E')
+  })
+})
+
+describe('help', () => {
+  it('registers camps and due', () => {
+    expect(CAMPAIGN_BOT_COMMANDS.map((c) => c.command)).toEqual(['camps', 'due'])
+    expect(CAMPAIGN_HELP_LINES.join('\n')).toContain('/due')
   })
 })
