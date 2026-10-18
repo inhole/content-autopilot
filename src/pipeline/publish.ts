@@ -252,12 +252,13 @@ export async function publishPost(postId: number, api?: ThreadsApi): Promise<Pub
     threads ??= await getThreadsApi()
     // With follow-ups the source link moves to the last one, so the main post goes out without it.
     // Parts are read after the claim: they are frozen once the post is approved.
-    const followups = (await loadParts(postId)).map((p) => p.text)
+    const parts = await loadParts(postId)
     const [mainPost] = composeChain({
       text: post.text,
       topicTag: post.topic_tag,
       sourceUrl: post.source_url,
-      followups,
+      followups: parts.map((p) => p.text),
+      followupLinks: parts.map((p) => p.link_url),
     })
     if (!mainPost) throw new Error('composeChain returned no main post')
     // The draft may have changed since the last attempt made its container (un-scheduled and

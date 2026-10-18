@@ -14,6 +14,7 @@ import { config, requireValue } from './config.ts'
 import { pool, query } from './db/pool.ts'
 import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
+import { buildWeeklyDigest } from './pipeline/digest.ts'
 import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
 import { loadParts, retryFailedParts } from './pipeline/parts.ts'
@@ -53,6 +54,7 @@ const USAGE = `usage: npm run cli -- <command>
   threads:refresh             refresh the Threads token if it is close to expiry
   insights                    collect Threads post insights now and print the latest numbers
   report                      print the weekly insights report (same text as Telegram /report)
+  digest                      build the weekly "missed news" chain from expired drafts and print it (no Telegram)
   replies                     poll new Threads replies now and notify Telegram
   revive [postId]             judge expired drafts and print the list, or revive one now (no Telegram)
 
@@ -244,6 +246,12 @@ try {
     case 'report':
       console.log(await weeklyReport())
       break
+    case 'digest': {
+      const postId = await buildWeeklyDigest()
+      if (postId === null) console.log('fewer than 2 expired drafts to fold, nothing built')
+      else await show(postId)
+      break
+    }
     case 'replies': {
       const fresh = await pollReplies((text) => reviewer.notifyWithId(text))
       console.log(`${fresh.length} new reply(ies)`)
