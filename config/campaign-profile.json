@@ -1,16 +1,14 @@
 {
-  "blog": {
-    "url": "https://blog.naver.com/",
-    "topic": "개발자 일상과 IT·생활 제품 후기",
-    "tone": "담백한 1인칭, 과장 없이 실사용 위주"
-  },
-  "types": ["delivery"],
+  "about": "IT 개발자. 실사용 위주로 꼼꼼히 써보고 장단점을 솔직하게 남기는 편",
   "interests": ["IT 액세서리", "주변기기", "생활용품", "식품", "주방용품"],
-  "excludeKeywords": ["다이어트 보조제", "주류", "성인", "대출", "보험"],
-  "minRewardWon": 20000,
-  "applyMessage": {
-    "maxChars": 300,
-    "points": ["실사용 기간을 두고 꼼꼼히 써보는 편", "제품 사진을 직접 촬영", "장단점을 솔직하게 정리"]
+  "excludeKeywords": ["다이어트 보조제", "주류", "성인"],
+  "excludeBrands": [],
+  "maxCompetition": 1000,
+  "review": {
+    "tone": "담백한 1인칭, 과장 없이 실사용 위주",
+    "minChars": 100,
+    "maxChars": 500,
+    "points": ["실제로 써본 기간과 상황", "좋았던 점과 아쉬운 점"]
   },
-  "disclosure": "본 포스팅은 레뷰를 통해 제품을 무상으로 제공받아 작성한 솔직한 후기입니다."
+  "disclosure": "체험단으로 제품을 제공받아 작성한 솔직한 리뷰입니다."
 }

@@ -1,10 +1,10 @@
-import { Api, InlineKeyboard, InputFile } from 'grammy'
+import { Api, InlineKeyboard } from 'grammy'
 import { config } from '../config.ts'
 import { type CampaignCallback, encodeCampaignCallback } from './callbacks.ts'
 
 /**
- * Send-only Telegram access for the campaign pipeline. Sending never conflicts with the cloud
- * worker's polling, so the local worker uses this too. Without a bot token or chat id it logs.
+ * Send-only Telegram access for the campaign pipeline. Sending works from the CLI too,
+ * since it never conflicts with the worker's polling. Without a bot token or chat id it logs.
  */
 export type CampaignButton = { text: string; callback: CampaignCallback }
 
@@ -42,17 +42,6 @@ export async function sendCampaignMessage(
     link_preview_options: { is_disabled: true },
     ...(buttons.length ? { reply_markup: buttonsKeyboard(buttons) } : {}),
   })
-  return msg.message_id
-}
-
-export async function sendCampaignPhoto(path: string, caption: string): Promise<number | null> {
-  const a = telegramApi()
-  const chatId = config.TELEGRAM_CHAT_ID
-  if (!a || !chatId) {
-    console.log(`[campaign notify] ${caption} (photo ${path})`)
-    return null
-  }
-  const msg = await a.sendPhoto(chatId, new InputFile(path), { caption: caption.slice(0, 1024) })
   return msg.message_id
 }
 

@@ -13,12 +13,3 @@ export async function campaignIdsByStatus(status: Campaign['status']): Promise<n
   )
   return rows.map((r) => r.id)
 }
-
-/** Records that a worker of `role` is alive; /status shows the last time. */
-export async function heartbeat(role: string, now = new Date()): Promise<void> {
-  await query(
-    `insert into worker_heartbeats (role, seen_at) values ($1, $2)
-     on conflict (role) do update set seen_at = excluded.seen_at`,
-    [role, now],
-  )
-}

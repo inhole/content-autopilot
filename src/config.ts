@@ -52,29 +52,13 @@ const schema = z.object({
     .optional()
     .transform((s) => s?.replace(/\\n/g, '\n').trim() || undefined),
 
-  // Review-campaign pipeline (docs/plans/campaign-autopilot.md). `cloud` runs the existing
-  // pipeline plus campaign ranking and Telegram; `local` runs only the KakaoTalk and Aside queues
-  // on the Windows PC and never polls Telegram.
-  WORKER_ROLE: z.enum(['cloud', 'local']).default('cloud'),
-  // KakaoTalk PC chat rooms to read, comma separated, exactly as the window title shows them.
-  KAKAO_ROOMS: z
-    .string()
-    .default('')
-    .transform((s) =>
-      s
-        .split(',')
-        .map((r) => r.trim())
-        .filter(Boolean),
-    ),
-  KAKAO_COLLECT_CRON: z.string().default('0 9,13,20 * * *'),
-  ASIDE_BIN: z.string().default('aside'),
-  ASIDE_ACCOUNT: z.string().optional(),
-  // Records what would be submitted or saved, without touching revu or Naver.
-  ASIDE_DRY_RUN: bool,
+  // Kakao gift trial campaigns (docs/plans/campaign-autopilot.md). The list is a public page;
+  // applying and reviewing happen by hand in the KakaoTalk mobile app.
+  GIFT_COLLECT_CRON: z.string().default('0 9,15,21 * * *'),
+  // gift.kakao.com/page/<id>: the 체험단 tab of 선물하기.
+  GIFT_TRIAL_PAGE_ID: z.coerce.number().int().default(33325),
   CAMPAIGN_DAILY_MAX: z.coerce.number().int().min(1).max(20).default(5),
   CAMPAIGN_PROFILE_PATH: z.string().default('config/campaign-profile.json'),
-  // Where the local worker keeps downloaded review photos.
-  CAMPAIGN_PHOTO_DIR: z.string().optional(),
 
   // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
   PORT: z.coerce.number().int().min(1).max(65535).optional(),
