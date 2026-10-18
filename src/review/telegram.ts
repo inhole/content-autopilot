@@ -264,7 +264,10 @@ export async function applyReviewEdit(
       [postId, replyTo],
     )
     if (!post) return { ok: false, reason: 'stale', message: STALE_MESSAGE }
-    const followups = (await loadParts(postId, q)).map((p) => p.text)
+    const loaded = await loadParts(postId, q)
+    const followups = loaded.map((p) => p.text)
+    // Digest parts carry their own source link; it moves with its part on delete and renumbering.
+    const links = loaded.map((p) => p.link_url ?? null)
     const total = followups.length + 1
     const lastLimit = lastFollowupLimit(config.THREAD_CTA_TEXT)
     let text = post.text
@@ -289,6 +292,7 @@ export async function applyReviewEdit(
         return invalid(`${op.idx}번 조각이 없어요. 이 초안은 ${total}개 조각이에요.`)
       }
       followups.splice(op.idx - FIRST_FOLLOWUP_IDX, 1)
+      links.splice(op.idx - FIRST_FOLLOWUP_IDX, 1)
       const newLast = followups[followups.length - 1]
       if (newLast !== undefined && len(newLast) > lastLimit) {
         return invalid(
@@ -301,7 +305,7 @@ export async function applyReviewEdit(
       'update posts set text = $2, revision = revision + 1, updated_at = now() where id = $1',
       [postId, text],
     )
-    await replaceParts(q, postId, followups)
+    await replaceParts(q, postId, followups, links)
     return { ok: true }
   })
 }

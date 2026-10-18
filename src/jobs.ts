@@ -16,7 +16,12 @@ import {
   SkipTopicError,
 } from './pipeline/generate.ts'
 import { collectInsights, weeklyReport } from './pipeline/insights.ts'
-import { expireDrafts, loadPendingDrafts, runReviewMaintenance } from './pipeline/maintenance.ts'
+import {
+  expireDrafts,
+  loadPendingDrafts,
+  loadUnsentReviews,
+  runReviewMaintenance,
+} from './pipeline/maintenance.ts'
 import { loadParts } from './pipeline/parts.ts'
 import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
@@ -294,7 +299,15 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
       new Date(),
       tz,
     )
-    console.log('[review-maintenance]', result)
+    // Without Telegram no review message is ever registered, so there is nothing to recover.
+    const unsent =
+      config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID
+        ? await loadUnsentReviews(new Date())
+        : []
+    for (const postId of unsent) {
+      await boss.send(Q.review, { postId } satisfies PostData, { singletonKey: `review-${postId}` })
+    }
+    console.log('[review-maintenance]', { ...result, resentReviews: unsent })
   })
 
   // Insights: snapshot numbers daily before the 06:00 pipeline; report every Monday morning.

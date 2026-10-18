@@ -69,6 +69,26 @@ export const loadPendingDrafts = async (): Promise<PendingDraft[]> =>
     )
   ).map((r) => ({ id: r.id, lastTouchedAt: r.updated_at }))
 
+/** A draft this long without a review message lost its review job; the hourly sweep resends it. */
+export const UNSENT_REVIEW_MINUTES = 10
+
+/**
+ * PENDING_REVIEW drafts that never got a review message. Every path that creates or revives a
+ * draft commits the row first and enqueues `review` afterwards (generate, revive, digest), so a
+ * crash or a failed enqueue in between would otherwise leave a draft nobody is told about; a
+ * retry of those jobs cannot redo it, since the row already moved on.
+ */
+export async function loadUnsentReviews(now: Date): Promise<number[]> {
+  const rows = await query<{ id: number }>(
+    `select id from posts
+     where status = 'PENDING_REVIEW' and review_message_id is null
+       and updated_at < $1::timestamptz - make_interval(mins => $2)
+     order by id`,
+    [now, UNSENT_REVIEW_MINUTES],
+  )
+  return rows.map((r) => r.id)
+}
+
 /** Conditioned on the status and age again so a draft touched since the load is left alone. */
 export async function expireDrafts(draftIds: number[], now: Date): Promise<number[]> {
   const cutoff = new Date(now.getTime() - DRAFT_TTL_HOURS * 3600_000)

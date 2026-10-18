@@ -109,3 +109,35 @@ describe('applyReviewEdit', () => {
     }
   })
 })
+
+describe('applyReviewEdit with per-part links (digest chains)', () => {
+  const links = async (postId: number) =>
+    (await loadParts(postId)).map((p) => [p.idx, p.text, p.link_url])
+
+  async function seedDigestReview() {
+    const postId = await seedPost(await seedTopic(), { text: 'main' })
+    await query(
+      'update posts set review_message_id = $2, review_revision = revision where id = $1',
+      [postId, MSG],
+    )
+    await transaction((q) =>
+      replaceParts(q, postId, ['b', 'c'], ['https://b.example', 'https://c.example']),
+    )
+    return postId
+  }
+
+  it('keeps every link when a part is edited', async () => {
+    const id = await seedDigestReview()
+    await applyReviewEdit(id, MSG, { kind: 'edit', idx: 2, text: 'B' })
+    expect(await links(id)).toEqual([
+      [2, 'B', 'https://b.example'],
+      [3, 'c', 'https://c.example'],
+    ])
+  })
+
+  it('moves the remaining link with its part on delete', async () => {
+    const id = await seedDigestReview()
+    await applyReviewEdit(id, MSG, { kind: 'delete', idx: 2 })
+    expect(await links(id)).toEqual([[2, 'c', 'https://c.example']])
+  })
+})
