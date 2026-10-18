@@ -1,96 +1,81 @@
 import { config } from '../config.ts'
-import { type Query, query, transaction } from '../db/pool.ts'
-import { hashTranscript, parseKakaoTranscript, readKakaoRoom } from '../kakao/reader.ts'
+import { query } from '../db/pool.ts'
 import { urlHash } from '../lib/url.ts'
-import { extractRevuCampaignLinks } from './kakao-links.ts'
+import { estimateApplyDeadline, fetchGiftTrialList, giftTrialUrl } from './gift.ts'
 
-/** Adds a revu campaign link as DISCOVERED. Null if the text holds no revu campaign link. */
-export async function addCampaignUrl(
-  url: string,
-  foundIn: string | null = null,
-  q: Query = query,
-): Promise<{ id: number; created: boolean } | null> {
-  const link = extractRevuCampaignLinks(url)[0]
-  if (!link) return null
-
-  const [row] = await q<{ id: number }>(
-    `insert into campaigns (source, external_id, url, url_hash, found_in, status)
-     values ('revu', $1, $2, $3, $4, 'DISCOVERED')
-     on conflict do nothing
-     returning id`,
-    [link.externalId, link.url, urlHash(link.url), foundIn],
-  )
-  if (row) return { id: row.id, created: true }
-
-  const [existing] = await q<{ id: number }>(
-    `select id from campaigns where source = 'revu' and external_id = $1`,
-    [link.externalId],
-  )
-  return existing ? { id: existing.id, created: false } : null
-}
-
-export type KakaoCollectResult = {
-  room: string
-  newMessages: number
-  newCampaignIds: number[]
-  error?: string
+export type GiftCollectResult = {
+  fetched: number
+  created: number[]
+  updated: number
+  invalid: number
+  totalCount: number | null
 }
 
 /**
- * Reads each KakaoTalk room, records messages not seen before and turns revu links in the new
- * ones into campaigns. One room failing does not stop the others.
+ * Upserts the public Kakao gift trial list into `campaigns`. New rows start as COLLECTED; existing
+ * rows only get their list fields (counts, remaining days, estimated deadline, raw item) and
+ * last_seen_at refreshed. Status, score and owner fields are never touched, and neither is
+ * updated_at, which the daily quota in rank.ts relies on.
  */
-export async function collectFromKakao(
-  opts: { rooms?: string[]; read?: (room: string) => Promise<string> } = {},
-): Promise<KakaoCollectResult[]> {
-  const rooms = opts.rooms ?? config.KAKAO_ROOMS
-  const read = opts.read ?? readKakaoRoom
-  const results: KakaoCollectResult[] = []
+export async function collectGiftCampaigns(
+  now = new Date(),
+  opts: { fetchList?: typeof fetchGiftTrialList } = {},
+): Promise<GiftCollectResult> {
+  const { items, totalCount, invalid } = await (opts.fetchList ?? fetchGiftTrialList)()
+  if (items.length === 0) return { fetched: 0, created: [], updated: 0, invalid, totalCount }
 
-  // Rooms are read one at a time: they all drive the same desktop window.
-  for (const room of rooms) {
-    try {
-      results.push(await collectRoom(room, read))
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
-      console.error(`kakao collect failed for "${room}": ${error}`)
-      results.push({ room, newMessages: 0, newCampaignIds: [], error })
+  const rows = items.map((item) => {
+    const url = giftTrialUrl(item.campaignId)
+    return {
+      external_id: item.campaignId,
+      url,
+      url_hash: urlHash(url),
+      title: item.campaignTitle,
+      brand: item.brand?.name ?? null,
+      product_id: item.productId ?? null,
+      image_url: item.imageUrl ?? null,
+      recruit_count: item.recruitmentCount ?? null,
+      application_count: item.applicationCount ?? null,
+      remaining_days: item.remainingDays ?? null,
+      apply_deadline: estimateApplyDeadline(item.remainingDays, now, config.TZ_NAME),
+      detail: item,
     }
-  }
-  return results
-}
-
-async function collectRoom(
-  room: string,
-  read: (room: string) => Promise<string>,
-): Promise<KakaoCollectResult> {
-  const messages = parseKakaoTranscript(await read(room))
-  const hashes = hashTranscript(room, messages)
-  if (messages.length === 0) return { room, newMessages: 0, newCampaignIds: [] }
-
-  // Messages are marked seen in the same transaction as their campaigns are created, so a crash
-  // in between either redoes both or neither and no link is lost.
-  return transaction(async (q) => {
-    const inserted = await q<{ hash: string }>(
-      `insert into kakao_messages (hash, room, body)
-       select * from unnest($1::text[], $2::text[], $3::text[])
-       on conflict do nothing
-       returning hash`,
-      [hashes, hashes.map(() => room), messages.map((m) => m.body)],
-    )
-    const fresh = new Set(inserted.map((r) => r.hash))
-
-    const newCampaignIds: number[] = []
-    const seenIds = new Set<string>()
-    for (const [i, m] of messages.entries()) {
-      if (!fresh.has(hashes[i] as string)) continue
-      for (const link of extractRevuCampaignLinks(m.body)) {
-        if (seenIds.has(link.externalId)) continue
-        seenIds.add(link.externalId)
-        const added = await addCampaignUrl(link.url, room, q)
-        if (added?.created) newCampaignIds.push(added.id)
-      }
-    }
-    return { room, newMessages: fresh.size, newCampaignIds }
   })
+
+  const result = await query<{ id: number; inserted: boolean }>(
+    `insert into campaigns (source, external_id, url, url_hash, status, title, brand, product_id,
+       image_url, recruit_count, application_count, remaining_days, apply_deadline, detail,
+       first_seen_at, last_seen_at)
+     select 'kakao-gift', r.external_id, r.url, r.url_hash, 'COLLECTED', r.title, r.brand,
+       r.product_id, r.image_url, r.recruit_count, r.application_count, r.remaining_days,
+       r.apply_deadline, r.detail, $2, $2
+     from jsonb_to_recordset($1::jsonb) as r(external_id text, url text, url_hash text, title text,
+       brand text, product_id bigint, image_url text, recruit_count integer,
+       application_count integer, remaining_days integer, apply_deadline timestamptz, detail jsonb)
+     on conflict (source, external_id) do update set
+       title = excluded.title,
+       brand = excluded.brand,
+       product_id = excluded.product_id,
+       image_url = excluded.image_url,
+       recruit_count = excluded.recruit_count,
+       application_count = excluded.application_count,
+       remaining_days = excluded.remaining_days,
+       apply_deadline = excluded.apply_deadline,
+       detail = excluded.detail,
+       last_seen_at = excluded.last_seen_at
+     returning id, (xmax = 0) as inserted`,
+    [JSON.stringify(rows), now],
+  )
+
+  const created = result
+    .filter((r) => r.inserted)
+    .map((r) => r.id)
+    .sort((a, b) => a - b)
+  return {
+    fetched: items.length,
+    created,
+    updated: result.length - created.length,
+    invalid,
+    totalCount,
+  }
 }

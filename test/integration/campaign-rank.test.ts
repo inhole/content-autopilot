@@ -6,26 +6,22 @@ vi.mock('../../src/llm/openrouter.ts', () => ({
 }))
 
 const { config } = await import('../../src/config.ts')
-const { query } = await import('../../src/db/pool.ts')
-const { rankDetailed, rewriteApplyMessage } = await import('../../src/campaigns/rank.ts')
-const { getCampaign, sampleDetail, seedCampaign } = await import('./campaign-helpers-rank.ts')
+const { rankCollected } = await import('../../src/campaigns/rank.ts')
+const { getCampaign, seedCampaign } = await import('./campaign-helpers-rank.ts')
 
-const score = (id: number, s: number, applyMessage = '안녕하세요. 신청합니다.') => ({
-  id,
-  score: s,
-  reason: `이유 ${id}`,
-  applyMessage,
-})
+const score = (id: number, s: number) => ({ id, score: s, reason: `이유 ${id}` })
+const now = new Date()
 
-describe('rankDetailed', () => {
+describe('rankCollected', () => {
   beforeEach(() => {
     chatJson.mockReset()
     config.CAMPAIGN_DAILY_MAX = 2
   })
 
   it('skips by rule, shortlists the top N and skips the rest', async () => {
-    const visit = await seedCampaign({ type: 'visit' })
-    const cheap = await seedCampaign({ rewardWon: 1000 })
+    const keyword = await seedCampaign({ title: '다이어트 보조제 체험' })
+    const hot = await seedCampaign({ applicationCount: 99999, recruitCount: 1 })
+    const closed = await seedCampaign({ remainingDays: -1 })
     const a = await seedCampaign()
     const b = await seedCampaign()
     const c = await seedCampaign()
@@ -33,108 +29,107 @@ describe('rankDetailed', () => {
       scores: [score(a, 6), score(b, 9), score(c, 3), score(999, 10)],
     })
 
-    const shortlisted = await rankDetailed()
+    const shortlisted = await rankCollected(now)
 
     expect(shortlisted).toEqual([b, a])
-    expect((await getCampaign(visit)).skip_reason).toBe('유형: 방문형')
-    expect((await getCampaign(visit)).status).toBe('SKIPPED')
-    expect((await getCampaign(cheap)).skip_reason).toBe('제공 가치 낮음')
+    expect(chatJson).toHaveBeenCalledTimes(1)
+    expect(chatJson.mock.calls[0]?.[0]).toMatchObject({ temperature: 0.3 })
+    expect(await getCampaign(keyword)).toMatchObject({
+      status: 'SKIPPED',
+      skip_reason: '제외 키워드: 다이어트 보조제',
+    })
+    expect((await getCampaign(hot)).skip_reason).toMatch(/^경쟁률 /)
+    expect((await getCampaign(closed)).skip_reason).toBe('모집 마감')
     const rowB = await getCampaign(b)
     expect(rowB.status).toBe('SHORTLISTED')
     expect(Number(rowB.score)).toBe(9)
-    expect(rowB.apply_message).toBe('안녕하세요. 신청합니다.')
-    const rowC = await getCampaign(c)
-    expect(rowC.status).toBe('SKIPPED')
-    expect(rowC.skip_reason).toBe(`선별 탈락: 이유 ${c}`)
+    expect(rowB.reason).toBe(`이유 ${b}`)
+    expect(await getCampaign(c)).toMatchObject({
+      status: 'SKIPPED',
+      skip_reason: `선별 탈락: 이유 ${c}`,
+    })
   })
 
-  it('leaves candidates the model omitted as DETAILED', async () => {
-    const a = await seedCampaign()
-    const b = await seedCampaign()
-    chatJson.mockResolvedValueOnce({ scores: [score(a, 8)] })
-    expect(await rankDetailed()).toEqual([a])
-    expect((await getCampaign(b)).status).toBe('DETAILED')
-  })
-
-  it('subtracts campaigns already reviewed today from the quota', async () => {
-    await seedCampaign({ status: 'PENDING_REVIEW', applyMessage: 'x' })
-    // Reviewed on an earlier day: does not count.
+  it('counts campaigns shortlisted today against the quota', async () => {
+    await seedCampaign({ status: 'SHORTLISTED' })
+    // Older rows do not count.
     await seedCampaign({
-      status: 'APPLIED',
-      updatedAt: new Date(Date.now() - 3 * 24 * 3600 * 1000),
+      status: 'PENDING_REVIEW',
+      updatedAt: new Date(Date.now() - 3 * 86400_000),
     })
     const a = await seedCampaign()
     const b = await seedCampaign()
-    chatJson.mockResolvedValueOnce({ scores: [score(a, 5), score(b, 9)] })
+    chatJson.mockResolvedValueOnce({ scores: [score(a, 5), score(b, 8)] })
 
-    expect(await rankDetailed()).toEqual([b])
+    const shortlisted = await rankCollected(now)
+
+    expect(shortlisted).toEqual([b])
     expect((await getCampaign(a)).status).toBe('SKIPPED')
   })
 
-  it('does not call the LLM when the quota is used up', async () => {
-    await seedCampaign({ status: 'PENDING_REVIEW', applyMessage: 'x' })
-    await seedCampaign({ status: 'APPROVED', applyMessage: 'x' })
+  it('makes no LLM call and keeps candidates COLLECTED when the quota is used up', async () => {
+    await seedCampaign({ status: 'SHORTLISTED' })
+    await seedCampaign({ status: 'APPLIED' })
     const a = await seedCampaign()
-    expect(await rankDetailed()).toEqual([])
+    const bad = await seedCampaign({ title: '주류 세트' })
+
+    expect(await rankCollected(now)).toEqual([])
     expect(chatJson).not.toHaveBeenCalled()
-    expect((await getCampaign(a)).status).toBe('DETAILED')
+    expect((await getCampaign(a)).status).toBe('COLLECTED')
+    expect((await getCampaign(bad)).status).toBe('SKIPPED') // rules still apply
   })
 
-  it('enforces the apply message length', async () => {
-    const a = await seedCampaign()
-    chatJson
-      .mockResolvedValueOnce({ scores: [score(a, 8, '가'.repeat(500))] })
-      .mockResolvedValueOnce({ text: '나'.repeat(400) })
-    await rankDetailed()
-    const row = await getCampaign(a)
-    expect([...(row.apply_message ?? '')].length).toBeLessThanOrEqual(300)
+  it('scores in batches of 60 and picks the top overall; omitted ids stay COLLECTED', async () => {
+    const ids: number[] = []
+    for (let i = 0; i < 130; i++) ids.push(await seedCampaign())
+    chatJson.mockImplementation(async (opts: { user: string }) => {
+      const batchIds = [...opts.user.matchAll(/^\[(\d+)\]/gm)].map((m) => Number(m[1]))
+      // The model omits the first id of every batch.
+      return { scores: batchIds.slice(1).map((id) => score(id, id === ids[100] ? 10 : 1)) }
+    })
+
+    const shortlisted = await rankCollected(now)
+
+    expect(chatJson).toHaveBeenCalledTimes(3)
+    const sizes = chatJson.mock.calls.map(
+      (c) => [...(c[0] as { user: string }).user.matchAll(/^\[\d+\]/gm)].length,
+    )
+    expect(sizes).toEqual([60, 60, 10])
+    expect(shortlisted[0]).toBe(ids[100])
+    expect(shortlisted).toHaveLength(2)
+    expect((await getCampaign(ids[0] as number)).status).toBe('COLLECTED')
+    expect((await getCampaign(ids[60] as number)).status).toBe('COLLECTED')
+    expect((await getCampaign(ids[120] as number)).status).toBe('COLLECTED')
+    expect((await getCampaign(ids[5] as number)).status).toBe('SKIPPED')
   })
 
-  it('passes recent rejections to the ranker', async () => {
+  it('puts recent owner history in the prompt', async () => {
+    await seedCampaign({ status: 'APPLIED', title: '신청했던 제품' })
     await seedCampaign({
       status: 'REJECTED',
-      title: '다이어트 쉐이크',
+      title: '거절했던 제품',
       rejectReason: '관심 없는 품목',
     })
-    await seedCampaign({ detail: sampleDetail() })
-    chatJson.mockResolvedValueOnce({ scores: [] })
-    await rankDetailed()
-    const call = chatJson.mock.calls[0]?.[0] as { user: string }
-    expect(call.user).toContain('다이어트 쉐이크')
-    expect(call.user).toContain('관심 없는 품목')
-  })
-})
+    config.CAMPAIGN_DAILY_MAX = 5
+    const a = await seedCampaign()
+    chatJson.mockResolvedValueOnce({ scores: [score(a, 7)] })
 
-describe('rewriteApplyMessage', () => {
-  beforeEach(() => chatJson.mockReset())
+    await rankCollected(now)
 
-  it('writes the new message and bumps the revision', async () => {
-    const id = await seedCampaign({ status: 'PENDING_REVIEW', applyMessage: '원본', revision: 3 })
-    chatJson.mockResolvedValueOnce({ applyMessage: '고친 문구입니다.' })
-    expect(await rewriteApplyMessage(id, '더 짧게')).toBe(true)
-    const row = await getCampaign(id)
-    expect(row.apply_message).toBe('고친 문구입니다.')
-    expect(row.revision).toBe(4)
+    const user = String((chatJson.mock.calls[0]?.[0] as { user?: string } | undefined)?.user)
+    expect(user).toContain('신청했던 제품')
+    expect(user).toContain('거절했던 제품: 관심 없는 품목')
   })
 
-  it('loses to a concurrent edit that bumped the revision', async () => {
-    const id = await seedCampaign({ status: 'PENDING_REVIEW', applyMessage: '원본', revision: 3 })
+  it('does not overwrite a row that left COLLECTED while the LLM ran', async () => {
+    const a = await seedCampaign()
+    const { query } = await import('../../src/db/pool.ts')
     chatJson.mockImplementationOnce(async () => {
-      await query(
-        "update campaigns set apply_message = '직접 수정', revision = revision + 1 where id = $1",
-        [id],
-      )
-      return { applyMessage: '고친 문구입니다.' }
+      await query("update campaigns set status = 'EXPIRED' where id = $1", [a])
+      return { scores: [score(a, 9)] }
     })
-    expect(await rewriteApplyMessage(id, '더 짧게')).toBe(false)
-    const row = await getCampaign(id)
-    expect(row.apply_message).toBe('직접 수정')
-    expect(row.revision).toBe(4)
-  })
 
-  it('does nothing unless the campaign is PENDING_REVIEW', async () => {
-    const id = await seedCampaign({ status: 'APPROVED', applyMessage: '원본' })
-    expect(await rewriteApplyMessage(id, '더 짧게')).toBe(false)
-    expect(chatJson).not.toHaveBeenCalled()
+    expect(await rankCollected(now)).toEqual([])
+    expect((await getCampaign(a)).status).toBe('EXPIRED')
   })
 })
