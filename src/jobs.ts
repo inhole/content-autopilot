@@ -18,6 +18,7 @@ import {
 import { collectInsights, weeklyReport } from './pipeline/insights.ts'
 import {
   expireDrafts,
+  isUnsentReview,
   loadPendingDrafts,
   loadUnsentReviews,
   runReviewMaintenance,
@@ -91,6 +92,12 @@ async function alertOnFinalFailure<T>(
 /** `regenerate` is absent on jobs queued before it existed; feedback implied a regeneration then. */
 type GenerateData = { topicId: number; feedback?: string; regenerate?: boolean; seq?: number }
 type PostData = { postId: number }
+/**
+ * A review job sent by the recovery sweep. It only sends when the draft is still waiting without a
+ * registered review message: the review queue has the standard policy, so it cannot drop a
+ * duplicate of a review job that is still queued, and sendForReview is not idempotent.
+ */
+type ReviewData = PostData & { ifUnsent?: boolean }
 type ChainAlertData = { postId: number; error: string }
 
 export function createBoss(): PgBoss {
@@ -209,9 +216,10 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     if (job) await enqueueGenerate(boss, job.data)
   })
 
-  await boss.work<PostData>(Q.review, async ([job]) => {
+  await boss.work<ReviewData>(Q.review, async ([job]) => {
     if (!job) return
-    const { postId } = job.data
+    const { postId, ifUnsent } = job.data
+    if (ifUnsent && !(await isUnsentReview(postId))) return
     await alertOnFinalFailure(
       job,
       REVIEW_RETRY_LIMIT,
@@ -305,7 +313,7 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
         ? await loadUnsentReviews(new Date())
         : []
     for (const postId of unsent) {
-      await boss.send(Q.review, { postId } satisfies PostData, { singletonKey: `review-${postId}` })
+      await boss.send(Q.review, { postId, ifUnsent: true } satisfies ReviewData)
     }
     console.log('[review-maintenance]', { ...result, resentReviews: unsent })
   })

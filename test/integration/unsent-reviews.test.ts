@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { query } from '../../src/db/pool.ts'
-import { loadUnsentReviews, UNSENT_REVIEW_MINUTES } from '../../src/pipeline/maintenance.ts'
+import {
+  isUnsentReview,
+  loadUnsentReviews,
+  UNSENT_REVIEW_MINUTES,
+} from '../../src/pipeline/maintenance.ts'
 import { seedPost, seedTopic } from './helpers.ts'
 
 const NOW = new Date('2026-10-19T12:00:00Z')
@@ -25,5 +29,18 @@ describe('loadUnsentReviews', () => {
     await seed({ status: 'SCHEDULED', touched: minutesAgo(120) })
 
     expect(await loadUnsentReviews(NOW)).toEqual([lost])
+  })
+})
+
+describe('isUnsentReview', () => {
+  it('lets a recovery job send only while the draft still has no review message', async () => {
+    const waiting = await seed({ touched: minutesAgo(30) })
+    const sent = await seed({ messageId: 77, touched: minutesAgo(30) })
+    const expired = await seed({ status: 'EXPIRED', touched: minutesAgo(30) })
+
+    expect(await isUnsentReview(waiting)).toBe(true)
+    // The original review job got there first: the recovery job must not send a second message.
+    expect(await isUnsentReview(sent)).toBe(false)
+    expect(await isUnsentReview(expired)).toBe(false)
   })
 })
