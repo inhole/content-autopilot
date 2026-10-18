@@ -14,7 +14,13 @@ const server = createDashboardServer({
   loaders: {
     overview: async () => ({
       posts: { pendingReview: 1, scheduled: [], published24h: 0, failed: 0 },
-      campaigns: { counts: {}, lastCollectedAt: null, lastSeenCount: 0, postedLast30d: 0 },
+      campaigns: {
+        counts: {},
+        lastCollectedAt: null,
+        lastSeenCount: 0,
+        postedLast30d: 0,
+        bySource: {},
+      },
     }),
     campaigns: async () => [],
     campaign: async (id) => {
@@ -71,7 +77,7 @@ describe('dashboard server', () => {
     expect(res.headers.get('cache-control')).toBe('no-store')
     expect(res.headers.get('content-security-policy')).toContain("default-src 'none'")
     expect(res.headers.get('content-security-policy')).toContain(
-      "img-src 'self' data: https://st.kakaocdn.net https://t1.daumcdn.net https://img1.kakaocdn.net https://gift-s.kakaocdn.net;",
+      "img-src 'self' data: https://st.kakaocdn.net https://t1.daumcdn.net https://img1.kakaocdn.net https://gift-s.kakaocdn.net https://image.msscdn.net;",
     )
     expect(await res.text()).toContain('현황')
     for (const p of ['/campaigns', '/campaigns?status=all', '/posts']) {

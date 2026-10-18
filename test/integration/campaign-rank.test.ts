@@ -132,4 +132,60 @@ describe('rankCollected', () => {
     expect(await rankCollected(now)).toEqual([])
     expect((await getCampaign(a)).status).toBe('EXPIRED')
   })
+
+  it('ranks each source on its own with its own daily quota and prompt', async () => {
+    config.CAMPAIGN_DAILY_MAX = 1
+    // Gift already used its quota today; Musinsa has not.
+    await seedCampaign({ status: 'SHORTLISTED' })
+    const gift = await seedCampaign()
+    const detail = (contentType: string) => ({
+      campaignId: 1,
+      representativeGoods: { goodsName: 'x', price: 59000 },
+      goodsCount: 1,
+      contentType,
+    })
+    const m1 = await seedCampaign({
+      source: 'musinsa',
+      recruitCount: null,
+      applicationCount: null,
+      detail: detail('VIDEO'),
+    })
+    const m2 = await seedCampaign({
+      source: 'musinsa',
+      recruitCount: null,
+      applicationCount: null,
+      detail: detail('IMAGE'),
+    })
+    chatJson.mockResolvedValueOnce({ scores: [score(m1, 4), score(m2, 8)] })
+
+    const shortlisted = await rankCollected(now)
+
+    expect(shortlisted).toEqual([m2])
+    expect(chatJson).toHaveBeenCalledTimes(1)
+    const call = chatJson.mock.calls[0]?.[0] as { system: string; user: string }
+    expect(call.system).toContain('무신사')
+    expect(call.user).toContain('정가 59,000원')
+    expect(call.user).toContain('리뷰 형식 영상')
+    expect(call.user).toContain('리뷰 형식 사진')
+    expect(call.user).not.toContain('경쟁률')
+    expect((await getCampaign(gift)).status).toBe('COLLECTED')
+    expect((await getCampaign(m1)).status).toBe('SKIPPED')
+    expect((await getCampaign(m2)).status).toBe('SHORTLISTED')
+  })
+
+  it('shortlists up to the quota in every source and concatenates the results', async () => {
+    config.CAMPAIGN_DAILY_MAX = 1
+    const g1 = await seedCampaign()
+    const g2 = await seedCampaign()
+    const m1 = await seedCampaign({ source: 'musinsa', recruitCount: null, applicationCount: null })
+    chatJson
+      .mockResolvedValueOnce({ scores: [score(g1, 3), score(g2, 9)] })
+      .mockResolvedValueOnce({ scores: [score(m1, 5)] })
+
+    expect(await rankCollected(now)).toEqual([g2, m1])
+    expect(chatJson).toHaveBeenCalledTimes(2)
+    const systems = chatJson.mock.calls.map((c) => (c[0] as { system: string }).system)
+    expect(systems[0]).toContain('선물하기')
+    expect(systems[1]).toContain('무신사')
+  })
 })

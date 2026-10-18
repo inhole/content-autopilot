@@ -25,6 +25,8 @@ import {
   type CampaignStatus,
   competition,
   isCampaignRejectReason,
+  musinsaFacts,
+  sourceInfo,
 } from './types.ts'
 
 const TELEGRAM_TEXT_LIMIT = 4000
@@ -36,7 +38,8 @@ export const CAMPAIGN_HELP_LINES = [
   '🎁 체험단',
   '/camps — 진행 중인 체험단 보기',
   '/due <번호> <날짜> — 리뷰 기한 알려주기 (예: /due 12 10/30)',
-  '- 카드의 "📱 선물하기에서 열기"로 폰 카톡에서 신청한 뒤 "✅ 신청함"을 눌러요',
+  '- 선물하기: 카드의 "📱 선물하기에서 열기"로 폰 카톡에서 신청한 뒤 "✅ 신청함"을 눌러요',
+  '- 무신사: 카드의 "💻 무신사에서 열기"로 PC에서 신청한 뒤 "✅ 신청함"을 눌러요',
 ]
 
 export const CAMPAIGN_BOT_COMMANDS = [
@@ -92,12 +95,36 @@ export function formatCounts(
   return parts.length ? parts.join(' · ') : null
 }
 
+const CONTENT_TYPE_TEXT = { VIDEO: '📹 영상 리뷰', IMAGE: '📷 사진 리뷰' } as const
+
+/** Musinsa facts lines: list price, goods count and the requested review format. */
+export function formatMusinsaFacts(c: Pick<Campaign, 'source' | 'detail'>): string[] {
+  const m = musinsaFacts(c)
+  if (!m) return []
+  const parts: string[] = []
+  if (m.price != null) parts.push(`정가 ${formatWon(m.price)}`)
+  if (m.goodsCount != null && m.goodsCount > 1) parts.push(`상품 ${m.goodsCount}개`)
+  const out: string[] = []
+  if (parts.length) out.push(parts.join(' · '))
+  if (m.contentType) out.push(CONTENT_TYPE_TEXT[m.contentType])
+  return out
+}
+
+/** What the owner does with the card, by where the source is applied on. */
+const applyInstruction = (source: string) =>
+  sourceInfo(source).applyOn === 'pc'
+    ? '💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요'
+    : '📱 폰 카톡에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요'
+
 /** The review card; always fits a 1024-char photo caption. */
 export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
-  const lines: string[] = [`🎁 #${c.id} ${clip(c.title, 200)}`]
+  const lines: string[] = [`🎁 [${sourceInfo(c.source).label}] #${c.id} ${clip(c.title, 200)}`]
   if (c.brand) lines.push(clip(c.brand, 80))
-  const counts = formatCounts(c)
-  if (counts) lines.push(counts)
+  if (c.source === 'musinsa') lines.push(...formatMusinsaFacts(c))
+  else {
+    const counts = formatCounts(c)
+    if (counts) lines.push(counts)
+  }
   if (c.apply_deadline) {
     lines.push(`마감 ${formatDday(daysUntil(c.apply_deadline, now, tz))} (추정)`)
   }
@@ -106,7 +133,7 @@ export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
     const reason = c.reason ? clip(c.reason, 300) : ''
     lines.push([score, reason].filter(Boolean).join(' · '))
   }
-  lines.push('', '📱 폰 카톡에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
+  lines.push('', applyInstruction(c.source))
   return [...lines.join('\n')].slice(0, PHOTO_CAPTION_LIMIT).join('')
 }
 
@@ -124,10 +151,11 @@ const cb = (
 })
 
 export function campaignCardButtons(
-  c: Pick<Campaign, 'id' | 'url' | 'revision'>,
+  c: Pick<Campaign, 'id' | 'url' | 'revision'> & { source?: string },
 ): CampaignButton[] {
+  const info = sourceInfo(c.source)
   return [
-    { text: '📱 선물하기에서 열기', url: c.url },
+    { text: `${info.applyOn === 'pc' ? '💻' : '📱'} ${info.label}에서 열기`, url: c.url },
     { text: '✅ 신청함', callback: cb(c, 'applied', c.revision) },
     { text: '🙅 패스', callback: cb(c, 'pass', c.revision) },
   ]
@@ -181,7 +209,7 @@ export function formatActiveCampaigns(rows: Campaign[], now: Date, tz: string): 
       const dday = at ? ` · ${formatDday(daysUntil(at, now, tz))}` : ''
       const hint =
         c.status === 'SELECTED' && !c.review_deadline ? ` · 기한 모름 (/due ${c.id} 10/30)` : ''
-      return `#${c.id} ${clip(c.title, 60)}${dday}${hint}`
+      return `#${c.id} [${sourceInfo(c.source).label}] ${clip(c.title, 60)}${dday}${hint}`
     })
     sections.push(`${stage.title} (${inStage.length})\n${lines.join('\n')}`)
   }

@@ -1,12 +1,17 @@
 import {
   ACTIVE_CAMPAIGN_STATUSES,
+  CAMPAIGN_SOURCE_KEYS,
   CAMPAIGN_STATUSES,
   type Campaign,
+  type CampaignSource,
   type CampaignStatus,
+  isCampaignSource,
 } from '../campaigns/types.ts'
 import { query } from '../db/pool.ts'
 
 /** Read-only queries for the dashboard. Nothing here writes to the database. */
+
+export { CAMPAIGN_SOURCE_KEYS }
 
 export type CampaignFilter = CampaignStatus | 'active' | 'all'
 
@@ -14,6 +19,11 @@ export function parseCampaignFilter(value: string | null | undefined): CampaignF
   if (value === 'all') return 'all'
   if ((CAMPAIGN_STATUSES as readonly string[]).includes(value ?? '')) return value as CampaignStatus
   return 'active'
+}
+
+/** The `?source=` filter; anything but a known source means all sources. */
+export function parseCampaignSource(value: string | null | undefined): CampaignSource | null {
+  return isCampaignSource(value) ? value : null
 }
 
 /** Campaigns whose `last_seen_at` is within this window of the newest one count as the last collection. */
@@ -34,6 +44,8 @@ export type OverviewData = {
     /** Campaigns seen in that last collection. */
     lastSeenCount: number
     postedLast30d: number
+    /** Row count per source and status; a source without rows is missing. */
+    bySource: Partial<Record<CampaignSource, Partial<Record<CampaignStatus, number>>>>
   }
 }
 
@@ -56,6 +68,9 @@ export async function loadOverview(): Promise<OverviewData> {
   const campaignRows = await query<{ status: CampaignStatus; n: number }>(
     'select status, count(*) as n from campaigns group by status',
   )
+  const sourceRows = await query<{ source: string; status: CampaignStatus; n: number }>(
+    'select source, status, count(*) as n from campaigns group by source, status',
+  )
   const [seen] = await query<{ last_collected_at: Date | null; last_seen_count: number }>(
     `select max(last_seen_at) as last_collected_at,
             count(*) filter (where last_seen_at >= (select max(last_seen_at) from campaigns)
@@ -69,6 +84,13 @@ export async function loadOverview(): Promise<OverviewData> {
   )
   const campaignCounts: Partial<Record<CampaignStatus, number>> = {}
   for (const r of campaignRows) campaignCounts[r.status] = Number(r.n)
+  const bySource: OverviewData['campaigns']['bySource'] = {}
+  for (const r of sourceRows) {
+    if (!isCampaignSource(r.source)) continue
+    const m = bySource[r.source] ?? {}
+    m[r.status] = Number(r.n)
+    bySource[r.source] = m
+  }
   return {
     posts: {
       pendingReview: Number(counts?.pending_review ?? 0),
@@ -81,6 +103,7 @@ export async function loadOverview(): Promise<OverviewData> {
       lastCollectedAt: seen?.last_collected_at ?? null,
       lastSeenCount: Number(seen?.last_seen_count ?? 0),
       postedLast30d: Number(posted?.n ?? 0),
+      bySource,
     },
   }
 }
@@ -88,6 +111,7 @@ export async function loadOverview(): Promise<OverviewData> {
 export type CampaignListRow = Pick<
   Campaign,
   | 'id'
+  | 'source'
   | 'title'
   | 'brand'
   | 'status'
@@ -121,12 +145,25 @@ export function nextDeadline(
   }
 }
 
-export async function loadCampaignList(filter: CampaignFilter): Promise<CampaignListRow[]> {
-  const where =
-    filter === 'all' ? '' : filter === 'active' ? 'where status = any($1)' : 'where status = $1'
-  const values = filter === 'all' ? [] : [filter === 'active' ? ACTIVE_CAMPAIGN_STATUSES : filter]
+export async function loadCampaignList(
+  filter: CampaignFilter,
+  source: CampaignSource | null = null,
+): Promise<CampaignListRow[]> {
+  const conds: string[] = []
+  const values: unknown[] = []
+  if (filter !== 'all') {
+    values.push(filter === 'active' ? ACTIVE_CAMPAIGN_STATUSES : filter)
+    conds.push(
+      filter === 'active' ? `status = any($${values.length})` : `status = $${values.length}`,
+    )
+  }
+  if (source) {
+    values.push(source)
+    conds.push(`source = $${values.length}`)
+  }
+  const where = conds.length ? `where ${conds.join(' and ')}` : ''
   const rows = await query<CampaignListRow>(
-    `select id, title, brand, status, recruit_count, application_count, apply_deadline,
+    `select id, source, title, brand, status, recruit_count, application_count, apply_deadline,
             review_deadline, score, updated_at
        from campaigns ${where}
       order by updated_at desc limit 300`,

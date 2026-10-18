@@ -11,6 +11,7 @@ import {
   shortenReviewPrompt,
 } from './review-prompts.ts'
 import { loadCampaign } from './store.ts'
+import { musinsaFacts } from './types.ts'
 
 /**
  * Gift review drafts (docs/plans/campaign-autopilot.md): the owner's memo in, a short review text
@@ -138,7 +139,10 @@ export async function generateReviewDraft(
   const profile = await loadCampaignProfile()
   const limits = reviewLimits(profile)
   const body = await draftBody(
-    reviewSystem(profile, limits),
+    reviewSystem(profile, limits, {
+      source: c.source,
+      contentType: musinsaFacts(c)?.contentType ?? null,
+    }),
     reviewUser(c, { feedback: opts.feedback, previous: c.draft_text }),
     c.memo,
     limits,
@@ -224,7 +228,7 @@ export async function replaceDraft(
   return { ok: true, revision: row.revision }
 }
 
-/** The owner pasted the review into the Kakao app. Bound to the control message they saw. */
+/** The owner pasted the review into the shop's review form. Bound to the control message they saw. */
 export async function markPosted(id: number, revision: number): Promise<boolean> {
   const rows = await query(
     `update campaigns set status = 'POSTED', posted_at = now(), updated_at = now()

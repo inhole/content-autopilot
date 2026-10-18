@@ -13,13 +13,15 @@ export async function seedCampaign(
     applyDeadline?: Date | null
     rejectReason?: string | null
     updatedAt?: Date
+    source?: string
+    detail?: unknown
   } = {},
 ): Promise<number> {
   seq += 1
   const [row] = await query<{ id: number }>(
     `insert into campaigns (external_id, url, url_hash, status, title, brand, recruit_count,
-       application_count, remaining_days, apply_deadline, reject_reason, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, now()))
+       application_count, remaining_days, apply_deadline, reject_reason, updated_at, source, detail)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12, now()), $13, $14)
      returning id`,
     [
       `ext-${seq}`,
@@ -34,6 +36,8 @@ export async function seedCampaign(
       opts.applyDeadline ?? null,
       opts.rejectReason ?? null,
       opts.updatedAt ?? null,
+      opts.source ?? 'kakao-gift',
+      opts.detail == null ? null : JSON.stringify(opts.detail),
     ],
   )
   if (!row) throw new Error('seedCampaign failed')

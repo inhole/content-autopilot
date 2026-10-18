@@ -214,12 +214,12 @@ describe('formatActiveCampaigns', () => {
       NOW,
       TZ,
     )
-    expect(text).toContain('신청 대기 (1)\n#1 A · D-3')
-    expect(text).toContain('결과 대기 (1)\n#2 B · D-3')
-    expect(text).toContain('#3 C · 기한 모름 (/due 3 10/30)')
-    expect(text).toContain('#4 D · D-2')
-    expect(text).not.toMatch(/#4 D.*\/due/)
-    expect(text).toContain('초안 검수 (1)\n#5 E')
+    expect(text).toContain('신청 대기 (1)\n#1 [선물하기] A · D-3')
+    expect(text).toContain('결과 대기 (1)\n#2 [선물하기] B · D-3')
+    expect(text).toContain('#3 [선물하기] C · 기한 모름 (/due 3 10/30)')
+    expect(text).toContain('#4 [선물하기] D · D-2')
+    expect(text).not.toMatch(/#4 \[선물하기\] D.*\/due/)
+    expect(text).toContain('초안 검수 (1)\n#5 [선물하기] E')
   })
 })
 
@@ -227,5 +227,76 @@ describe('help', () => {
   it('registers camps and due', () => {
     expect(CAMPAIGN_BOT_COMMANDS.map((c) => c.command)).toEqual(['camps', 'due'])
     expect(CAMPAIGN_HELP_LINES.join('\n')).toContain('/due')
+  })
+})
+
+const musinsaCampaign = (over: Partial<Campaign> = {}) =>
+  campaign({
+    source: 'musinsa',
+    url: 'https://www.musinsa.com/preuser/events/38933',
+    title: '후드 집업',
+    recruit_count: null,
+    application_count: null,
+    detail: {
+      campaignId: 38933,
+      brandName: '브랜드',
+      representativeGoods: { goodsName: '후드 집업', price: 129000 },
+      goodsCount: 1,
+      contentType: 'VIDEO',
+    },
+    ...over,
+  })
+
+describe('source-aware cards', () => {
+  it('gift card keeps competition and the phone instruction with a source label', () => {
+    const text = formatCampaignCard(campaign(), NOW, TZ)
+    expect(text).toContain('[선물하기] #12')
+    expect(text).toContain('경쟁률 12.3:1')
+    expect(text).not.toContain('정가')
+  })
+  it('Musinsa card shows price, review format and the PC instruction', () => {
+    const text = formatCampaignCard(musinsaCampaign(), NOW, TZ)
+    expect(text).toContain('[무신사] #12 후드 집업')
+    expect(text).toContain('정가 129,000원')
+    expect(text).toContain('📹 영상 리뷰')
+    expect(text).toContain('💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
+    expect(text).not.toMatch(/모집|📱/)
+    const image = formatCampaignCard(
+      musinsaCampaign({ detail: { contentType: 'IMAGE', representativeGoods: { price: 1000 } } }),
+      NOW,
+      TZ,
+    )
+    expect(image).toContain('📷 사진 리뷰')
+  })
+  it('Musinsa card without detail still renders and fits a caption', () => {
+    expect(formatCampaignCard(musinsaCampaign({ detail: null }), NOW, TZ)).toContain('[무신사]')
+    const huge = formatCampaignCard(
+      musinsaCampaign({
+        title: '가'.repeat(900),
+        brand: '나'.repeat(900),
+        reason: '다'.repeat(2000),
+      }),
+      NOW,
+      TZ,
+    )
+    expect([...huge].length).toBeLessThanOrEqual(1024)
+  })
+  it('url button text follows the source', () => {
+    const [gift] = campaignCardButtons(campaign())
+    const [musinsa, applied] = campaignCardButtons(musinsaCampaign())
+    expect(gift).toMatchObject({ text: '📱 선물하기에서 열기' })
+    expect(musinsa).toEqual({
+      text: '💻 무신사에서 열기',
+      url: 'https://www.musinsa.com/preuser/events/38933',
+    })
+    expect(applied && 'callback' in applied && applied.callback.action).toBe('applied')
+  })
+  it('/camps shows the source label', () => {
+    const text = formatActiveCampaigns([campaign(), musinsaCampaign({ id: 13 })], NOW, TZ)
+    expect(text).toContain('#12 [선물하기]')
+    expect(text).toContain('#13 [무신사]')
+  })
+  it('help mentions both sources', () => {
+    expect(CAMPAIGN_HELP_LINES.join('\n')).toContain('무신사에서 열기')
   })
 })

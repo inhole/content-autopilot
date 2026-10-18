@@ -34,6 +34,7 @@ export const IMAGE_HOSTS = [
   't1.daumcdn.net',
   'img1.kakaocdn.net',
   'gift-s.kakaocdn.net',
+  'image.msscdn.net',
 ] as const
 
 /** Only https images on an allowlisted host (no credentials, default port) may be embedded. */

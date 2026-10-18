@@ -24,6 +24,52 @@ export const ACTIVE_CAMPAIGN_STATUSES = [
   'DRAFT_REVIEW',
 ] as const satisfies readonly CampaignStatus[]
 
+/** Where a campaign comes from (`campaigns.source`). */
+export const CAMPAIGN_SOURCES = {
+  'kakao-gift': { label: '선물하기', applyOn: 'mobile', reviewPlace: '선물하기 상품 리뷰' },
+  musinsa: { label: '무신사', applyOn: 'pc', reviewPlace: '무신사 상품 후기' },
+} as const
+export type CampaignSource = keyof typeof CAMPAIGN_SOURCES
+export const CAMPAIGN_SOURCE_KEYS = Object.keys(CAMPAIGN_SOURCES) as CampaignSource[]
+
+export function isCampaignSource(value: unknown): value is CampaignSource {
+  return typeof value === 'string' && Object.hasOwn(CAMPAIGN_SOURCES, value)
+}
+
+/** Source facts for a stored `source` string; unknown values fall back to the Kakao gift wording. */
+export function sourceInfo(source: string | null | undefined) {
+  return CAMPAIGN_SOURCES[isCampaignSource(source) ? source : 'kakao-gift']
+}
+
+/** One item of the Musinsa preuser recruitment list (src/campaigns/musinsa.ts), the fields we read. */
+export type MusinsaDetail = {
+  campaignId?: number | string
+  campaignEndDate?: string
+  brandName?: string
+  representativeGoods?: { goodsImageUrl?: string; goodsName?: string; price?: number | null } | null
+  goodsCount?: number | null
+  contentType?: string | null
+}
+
+export type ContentType = 'VIDEO' | 'IMAGE'
+
+/** Reads the Musinsa-only facts out of `campaigns.detail`; null for any other source. */
+export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>): {
+  price: number | null
+  goodsCount: number | null
+  contentType: ContentType | null
+} | null {
+  if (c.source !== 'musinsa') return null
+  const d = (c.detail ?? {}) as MusinsaDetail
+  const price = d.representativeGoods?.price
+  const contentType = d.contentType === 'VIDEO' || d.contentType === 'IMAGE' ? d.contentType : null
+  return {
+    price: typeof price === 'number' ? price : null,
+    goodsCount: typeof d.goodsCount === 'number' ? d.goodsCount : null,
+    contentType,
+  }
+}
+
 /** One `campaigns` row as selected with `select *`. */
 export type Campaign = {
   id: number
@@ -42,7 +88,7 @@ export type Campaign = {
   apply_deadline: Date | null
   first_seen_at: Date
   last_seen_at: Date
-  detail: GiftTrialItem | null
+  detail: GiftTrialItem | MusinsaDetail | null
   score: number | null
   reason: string | null
   skip_reason: string | null

@@ -4,8 +4,8 @@ import { query } from '../db/pool.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { type CampaignProfile, loadCampaignProfile } from './profile.ts'
-import { RANK_SYSTEM, type RankCandidate, type RankHistory, rankUser } from './prompts.ts'
-import { type Campaign, competition } from './types.ts'
+import { type RankCandidate, type RankHistory, rankSystem, rankUser } from './prompts.ts'
+import { type Campaign, competition, musinsaFacts } from './types.ts'
 
 /** The first collection holds ~475 rows; one prompt per 60 keeps each call small and reliable. */
 export const RANK_BATCH_SIZE = 60
@@ -91,15 +91,31 @@ export function pickTopCampaigns(scores: Scored[], candidateIds: Set<number>, co
  * A campaign shortlisted yesterday and applied today counts today; that only makes the quota
  * slightly more conservative.
  */
-async function countShortlistedToday(now: Date): Promise<number> {
+async function countShortlistedToday(now: Date): Promise<Map<string, number>> {
   const dayStart = zonedToUtc(localDate(now, config.TZ_NAME), '00:00', config.TZ_NAME)
-  const [row] = await query<{ n: number }>(
-    `select count(*) as n from campaigns
+  const rows = await query<{ source: string; n: number }>(
+    `select source, count(*) as n from campaigns
      where status in ('SHORTLISTED', 'PENDING_REVIEW', 'REJECTED', 'EXPIRED', 'APPLIED')
-       and updated_at >= $1`,
+       and updated_at >= $1
+     group by source`,
     [dayStart],
   )
-  return row?.n ?? 0
+  return new Map(rows.map((r) => [r.source, Number(r.n)]))
+}
+
+/** The facts of one campaign the rank prompt shows; Musinsa has price and format instead of counts. */
+export function toRankCandidate(c: Campaign): RankCandidate {
+  const m = musinsaFacts(c)
+  return {
+    id: c.id,
+    source: c.source,
+    title: c.title,
+    brand: c.brand,
+    application_count: c.application_count,
+    recruit_count: c.recruit_count,
+    remaining_days: c.remaining_days,
+    ...(m ? { price: m.price, goods_count: m.goodsCount, content_type: m.contentType } : {}),
+  }
 }
 
 async function loadHistory(): Promise<RankHistory> {
@@ -144,25 +160,34 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   }
   if (candidates.length === 0) return []
 
-  // Quota used up: leave the rest COLLECTED instead of burning LLM calls.
-  const quota = remainingQuota(config.CAMPAIGN_DAILY_MAX, await countShortlistedToday(now))
-  if (quota === 0) return []
-
+  // Each source has its own daily quota and its own LLM batches.
   const history = await loadHistory()
+  const doneToday = await countShortlistedToday(now)
+  const shortlisted: number[] = []
+  for (const source of [...new Set(candidates.map((c) => c.source))]) {
+    const ofSource = candidates.filter((c) => c.source === source)
+    // Quota used up: leave the rest COLLECTED instead of burning LLM calls.
+    const quota = remainingQuota(config.CAMPAIGN_DAILY_MAX, doneToday.get(source) ?? 0)
+    if (quota === 0) continue
+    shortlisted.push(...(await rankSource(source, ofSource, quota, history, profile)))
+  }
+  return shortlisted
+}
+
+/** Scores one source's candidates in batches and shortlists the top `quota`. */
+async function rankSource(
+  source: string,
+  candidates: Campaign[],
+  quota: number,
+  history: RankHistory,
+  profile: CampaignProfile,
+): Promise<number[]> {
   const scores: Scored[] = []
   for (const batch of chunk(candidates, RANK_BATCH_SIZE)) {
-    const input: RankCandidate[] = batch.map((c) => ({
-      id: c.id,
-      title: c.title,
-      brand: c.brand,
-      application_count: c.application_count,
-      recruit_count: c.recruit_count,
-      remaining_days: c.remaining_days,
-    }))
     const out = await chatJson({
       model: config.LLM_RANK_MODEL,
-      system: RANK_SYSTEM,
-      user: rankUser({ profile, history, candidates: input }),
+      system: rankSystem(source),
+      user: rankUser({ profile, history, candidates: batch.map(toRankCandidate) }),
       schema: rankSchema,
       schemaName: 'campaign_scores',
       temperature: 0.3,
