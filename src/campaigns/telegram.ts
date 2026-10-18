@@ -126,7 +126,8 @@ export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
     if (counts) lines.push(counts)
   }
   if (c.apply_deadline) {
-    lines.push(`마감 ${formatDday(daysUntil(c.apply_deadline, now, tz))} (추정)`)
+    const estimate = sourceInfo(c.source).estimatedDeadline ? ' (추정)' : ''
+    lines.push(`마감 ${formatDday(daysUntil(c.apply_deadline, now, tz))}${estimate}`)
   }
   if (c.score != null || c.reason) {
     const score = c.score != null ? `⭐ ${c.score}` : ''

@@ -261,6 +261,9 @@ describe('source-aware cards', () => {
     expect(text).toContain('📹 영상 리뷰')
     expect(text).toContain('💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
     expect(text).not.toMatch(/모집|📱/)
+    // Musinsa gives the exact end time, so its deadline is not marked as an estimate.
+    expect(text).toContain('마감 D-')
+    expect(text).not.toContain('추정')
     const image = formatCampaignCard(
       musinsaCampaign({ detail: { contentType: 'IMAGE', representativeGoods: { price: 1000 } } }),
       NOW,

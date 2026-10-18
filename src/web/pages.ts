@@ -135,11 +135,11 @@ const FILTER_CHIPS: { value: CampaignFilter; label: string }[] = [
     .map((s) => ({ value: s as CampaignFilter, label: statusLabel(s) })),
 ]
 
-/** `D-3` badge for the stage's deadline; apply deadlines carry an estimate marker. */
-function deadlineCell(d: NextDeadline | null, ctx: RenderCtx): string {
+/** `D-3` badge for the stage's deadline; estimated apply deadlines carry a marker. */
+function deadlineCell(d: NextDeadline | null, ctx: RenderCtx, source: string): string {
   if (!d) return '-'
   const label = formatDday(daysUntil(d.at, ctx.now, ctx.tz))
-  return `<span class="badge">${esc(label)}</span>${d.kind === 'apply' ? ' <small class="muted">추정</small>' : ''}`
+  return `<span class="badge">${esc(label)}</span>${d.kind === 'apply' && sourceInfo(source).estimatedDeadline ? ' <small class="muted">추정</small>' : ''}`
 }
 
 const sourceQuery = (source: CampaignSource | null) => (source ? `&source=${esc(source)}` : '')
@@ -175,7 +175,7 @@ export function renderCampaignList(
 <td data-label="브랜드">${esc(c.brand ?? '-')}</td>
 <td data-label="상태"><span class="badge">${esc(statusLabel(c.status))}</span></td>
 <td data-label="경쟁률">${esc(formatCompetition(c))}</td>
-<td data-label="마감">${deadlineCell(nextDeadline(c), ctx)}</td>
+<td data-label="마감">${deadlineCell(nextDeadline(c), ctx, c.source)}</td>
 <td data-label="점수">${c.score != null ? esc(c.score) : '-'}</td></tr>`,
       )
       .join('')
@@ -220,7 +220,10 @@ export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): 
     ...(m ? [] : [field('신청자', count(c.application_count))]),
     ...(m ? [] : [field('경쟁률', esc(formatCompetition(c)))]),
     field('남은 일수', c.remaining_days != null ? `${esc(c.remaining_days)}일` : '-'),
-    field('신청 마감 (추정)', dateWithDday(c.apply_deadline, ctx)),
+    field(
+      sourceInfo(c.source).estimatedDeadline ? '신청 마감 (추정)' : '신청 마감',
+      dateWithDday(c.apply_deadline, ctx),
+    ),
     field('처음 본 시각', t(c.first_seen_at)),
     field('마지막으로 본 시각', t(c.last_seen_at)),
   ].join('')

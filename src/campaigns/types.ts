@@ -24,10 +24,23 @@ export const ACTIVE_CAMPAIGN_STATUSES = [
   'DRAFT_REVIEW',
 ] as const satisfies readonly CampaignStatus[]
 
-/** Where a campaign comes from (`campaigns.source`). */
+/**
+ * Where a campaign comes from (`campaigns.source`). Kakao gift only gives remaining days, so its
+ * apply deadline is an estimate; Musinsa gives the exact end time.
+ */
 export const CAMPAIGN_SOURCES = {
-  'kakao-gift': { label: '선물하기', applyOn: 'mobile', reviewPlace: '선물하기 상품 리뷰' },
-  musinsa: { label: '무신사', applyOn: 'pc', reviewPlace: '무신사 상품 후기' },
+  'kakao-gift': {
+    label: '선물하기',
+    applyOn: 'mobile',
+    reviewPlace: '선물하기 상품 리뷰',
+    estimatedDeadline: true,
+  },
+  musinsa: {
+    label: '무신사',
+    applyOn: 'pc',
+    reviewPlace: '무신사 상품 후기',
+    estimatedDeadline: false,
+  },
 } as const
 export type CampaignSource = keyof typeof CAMPAIGN_SOURCES
 export const CAMPAIGN_SOURCE_KEYS = Object.keys(CAMPAIGN_SOURCES) as CampaignSource[]
