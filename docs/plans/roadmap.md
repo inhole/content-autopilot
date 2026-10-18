@@ -51,7 +51,7 @@
 ### 사용자가 먼저 할 일
 
 - **무신사 프리유저 가입:** 무신사 스냅을 1개 이상 올린 뒤 프리유저에 가입한다. 그 전에는 상세, 신청, 내 신청 내역 API가 `MCMP_001_005` / `MCMP_001_006`으로 막힌다.
-- **로컬 워커 상시 실행:** 이 PC에서 `WORKER_ROLE=local`로 `npm start`를 띄운다(작업 스케줄러 로그온 실행, `docs/operations.md`). Aside 브라우저가 켜져 있고 무신사에 로그인돼 있어야 한다.
+- **Aside 브라우저(자동 신청용):** 자동 신청을 만들 때 이 PC에서 Aside를 켜 두고 무신사에 로그인해 둔다. 목록 수집에는 필요 없다(공개 API, 클라우드 워커).
 
 ### 운영하면서 확인할 것
 
@@ -63,9 +63,9 @@
 
 ### 무신사 자동 신청 (가입 뒤, 2~3일)
 
-1. 가입한 계정으로 상세 API(`/api2/mcmp/v2/recruitment-campaigns/:id`)와 내 신청 내역(`/my`) 응답을 Aside로 받아 fixture로 저장한다. 추측으로 만들지 않는다.
+1. 가입한 계정으로 신청 화면과 내 신청 내역 응답을 Aside로 받아 fixture로 저장한다. 추측으로 만들지 않는다.
 2. 카드에 옵션 버튼(`🚀 L로 신청` 등)을 붙인다. 옵션이 하나면 `🚀 신청`만 둔다.
-3. 로컬 워커의 `campaign-apply` 큐를 만든다. Aside로 신청 화면(`/preuser/apply/<id>`)에서 옵션과 기본 배송지로 제출한다. 처음에 만들었다가 지운 claim 모델을 그대로 쓴다. 제출 전후로 내 신청 내역과 대조하고, `claim_seq`로 소유권을 확인하고, 3회 실패하면 `APPLY_FAILED`와 재시도 버튼을 띄운다.
+3. `campaign-apply` 큐를 만든다(Aside가 있는 이 PC에서만 처리하는 방법이 필요하다). Aside로 신청 화면(`/preuser/apply/<id>`)에서 옵션과 기본 배송지로 제출한다. 처음에 만들었다가 지운 claim 모델을 그대로 쓴다. 제출 전후로 내 신청 내역과 대조하고, `claim_seq`로 소유권을 확인하고, 3회 실패하면 `APPLY_FAILED`와 재시도 버튼을 띄운다.
 4. 내 신청 내역으로 선정 여부를 자동 반영한다. 그 전까지는 지금처럼 버튼으로 기록한다.
 5. 일주일은 dry-run(제출하지 않고 기록만)으로 운영한 뒤 켠다.
 
@@ -84,7 +84,6 @@
   - 인증은 지금의 Basic 인증과 GET 전용, 보안 헤더를 유지한다.
 - **배포:** `web/dist` 정적 파일을 워커가 그대로 서빙한다. 서비스를 따로 늘리지 않는다.
   - 지금은 빌드 단계가 없다. 루트에 `build` 스크립트(`npm --prefix web ci && npm --prefix web run build`)를 추가하고 Railway(Railpack)가 이를 실행하는지 확인한다.
-  - 로컬 워커(`WORKER_ROLE=local`)는 대시보드를 띄우지 않으므로 빌드 결과가 필요 없다.
 
 ### 화면 (shadcn/ui 컴포넌트 기준)
 
@@ -129,7 +128,7 @@
 |---|---|---|
 | 원고 | `chatJson`으로 장면 배열 `{ 화면 문구, 내레이션, 길이 }` | 원글의 사실만 쓰고 말투 규칙을 지킨다 |
 | TTS | OpenAI TTS, ElevenLabs, Google Cloud TTS | 한국어 품질과 단가를 샘플 3개로 비교해서 고른다 |
-| 렌더 | Remotion(React) 또는 ffmpeg | 대시보드와 같은 React라 Remotion을 우선 검토한다. Railway Hobby는 CPU가 약하므로 렌더는 로컬 PC 워커(`WORKER_ROLE=local`)에서 한다 |
+| 렌더 | Remotion(React) 또는 ffmpeg | 대시보드와 같은 React라 Remotion을 우선 검토한다. Railway Hobby는 CPU가 약하므로 렌더는 이 PC에서 따로 돌리는 워커에서 한다(필요해지면 워커 역할 구분을 다시 도입한다) |
 | 저장소 | Supabase Storage(공개 URL) | Instagram 컨테이너가 `video_url`을 요구한다 |
 | 검수 | Telegram `sendVideo` + 승인·재생성 버튼 | Threads 검수와 같은 revision 규칙을 쓴다 |
 

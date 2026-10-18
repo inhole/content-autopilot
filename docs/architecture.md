@@ -123,15 +123,14 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 
 ## 체험단 파이프라인
 
-체험단은 출처가 둘이다. **카카오톡 선물하기**는 공개 목록을, **무신사 프리유저**는 로그인이 필요한 목록을 모아 고르고, 신청·결과·리뷰 기한을 챙기고, 리뷰 초안을 쓴다. Threads 파이프라인과 같은 Postgres, pg-boss를 쓴다. 선물하기 신청과 리뷰 작성은 카카오톡 모바일 앱에서만, 무신사는 PC에서 한다. 코드는 둘 다 하지 않는다. 내가 직접 하고 Telegram 버튼으로 기록한다([결정 9](decisions.md#9-체험단-출처는-카카오-선물하기-공개-목록이다), [결정 10](decisions.md#10-신청과-리뷰는-사람이-하고-버튼으로-기록한다)). 무신사 목록은 내 로그인이 필요해서 내 Windows PC의 Aside 브라우저로만 읽고, 그 일만 하는 로컬 워커를 따로 둔다([결정 13](decisions.md#13-무신사는-로그인이-필요해-이-pc의-aside로만-읽는다)). 계획과 검증 현황은 [plans/campaign-autopilot.md](plans/campaign-autopilot.md)에 있다.
+체험단은 출처가 둘이다. **카카오톡 선물하기**와 **무신사 프리유저**는 둘 다 공개 목록을 읽어 모아 고르고, 신청·결과·리뷰 기한을 챙기고, 리뷰 초안을 쓴다. Threads 파이프라인과 같은 Postgres, pg-boss, 같은 클라우드 워커를 쓴다. 선물하기 신청과 리뷰 작성은 카카오톡 모바일 앱에서만, 무신사는 PC에서 한다. 코드는 둘 다 하지 않는다. 내가 직접 하고 Telegram 버튼으로 기록한다([결정 9](decisions.md#9-체험단-출처는-카카오-선물하기-공개-목록이다), [결정 10](decisions.md#10-신청과-리뷰는-사람이-하고-버튼으로-기록한다)). 무신사 목록도 로그인 없이 읽히는 공개 API다. 로그인이 필요한 건 신청뿐이라, 자동 신청은 나중에 Aside로 한다([결정 13](decisions.md#13-무신사-체험단-목록은-공개-api라-클라우드에서-읽는다)). 계획과 검증 현황은 [plans/campaign-autopilot.md](plans/campaign-autopilot.md)에 있다.
 
 ```
- gift.kakao.com 공개 목록 (page 33325)          내 PC (WORKER_ROLE=local)
-        │  gift-collect (09·15·21시)             무신사 목록 ◀── Aside 브라우저(내 로그인)
-        │                                              │  musinsa-collect (10·16·22시)
-        │                                              ▼  campaigns upsert → campaign-rank 전송
-        ▼                                              │
- campaigns COLLECTED ◀─────────────────────────────────┘
+ gift.kakao.com 공개 목록 (page 33325)          musinsa.com/preuser 공개 API
+        │  gift-collect (09·15·21시)                    │  musinsa-collect (10·16·22시)
+        │                                               │  새 공고만 상세(발표일·리뷰 기간) 추가
+        ▼                                               ▼
+  campaigns COLLECTED ◀──────────────────────────────────┘
         │
         ▼
         규칙 필터 ──▶ LLM 점수(출처별, 60건씩) ──▶ 출처마다 하루 상위 N개 SHORTLISTED
@@ -149,13 +148,13 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 
 ### 큐
 
-모두 `src/campaigns/jobs.ts`에 있다. 큐는 역할별로 나뉜다(`LOCAL_QUEUES`, `CLOUD_QUEUES`). 겹치지 않아서 한 작업은 그 큐를 맡은 역할만 처리한다. 로컬 워커는 `musinsa-collect`만, 클라우드 워커는 나머지를 맡는다. 두 역할 모두 큐와 스케줄을 만든다(멱등).
+모두 `src/campaigns/jobs.ts`에 있고, 클라우드 워커 하나가 전부 처리한다(큐와 스케줄은 멱등으로 만든다). 로컬 워커 역할은 없다.
 
 | 큐 | 하는 일 |
 |---|---|
 | `gift-collect` | `GIFT_COLLECT_CRON`(기본 `0 9,15,21 * * *`)마다 공개 목록을 읽어 `campaigns`에 upsert하고, `COLLECTED`를 선별해 뽑힌 만큼 카드를 보낸다. `stately`, 재시도 1회(10분 뒤). 클라우드. |
-| `musinsa-collect` | `MUSINSA_COLLECT_CRON`(기본 `0 10,16,22 * * *`)마다 내 PC의 로컬 워커가 Aside로 무신사 목록을 읽어 `campaigns`에 upsert하고 `campaign-rank`를 쌓는다. 선별과 카드는 하지 않는다. `stately`, 재시도 1회(10분 뒤). Aside가 꺼져 있거나 로그아웃이면 재시도 없이 끝내고 알린다. 로컬. |
-| `campaign-rank` | `COLLECTED` 전부(선물하기와 무신사)를 선별하고 뽑힌 만큼 카드를 쌓는다. `stately`, 재시도 1회(1분 뒤). 클라우드. |
+| `musinsa-collect` | `MUSINSA_COLLECT_CRON`(기본 `0 10,16,22 * * *`)마다 무신사 공개 목록을 읽어 `campaigns`에 upsert하고(새 공고는 상세도 읽는다), `COLLECTED`를 선별해 뽑힌 만큼 카드를 보낸다. `stately`, 재시도 1회(10분 뒤). |
+| `campaign-rank` | 예전 큐다. 지금은 아무것도 쌓지 않는다(두 수집 job이 직접 선별한다). 이미 쌓인 job이 있을 때를 위해 처리기만 남겨 두었다. `stately`, 재시도 1회. |
 | `campaign-card` | 카드를 Telegram에 보낸다(이미지가 있으면 사진 카드). `exclusive`, 재시도 3회. 같은 체험단은 `singletonKey`로 한 번만 쌓인다. |
 | `review-draft` | 메모로 리뷰 초안을 쓰고 두 메시지를 보낸다. 체험단당 하나씩(`singleton`), 재시도 2회(backoff). |
 | `campaign-maintenance` | 매시 정각. 신청 마감이 지난 카드를 `EXPIRED`로 만들고 키보드를 지운 뒤, 09~21시에는 리마인더를 보낸다. 재시도 없음. |
@@ -173,23 +172,22 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 - **신청 마감은 추정이다.** 목록에는 남은 일수만 있어서, 오늘(KST)에 남은 일수를 더한 날의 끝(23:59:59)을 `apply_deadline`으로 둔다. 실제 마감 시각과 일수 계산 방식은 확인하지 못했다. 카드와 대시보드에는 `(추정)`으로 표시한다.
 - 상세 페이지는 로그인이 필요해서 읽지 않는다. 선별은 목록의 공개 정보로만 한다([결정 11](decisions.md#11-선별은-공개-정보만으로-한다)).
 
-### 수집: 무신사 (로컬 워커 + Aside)
+### 수집: 무신사
 
-무신사 프리유저 목록(`https://influencer.musinsa.com/api2/mcmp/v2/recruitment-campaigns`)은 내 무신사 로그인이 필요하다. 클라우드에서는 읽을 수 없어서 내 Windows PC의 Aside 브라우저로만 읽는다([결정 13](decisions.md#13-무신사는-로그인이-필요해-이-pc의-aside로만-읽는다)).
+`src/campaigns/musinsa.ts`가 무신사 체험단 목록(`musinsa.com/preuser/main`이 쓰는 공개 JSON)을 읽는다. 로그인이 필요 없다. `influencer.musinsa.com/api2/mcmp/...`는 로그인이 필요한 다른 시스템(크리에이터 캠페인)이고 처음에 이것을 잘못 읽었다([결정 13](decisions.md#13-무신사-체험단-목록은-공개-api라-클라우드에서-읽는다)).
 
-- **Aside 연결** (`src/aside/client.ts`): `AsideCliAgent`가 Aside CLI(`aside repl`)에 스크립트를 넘기고, 스크립트가 출력한 마커 줄(`__ASIDE_RESULT__`)의 JSON을 결과로 받는다. 실행 파일은 `ASIDE_BIN`, 없으면 `%LOCALAPPDATA%\Aside\CLI\current\aside.exe`(있을 때), 그것도 없으면 PATH의 `aside`다. 계정이 여럿이면 `ASIDE_ACCOUNT`로 고른다. 제한 시간은 110초다. Aside 앱이 꺼져 있거나 CLI가 없으면 `AsideNotRunningError`다. 테스트는 가짜 `BrowserAgent`를 쓴다.
-- **목록 읽기** (`src/campaigns/musinsa.ts`): 스크립트가 musinsa.com 탭이 없으면 `https://www.musinsa.com/preuser/main`을 열고, 브라우저가 쿠키를 붙여 주는 `fetch`로 목록을 읽는다. `link.next`를 따라 최대 20페이지, 페이지 사이 300ms다. 어느 페이지든 401이면 로그아웃(`MusinsaLoginError`), 200이 아니면 실패다. 항목이 전부 형식 오류면 API가 바뀐 것으로 보고 실패한다. 2026-10-18에 3페이지, 83건을 실제로 읽었다.
-- **upsert** (`collectMusinsaCampaigns`): 선물하기와 같은 규칙이다. 새 행은 `COLLECTED`, 기존 행은 목록 필드와 `last_seen_at`만 갱신하고 상태, 점수, 내가 기록한 값, `updated_at`은 건드리지 않는다. 제목은 대표 상품 이름이고 상품이 더 있으면 `[+N]`이 앞에 붙는다. 마감 `campaignEndDate`는 시간대 없는 KST 시각이라 그대로 `apply_deadline`이 되며, 선물하기와 달리 추정이 아니다. 모집·신청 인원은 없다. 정가, 상품 개수, 리뷰 형식(영상 `VIDEO` / 사진 `IMAGE`)은 `detail`(jsonb)에서 읽는다. 링크는 `https://www.musinsa.com/preuser/events/<campaignId>`다.
-- **로그인 알림**: Aside가 꺼져 있거나 로그아웃이면 재시도하지 않고 job을 끝낸다. Telegram으로 "PC에서 Aside를 켜고 musinsa.com에 로그인해 주세요"를 보내되, 같은 알림은 12시간에 한 번만 간다(`createLoginAlerter`). 제한은 프로세스 메모리에만 있어서 재시작하면 한 번 더 갈 수 있다. 어차피 내가 해야 할 일이라 괜찮다.
-- **수집 뒤**: 로컬 워커는 선별하지 않고 `campaign-rank`를 클라우드 워커에 쌓는다. 선별, 카드, 리마인더는 클라우드가 처리한다.
-- **신청은 아직 사람이 한다**: 상세, 신청, 내 신청 내역 API는 무신사 프리유저 가입이 있어야 쓸 수 있고, 가입은 스냅을 한 번이라도 올려야 한다(`MCMP_001_006 작성한 스냅이 있는 회원만 신청할 수 있습니다`). 그때까지는 카드 링크(`https://www.musinsa.com/preuser/events/<id>`)를 PC에서 열어 직접 신청하고 `✅ 신청함`으로 기록한다. 가입 뒤에는 옵션을 고르는 Telegram 버튼과 Aside 자동 신청을 붙일 계획이다([plans/campaign-autopilot.md](plans/campaign-autopilot.md)).
+- **목록** (`GET https://www.musinsa.com/preuser/api/v1/event/events?page=N&size=100`): 페이지는 1부터이고 `size`는 100까지 받는다. 응답의 `hasNext`가 false이거나 `content`가 비면 끝이다. 페이지 사이에 0.3초 쉬고 최대 20페이지에서 멈춘다. 선물하기와 같은 규칙이다: 첫 페이지 실패는 에러, 이후 페이지 실패는 경고만 남기고 읽은 만큼 쓰며, 429·5xx·네트워크 오류는 한 번 재시도한다(`src/campaigns/http.ts`). `state`가 `OPEN`인 것만 쓴다. 2026-10-19에 352건, 4페이지를 확인했다.
+- **upsert** (`collectMusinsaCampaigns`): 선물하기와 같은 규칙이다. 새 행은 `COLLECTED`, 기존 행은 목록 필드와 `last_seen_at`만 갱신하고 상태, 점수, 내가 기록한 값, `updated_at`은 건드리지 않는다. `external_id`는 이벤트 `id`, 링크는 `https://www.musinsa.com/preuser/events/<id>`, 제목은 `name`, 브랜드는 `brand.name`, 모집·신청 인원은 `recruitmentCount`·`applicantsCount`, 상품 ID는 대표 상품의 `uniqueId`다. 마감 `endDate`는 날짜만 있어서 그날 끝(KST 23:59:59.999)을 `apply_deadline`으로 둔다. 날짜는 정확한 값이라 `(추정)`을 붙이지 않는다. 그날 안에서 닫히는 시각은 알 수 없다. 목록 항목은 `detail`(jsonb)에 들어가고, 기존 행은 목록 항목을 기존 `detail` 위에 합쳐서 상세에서 얻은 값이 지워지지 않는다.
+- **상세** (`GET /event/events/:id`): 새로 만들어진 행에만 읽는다(0.3초 간격). 품목(`eventCategory`), 발표일(`winnerDrawDate`), 배송일, 리뷰 시작·마감일(`reviewStartDate`, `reviewEndDate`), 최소 회원 등급, 옵션 이름을 `detail`에 합친다. 상세 읽기가 실패해도 경고만 남기고 수집은 계속된다. 품목 이름은 `/event/filters`의 id를 한국어로 옮긴 표(`musinsaCategoryLabel`)로 보여 주고, 모르는 값은 id 그대로 보여 준다.
+- **선정 시 리뷰 마감**: 무신사 공고를 `🎉 선정`으로 기록하면 `review_deadline`이 비어 있을 때 `detail.reviewEndDate`의 그날 끝(KST)으로 채워진다. `/due`로 바꾸면 그 값이 우선한다.
+- **신청은 아직 사람이 한다**: 신청, 내 신청 내역 API는 로그인과 무신사 프리유저 가입이 있어야 쓸 수 있고, 가입은 스냅을 한 번이라도 올려야 한다(`MCMP_001_006 작성한 스냅이 있는 회원만 신청할 수 있습니다`). 그때까지는 카드 링크를 PC에서 열어 직접 신청하고 `✅ 신청함`으로 기록한다. 가입 뒤에는 옵션을 고르는 Telegram 버튼과, 내가 로그인한 브라우저(Aside)로 하는 자동 신청을 붙일 계획이다([plans/campaign-autopilot.md](plans/campaign-autopilot.md)).
 
 ### 선별
 
 `src/campaigns/rank.ts`. `COLLECTED` 전부가 대상이다.
 
 1. **규칙(코드)**: `config/campaign-profile.json`의 `excludeKeywords`(제목·브랜드), `excludeBrands`, `maxCompetition`(신청자 ÷ 모집 인원, 없으면 제한 없음)과 마감이 지난 것은 LLM을 부르기 전에 `SKIPPED`로 보내고 `skip_reason`을 남긴다.
-2. **LLM(`LLM_RANK_MODEL`)**: 남은 후보를 출처별로 나눠 60건씩 `chatJson`으로 0~10점과 한 줄 이유를 받는다. 출처마다 시스템 프롬프트(`rankSystem(source)`)가 다르고, 무신사 후보에는 인원 대신 정가, 상품 개수, 리뷰 형식이 들어간다. 프롬프트에는 프로필(소개, 관심사)과 최근 신청한 체험단·패스한 체험단(사유 포함) 10개씩이 들어간다.
+2. **LLM(`LLM_RANK_MODEL`)**: 남은 후보를 출처별로 나눠 60건씩 `chatJson`으로 0~10점과 한 줄 이유를 받는다. 출처마다 시스템 프롬프트(`rankSystem(source)`)가 다르고, 무신사 후보에는 선물하기와 같은 모집·신청 인원(경쟁률)에 더해 품목, 정가(할인가가 더 낮으면 함께), 상품 개수가 들어간다. 프롬프트에는 프로필(소개, 관심사)과 최근 신청한 체험단·패스한 체험단(사유 포함) 10개씩이 들어간다.
 3. **하루 한도**: 점수 순으로 하루(KST) 남은 한도(`CAMPAIGN_DAILY_MAX`, 기본 5)만큼 `SHORTLISTED`가 된다. 한도는 **출처마다 따로** 센다. 선물하기가 5개를 채워도 무신사는 별도로 5개까지 뽑힌다. 오늘 이미 뽑힌 수는 선별된 시각 `shortlisted_at`(마이그레이션 `015`)으로 센다. `updated_at`은 매시 작업이 한 번도 뽑히지 않은 공고를 만료할 때도 바뀌어서 쓰지 않는다. 선별이 끝나면 이번에 뽑힌 것만이 아니라 `SHORTLISTED`로 남은 공고 전부에 카드를 보낸다. 앞선 실행에서 카드를 못 보낸 공고도 여기서 다시 나간다. 점수는 받았지만 뽑히지 않은 것은 `SKIPPED`(`선별 탈락: …`)다. 모델이 점수를 안 준 후보와, 한도를 다 쓴 날의 후보 전부는 `COLLECTED`로 남아 다음 수집 때 다시 평가된다.
 
 ### 상태
@@ -209,7 +207,7 @@ COLLECTED ──▶ SKIPPED            (규칙 또는 선별 탈락)
 
 ### Telegram
 
-- **카드**: 사진(`image_url`)에 `🎁 [선물하기] #12 제목`, 브랜드, `모집 100명 · 신청 1,234명 (경쟁률 12.3:1)`, `마감 D-3 (추정)`, 점수와 이유를 캡션(1024자 이하)으로 보낸다. 이미지가 없으면 글로 보낸다. 버튼은 한 줄에 하나다: `📱 선물하기에서 열기`(URL), `✅ 신청함`, `🙅 패스`. 무신사 카드는 머리글이 `[무신사]`이고 인원 대신 `정가 …원 · 상품 N개`(상품이 2개 이상일 때)와 `📹 영상 리뷰` / `📷 사진 리뷰`가 나온다. 마감 줄의 `(추정)`은 선물하기에만 붙는다. 무신사 마감은 목록의 정확한 값이다. 안내 문구는 `💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요`, 첫 버튼은 `💻 무신사에서 열기`다. 패스를 누르면 사유 버튼(관심 없는 품목, 경쟁률이 너무 높음, 브랜드·품질이 불안함, 기타, 취소)으로 바뀐다. 사유는 `reject_reason`에 남아 다음 선별 프롬프트에 들어간다.
+- **카드**: 사진(`image_url`)에 `🎁 [선물하기] #12 제목`, 브랜드, `모집 100명 · 신청 1,234명 (경쟁률 12.3:1)`, `마감 D-3 (추정)`, 점수와 이유를 캡션(1024자 이하)으로 보낸다. 이미지가 없으면 글로 보낸다. 버튼은 한 줄에 하나다: `📱 선물하기에서 열기`(URL), `✅ 신청함`, `🙅 패스`. 무신사 카드는 머리글이 `[무신사]`이고, 같은 경쟁률 줄 아래에 `패션 소품 · 정가 25,000원 → 14,990원 · 상품 N개`(품목, 정가와 더 낮은 할인가, 상품이 2개 이상일 때 개수)와 `발표 10/27(화) · 리뷰 10/31(토)~11/14(토)`가 나온다. 상세를 읽지 못한 공고는 해당 줄이 빠진다. 마감 줄의 `(추정)`은 선물하기에만 붙는다. 무신사 마감은 목록의 정확한 날짜다. 안내 문구는 `💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요`, 첫 버튼은 `💻 무신사에서 열기`다. 패스를 누르면 사유 버튼(관심 없는 품목, 경쟁률이 너무 높음, 브랜드·품질이 불안함, 기타, 취소)으로 바뀐다. 사유는 `reject_reason`에 남아 다음 선별 프롬프트에 들어간다.
 - **신청 뒤**: `✅ 신청함`을 누르면 `APPLIED`로 기록하고 `🎉 선정` / `😢 미선정` 버튼 메시지를 보낸다. 선정이면 `/due`로 리뷰 기한을 알려 달라는 안내와 `📝 리뷰 초안 쓰기` 버튼이 온다.
 - **명령**: `/camps`는 진행 중인 체험단을 단계(신청 대기, 결과 대기, 선정·리뷰 작성, 초안 검수)별로 보여준다. `/due <번호> <날짜>`는 리뷰 기한을 그날 23:59(KST)로 기록한다(`10/30`, `10-30`, `10.30`, `2026-10-30`. 이미 지난 날짜는 내년으로 본다). `APPLIED`, `SELECTED`, `DRAFT_REVIEW`에서만 된다. 기한을 다른 날짜로 바꾸면 이미 보낸 기한 리마인더(`review-*`) 기록을 지워서 새 날짜 기준으로 다시 알린다. `/status`에는 체험단 단계별 개수와 마지막 수집 시각, 출처별 진행 중 개수가 나온다. `/camps`의 각 줄에는 `[선물하기]` / `[무신사]` 출처가 붙는다.
 - callback data는 `camp:<action>:<id>:<revision>[:<arg>]`와 `rev:<action>:<id>:<revision>`이다(`callbacks.ts`, 64바이트 한도 안).
@@ -239,7 +237,7 @@ COLLECTED ──▶ SKIPPED            (규칙 또는 선별 탈락)
 6. 다시 쓰기 요청은 `regen_seq`를 요청할 때 올린다. 쓴 결과는 그 seq가 아직 최신이고 메모가 그대로일 때만 반영한다. 재시도된 옛 요청이 새 결과를 덮지 못한다.
 7. 복사해서 선물하기 리뷰(또는 무신사 후기)에 직접 올린 뒤 `✅ 리뷰 올림`을 누르면 `POSTED`로 기록한다.
 
-출처에 따라 프롬프트의 리뷰 장소가 다르다(선물하기 상품 리뷰, 무신사 상품 후기). 무신사 `VIDEO` 체험단이면 "쓰는 글은 영상과 함께 올리는 글이고, 영상 내용을 지어내지 않는다"는 규칙이 더 붙는다. 복사 안내 문구도 출처의 리뷰 장소를 쓴다.
+출처에 따라 프롬프트의 리뷰 장소가 다르다(선물하기 상품 리뷰, 무신사 상품 후기). 복사 안내 문구도 출처의 리뷰 장소를 쓴다.
 
 ### 광고 표기
 
