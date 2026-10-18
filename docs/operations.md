@@ -138,6 +138,7 @@ select name, state, retry_count, output, created_on from pgboss.job order by cre
 - 체험단 기능을 켤 때는 **cloud를 먼저 배포한다.** cloud가 마이그레이션 `014`를 적용한다. local은 마이그레이션을 하지 않는다.
 - 워커는 시작할 때 migration을 자동으로 적용한다.
 - 환경변수를 바꾸면 Railway가 자동으로 재배포한다.
+- 웹 대시보드는 `DASHBOARD_PASSWORD`를 넣고 Networking에서 도메인을 만들면 켜진다. 자세한 내용은 [dashboard.md](dashboard.md)에 있다.
 
 ### CI 통과 후에만 배포 (Wait for CI)
 GitHub Actions(`.github/workflows/ci.yml`)는 main에 push하거나 PR을 올리면 실행된다.

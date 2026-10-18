@@ -8,6 +8,7 @@ import { migrate } from './db/migrate.ts'
 import { pool, query } from './db/pool.ts'
 import { createBoss, enqueueGenerate, enqueueRegeneration, registerJobs } from './jobs.ts'
 import { createReviewer } from './review/telegram.ts'
+import { startDashboard } from './web/server.ts'
 
 const role = config.WORKER_ROLE
 
@@ -48,6 +49,8 @@ if (role === 'cloud') {
 await createCampaignQueues(boss)
 await registerCampaignJobs(boss, role)
 reviewer?.start()
+// Railway routes the public domain to the cloud service only; null when DASHBOARD_PASSWORD is unset.
+const dashboard = role === 'cloud' ? await startDashboard() : null
 
 if (role === 'cloud') {
   console.log(
@@ -67,6 +70,7 @@ async function shutdown(signal: string) {
   stopping = true
   console.log(`[worker] ${signal}, stopping`)
   await reviewer?.stop()
+  await dashboard?.close()
   await boss.stop({ graceful: true })
   await pool.end()
   process.exit(0)
