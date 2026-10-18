@@ -1,18 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { formatFinalFailure, isFinalAttempt } from '../src/jobs.ts'
-import { fetchLlmCost, formatStatus, parseLlmCost, type Status } from '../src/pipeline/status.ts'
+import { formatStatus, type Status } from '../src/pipeline/status.ts'
 
 describe('status extras', () => {
-  it('shows expired count and LLM cost only when present', () => {
+  it('shows the expired count only when present', () => {
     expect(formatStatus(base, 'Asia/Seoul')).not.toContain('최근 7일 만료')
-    const out = formatStatus(
-      { ...base, expiredLast7d: 3, llmCost: { usd: 1.234, period: 'month', limitRemaining: 8.5 } },
-      'Asia/Seoul',
-    )
-    expect(out).toContain('최근 7일 만료: 3건')
-    expect(out).toContain('이번 달 LLM 비용: $1.23 (한도 잔여 $8.50)')
-    expect(formatStatus({ ...base, llmCost: { usd: 5, period: 'total' } }, 'Asia/Seoul')).toContain(
-      'LLM 누적 비용: $5.00',
+    expect(formatStatus({ ...base, expiredLast7d: 3 }, 'Asia/Seoul')).toContain(
+      '최근 7일 만료: 3건',
     )
   })
   it('shows chain part problems only when nonzero', () => {
@@ -46,33 +40,6 @@ describe('status extras', () => {
     expect(out).toContain('최근 30일 리뷰 완료: 4건')
     expect(out).not.toContain('선정·리뷰 전')
     expect(out).not.toContain('로컬 워커')
-  })
-  it('parses key info, preferring monthly usage', () => {
-    expect(parseLlmCost({ data: { usage: 9, usage_monthly: 2, limit: null } })).toEqual({
-      usd: 2,
-      period: 'month',
-      limitRemaining: undefined,
-    })
-    expect(parseLlmCost({ data: { usage: 9, limit_remaining: 1 } })).toEqual({
-      usd: 9,
-      period: 'total',
-      limitRemaining: 1,
-    })
-    expect(parseLlmCost({ data: {} })).toBeNull()
-    expect(parseLlmCost({ nope: 1 })).toBeNull()
-  })
-  it('omits the cost on any fetch failure', async () => {
-    const boom = (async () => {
-      throw new Error('net')
-    }) as unknown as typeof fetch
-    // '' rather than undefined: undefined would fall back to the real key from config.
-    expect(await fetchLlmCost('', boom)).toBeNull()
-    expect(await fetchLlmCost('k', boom)).toBeNull()
-    const bad = (async () => new Response('x', { status: 401 })) as unknown as typeof fetch
-    expect(await fetchLlmCost('k', bad)).toBeNull()
-    const ok = (async () =>
-      new Response(JSON.stringify({ data: { usage: 3 } }))) as unknown as typeof fetch
-    expect(await fetchLlmCost('k', ok)).toMatchObject({ usd: 3 })
   })
 })
 

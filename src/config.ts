@@ -16,9 +16,12 @@ const schema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 
-  OPENROUTER_API_KEY: z.string().optional(),
-  LLM_MODEL: z.string().default('anthropic/claude-sonnet-5.5'),
-  LLM_RANK_MODEL: z.string().default('anthropic/claude-haiku-4.5'),
+  // OpenAI-compatible gateway, FreeLLMAPI by default (docs/setup.md 2). `auto:*` model names let
+  // the gateway pick among the free models it has keys for.
+  LLM_BASE_URL: z.string().default('http://localhost:3001/v1'),
+  LLM_API_KEY: z.string().optional(),
+  LLM_MODEL: z.string().default('auto:smart'),
+  LLM_RANK_MODEL: z.string().default('auto'),
 
   THREADS_API_BASE: z.string().default('https://graph.threads.net'),
   // Seed values; after the first run the token lives in platform_accounts and is refreshed there.

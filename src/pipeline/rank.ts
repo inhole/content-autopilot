@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
-import { chatJson } from '../llm/openrouter.ts'
+import { chatJson } from '../llm/chat.ts'
 import { expireStaleTopics } from './collect.ts'
 import { RANK_SYSTEM } from './prompts.ts'
 

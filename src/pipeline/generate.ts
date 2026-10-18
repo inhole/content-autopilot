@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { config } from '../config.ts'
 import { type Query, query, transaction } from '../db/pool.ts'
-import { chatJson } from '../llm/openrouter.ts'
+import { chatJson } from '../llm/chat.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 import { lastFollowupLimit, loadParts, MAX_FOLLOWUPS, replaceParts } from './parts.ts'
 import { CHAIN_RULES, GENERATE_SYSTEM } from './prompts.ts'

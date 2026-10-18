@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const chatJson = vi.fn()
-vi.mock('../../src/llm/openrouter.ts', () => ({
+vi.mock('../../src/llm/chat.ts', () => ({
   chatJson: (...args: unknown[]) => chatJson(...args),
 }))
 vi.mock('../../src/pipeline/sources.ts', () => ({
