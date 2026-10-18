@@ -45,7 +45,7 @@ describe('rankDetailed', () => {
     expect(rowB.apply_message).toBe('안녕하세요. 신청합니다.')
     const rowC = await getCampaign(c)
     expect(rowC.status).toBe('SKIPPED')
-    expect(rowC.skip_reason).toBe('선별 탈락: 이유 3')
+    expect(rowC.skip_reason).toBe(`선별 탈락: 이유 ${c}`)
   })
 
   it('leaves candidates the model omitted as DETAILED', async () => {
