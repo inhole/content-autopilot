@@ -133,6 +133,8 @@
 
 ## 로드맵
 
+남은 일과 다음 계획의 자세한 내용은 [plans/roadmap.md](plans/roadmap.md)에 있다.
+
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 수집 → 중복 제거 → 선정 → 초안 → Telegram 검수 → Threads 발행 | 코드 완료, dry-run 검증 |
@@ -141,7 +143,9 @@
 | 3 | Threads insights 수집 + 주간 리포트 | 코드 완료, 실제 발행 후 검증 |
 | 3.5 | 연결 글(본글 + 답글 최대 2개)과 고정 CTA | 코드 완료, 실제 발행 후 검증 (결정 8) |
 | 4 | 클릭 추적과 랜딩 페이지 (수익 퍼널) | |
-| 5 | Instagram Reels / YouTube Shorts | |
-| 체험단 | 선물하기 공개 목록 수집 → 선별 → 카드 → 신청·결과·리뷰 기한 기록과 리마인더 → 리뷰 초안 | 코드 완료 (feat/campaign-autopilot). 수집·페이지네이션·upsert는 실제 확인, 마감 추정·선별 품질·실제 봇 카드·폰에서 링크 열림은 미검증 (plans/campaign-autopilot.md) |
+| 5 | Instagram Reels / YouTube Shorts | 계획 정리 ([plans/roadmap.md](plans/roadmap.md) 4절), 계정·API 확인(V0)부터 |
+| 체험단 | 선물하기 공개 목록 수집 → 선별 → 카드 → 신청·결과·리뷰 기한 기록과 리마인더 → 리뷰 초안 | main 머지 (PR #5). 수집·페이지네이션·upsert는 실제 확인, 마감 추정·선별 품질·실제 봇 카드·폰에서 링크 열림은 미검증 (plans/campaign-autopilot.md) |
 | 체험단: 무신사 | 무신사 프리유저 목록을 이 PC의 Aside로 수집(로컬 워커) → 선물하기와 같은 선별·카드·기록 (결정 13) | 코드 완료. 목록 읽기·upsert는 실제 확인(2026-10-18, 83건). 실제 봇 카드, 로컬 워커 상시 운영은 미검증 |
 | 체험단: 무신사 자동 신청 | 프리유저 가입(스냅 1개 필요) 뒤 옵션 선택 Telegram 버튼 + Aside 자동 신청 | 미착수 |
+| 만료 초안 재활용 | 상록 초안 재검수(`/revive`) + 주간 "놓친 소식" 연결 글 (roadmap.md 1절) | 미착수 |
+| 대시보드 React 전환 | React + Vite + shadcn/ui, 같은 워커가 JSON API와 정적 파일 서빙 (roadmap.md 3절) | 미착수 |
