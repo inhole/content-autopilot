@@ -1,5 +1,7 @@
+import { collectMusinsaCampaigns } from './campaigns/collect.ts'
 import { fetchGiftTrialList } from './campaigns/gift.ts'
 import { runGiftCollect } from './campaigns/jobs.ts'
+import { fetchMusinsaList, musinsaTitle } from './campaigns/musinsa.ts'
 import { rankCollected as rankCampaigns } from './campaigns/rank.ts'
 import { runCampaignReminders } from './campaigns/reminders.ts'
 import { generateReviewDraft, requestDraftRegeneration } from './campaigns/review-draft.ts'
@@ -49,6 +51,8 @@ const USAGE = `usage: npm run cli -- <command>
   replies                     poll new Threads replies now and notify Telegram
 
   gift:list                   fetch the Kakao gift trial list and print it (writes nothing)
+  musinsa:list                fetch the Musinsa preuser list via Aside and print it (writes nothing)
+  musinsa:collect             collect the Musinsa list (via Aside), rank new campaigns and send cards
   campaign:collect            collect the gift list, rank new campaigns and send their cards
   campaign:rank               rank COLLECTED campaigns (no Telegram)
   campaign:show <id>          print status, skip reason and the card text
@@ -245,6 +249,27 @@ try {
           applicants: i.applicationCount,
         })),
       )
+      break
+    }
+    case 'musinsa:list': {
+      const list = await fetchMusinsaList()
+      console.log(`${list.items.length} campaign(s), ${list.invalid} invalid`)
+      console.table(
+        list.items.slice(0, 40).map((i) => ({
+          id: i.campaignId,
+          title: musinsaTitle(i).slice(0, 40),
+          brand: i.brandName ?? '-',
+          ends: i.campaignEndDate,
+          type: i.contentType ?? '-',
+        })),
+      )
+      break
+    }
+    case 'musinsa:collect': {
+      const collected = await collectMusinsaCampaigns()
+      const picked = await rankCampaigns()
+      for (const id of picked) await sendCampaignCard(id)
+      console.log({ ...collected, created: collected.created.length, picked })
       break
     }
     case 'campaign:collect':
