@@ -89,6 +89,15 @@ export async function loadUnsentReviews(now: Date): Promise<number[]> {
   return rows.map((r) => r.id)
 }
 
+/** Whether a draft is still waiting for review without a registered review message. */
+export async function isUnsentReview(postId: number): Promise<boolean> {
+  const rows = await query(
+    "select 1 from posts where id = $1 and status = 'PENDING_REVIEW' and review_message_id is null",
+    [postId],
+  )
+  return rows.length > 0
+}
+
 /** Conditioned on the status and age again so a draft touched since the load is left alone. */
 export async function expireDrafts(draftIds: number[], now: Date): Promise<number[]> {
   const cutoff = new Date(now.getTime() - DRAFT_TTL_HOURS * 3600_000)
