@@ -47,6 +47,7 @@ const noDelay = { detailDelayMs: 0 }
 
 // 2026-10-18 12:00 KST
 const now = new Date('2026-10-18T03:00:00Z')
+const stubPrice = async () => ({ basic: 50_000, selling: 40_000 })
 
 const one = async (sql: string, params: unknown[] = []) => {
   const [row] = await query<Record<string, unknown>>(sql, params)
@@ -160,6 +161,7 @@ describe('collectMusinsaCampaigns', () => {
 
   it('leaves kakao-gift rows alone, even with the same external id', async () => {
     await collectGiftCampaigns(now, {
+      fetchPrice: stubPrice,
       fetchList: async () => ({
         items: [{ campaignId: '7', campaignTitle: '선물', remainingDays: 3 }],
         totalCount: 1,

@@ -16,6 +16,8 @@ export const campaignProfileSchema = z.object({
   excludeBrands: z.array(z.string()).default([]),
   /** Skip campaigns with more applicants per slot than this. Unset: no limit. */
   maxCompetition: z.number().positive().optional(),
+  /** Skip campaigns whose known list price (won) is below this. Unknown price is not skipped. */
+  minPriceWon: z.number().int().positive().optional(),
   review: z.object({
     tone: z.string(),
     minChars: z.number().int().min(10).default(100),

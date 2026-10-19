@@ -112,6 +112,7 @@ const listRow = (over: Partial<CampaignListRow> = {}): CampaignListRow => ({
   review_deadline: null,
   score: 82,
   updated_at: new Date('2026-10-18T01:00:00Z'),
+  price: null,
   ...over,
 })
 

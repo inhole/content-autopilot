@@ -5,7 +5,13 @@ import { localDate, zonedToUtc } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { type CampaignProfile, loadCampaignProfile } from './profile.ts'
 import { type RankCandidate, type RankHistory, rankSystem, rankUser } from './prompts.ts'
-import { type Campaign, competition, musinsaFacts } from './types.ts'
+import {
+  type Campaign,
+  campaignPrice,
+  campaignPriceInfo,
+  competition,
+  musinsaFacts,
+} from './types.ts'
 
 /** The first collection holds ~475 rows; one prompt per 60 keeps each call small and reliable. */
 export const RANK_BATCH_SIZE = 60
@@ -24,7 +30,8 @@ const rankSchema = z.object({
 type RuleInput = Pick<
   Campaign,
   'title' | 'brand' | 'application_count' | 'recruit_count' | 'apply_deadline' | 'remaining_days'
->
+> &
+  Partial<Pick<Campaign, 'source' | 'detail'>>
 
 /** Why code alone rules a campaign out (before the LLM sees it), or null to let it through. */
 export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date): string | null {
@@ -37,6 +44,11 @@ export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date
     ? profile.excludeBrands.find((b) => b && brand.includes(b.toLowerCase()))
     : undefined
   if (badBrand) return `제외 브랜드: ${c.brand}`
+
+  const price = campaignPrice(c)
+  if (profile.minPriceWon !== undefined && price !== null && price < profile.minPriceWon) {
+    return `가격 낮음: ${price.toLocaleString('en-US')}원`
+  }
 
   const ratio = competition(c)
   if (profile.maxCompetition !== undefined && ratio !== null && ratio > profile.maxCompetition) {
@@ -101,6 +113,7 @@ async function countShortlistedToday(now: Date): Promise<Map<string, number>> {
 /** The facts of one campaign the rank prompt shows; Musinsa adds category, price and goods count. */
 export function toRankCandidate(c: Campaign): RankCandidate {
   const m = musinsaFacts(c)
+  const p = campaignPriceInfo(c)
   return {
     id: c.id,
     source: c.source,
@@ -109,14 +122,9 @@ export function toRankCandidate(c: Campaign): RankCandidate {
     application_count: c.application_count,
     recruit_count: c.recruit_count,
     remaining_days: c.remaining_days,
-    ...(m
-      ? {
-          category: m.category,
-          price: m.price,
-          sale_price: m.salePrice,
-          goods_count: m.goodsCount,
-        }
-      : {}),
+    price: p.price,
+    sale_price: p.salePrice,
+    ...(m ? { category: m.category, goods_count: m.goodsCount } : {}),
   }
 }
 

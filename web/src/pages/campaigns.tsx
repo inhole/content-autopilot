@@ -48,7 +48,7 @@ import {
 } from '@/components/ui/table.tsx'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group.tsx'
-import { formatCompetition, SOURCES, statusLabel } from '@/lib/format.ts'
+import { formatCompetition, formatWon, SOURCES, statusLabel } from '@/lib/format.ts'
 import { useCampaigns } from '@/lib/queries.ts'
 import type { CampaignRow } from '@/lib/types.ts'
 import { cn } from '@/lib/utils.ts'
@@ -102,6 +102,18 @@ const columns = (now?: Date): ColumnDef<CampaignRow>[] => [
     header: '상태',
     enableSorting: false,
     cell: ({ row }) => <CampaignStatusBadge status={row.original.status} />,
+  },
+  {
+    id: 'price',
+    header: '정가',
+    accessorFn: byNumber((r) => r.price),
+    sortUndefined: 'last',
+    meta: { align: 'right' },
+    cell: ({ row }) => (
+      <span className="tabular-nums">
+        {row.original.price != null ? formatWon(row.original.price) : '-'}
+      </span>
+    ),
   },
   {
     id: 'competition',
@@ -293,6 +305,9 @@ export function CampaignTable({ rows, now }: { rows: CampaignRow[]; now?: Date }
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     <SourceLabel source={c.source} />
+                    <span className="tabular-nums">
+                      정가 {c.price != null ? formatWon(c.price) : '-'}
+                    </span>
                     <span className="tabular-nums">경쟁률 {formatCompetition(c.competition)}</span>
                     <span className="tabular-nums">점수 {c.score ?? '-'}</span>
                     <DeadlineBadge row={c} now={now} />

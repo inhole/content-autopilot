@@ -167,6 +167,7 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 
 - 첫 페이지(`/v2/pages/<id>`)에 50건과 검색 조건이 있고, 나머지는 `/v1/pages/trial-campaign/collections?page=2,3,…`(24건씩)에서 `isLast`이거나 빈 목록이 나올 때까지 읽는다. 페이지 사이에 0.4초 쉬고, 최대 40페이지에서 멈춘다. 2026-10-18에 475건(19페이지)을 확인했다.
 - 첫 페이지 실패는 에러로 끝난다. 이후 페이지 실패는 경고만 남기고 읽은 만큼만 쓴다. 필수 필드가 없는 등 형식이 예상과 다르면 조용히 넘어가지 않고 실패한다.
+- **가격**: upsert 뒤에 공개 상품 API(`GET https://gift.kakao.com/a/product-detail/v3/products/<상품 ID>`, 모바일 UA)에서 `price.basicPrice`(정가)와 `price.sellingPrice`(판매가)를 읽어 `detail.price = { basic, selling }`로 저장한다(`fillGiftPrices`). 새 행과, 아직 `COLLECTED`이면서 가격이 없는 행이 대상이고, 0.3초 간격으로 한 번에 최대 150건만 읽는다. 실패는 경고만 남기고 수집을 막지 않으며, 실패한 행은 `detail.priceTriedAt`을 남겨 6시간 안에는 다시 읽지 않는다. 목록 갱신은 `detail`을 덮어쓰지 않고 합치므로 저장한 가격이 지워지지 않는다. 가격은 선별 규칙(`minPriceWon`), 선별 프롬프트, 카드(`정가 49,000원`, 판매가가 더 낮으면 `→ 39,200원`), 대시보드 목록·상세에 쓰인다.
 - 제목, 브랜드, 이미지, 상품 ID, 모집·신청 인원, 남은 일수를 `campaigns`에 넣고 원본 항목은 `detail`(jsonb)에 둔다. 링크는 `https://gift.kakao.com/giftbox/trial-campaign/<campaignId>`다.
 - upsert는 `(source, external_id)`가 같으면 목록에서 온 필드와 `last_seen_at`만 갱신한다. 상태, 점수, 내가 기록한 값, `updated_at`은 건드리지 않는다. 그래서 몇 번을 돌려도 같은 결과다.
 - **신청 마감은 추정이다.** 목록에는 남은 일수만 있어서, 오늘(KST)에 남은 일수를 더한 날의 끝(23:59:59)을 `apply_deadline`으로 둔다. 실제 마감 시각과 일수 계산 방식은 확인하지 못했다. 카드와 대시보드에는 `(추정)`으로 표시한다.
@@ -186,8 +187,8 @@ LLM이 잘못된 id나 자기 자신을 가리키면 `resolveDuplicates`가 그 
 
 `src/campaigns/rank.ts`. `COLLECTED` 전부가 대상이다.
 
-1. **규칙(코드)**: `config/campaign-profile.json`의 `excludeKeywords`(제목·브랜드), `excludeBrands`, `maxCompetition`(신청자 ÷ 모집 인원, 없으면 제한 없음)과 마감이 지난 것은 LLM을 부르기 전에 `SKIPPED`로 보내고 `skip_reason`을 남긴다.
-2. **LLM(`LLM_RANK_MODEL`)**: 남은 후보를 출처별로 나눠 60건씩 `chatJson`으로 0~10점과 한 줄 이유를 받는다. 출처마다 시스템 프롬프트(`rankSystem(source)`)가 다르고, 무신사 후보에는 선물하기와 같은 모집·신청 인원(경쟁률)에 더해 품목, 정가(할인가가 더 낮으면 함께), 상품 개수가 들어간다. 프롬프트에는 프로필(소개, 관심사)과 최근 신청한 체험단·패스한 체험단(사유 포함) 10개씩이 들어간다.
+1. **규칙(코드)**: `config/campaign-profile.json`의 `excludeKeywords`(제목·브랜드), `excludeBrands`, `maxCompetition`(신청자 ÷ 모집 인원, 없으면 제한 없음), `minPriceWon`(정가가 이보다 낮으면 `가격 낮음: 14,900원`, 정가를 모르면 건너뛰지 않는다)과 마감이 지난 것은 LLM을 부르기 전에 `SKIPPED`로 보내고 `skip_reason`을 남긴다.
+2. **LLM(`LLM_RANK_MODEL`)**: 남은 후보를 출처별로 나눠 60건씩 `chatJson`으로 0~10점과 한 줄 이유를 받는다. 출처마다 시스템 프롬프트(`rankSystem(source)`)가 다르고, 무신사 후보에는 선물하기와 같은 모집·신청 인원(경쟁률)에 더해 품목, 정가(할인가가 더 낮으면 함께), 상품 개수가 들어간다. 두 출처 모두 후보 줄에 정가(할인가)가 들어가고, 프롬프트는 다른 조건이 비슷하면 정가가 높은 제품에 더 높은 점수를 주라고 한다(가격을 모르는 후보는 가감하지 않는다). 프롬프트에는 프로필(소개, 관심사)과 최근 신청한 체험단·패스한 체험단(사유 포함) 10개씩이 들어간다.
 3. **하루 한도**: 점수 순으로 하루(KST) 남은 한도(`CAMPAIGN_DAILY_MAX`, 기본 5)만큼 `SHORTLISTED`가 된다. 한도는 **출처마다 따로** 센다. 선물하기가 5개를 채워도 무신사는 별도로 5개까지 뽑힌다. 오늘 이미 뽑힌 수는 선별된 시각 `shortlisted_at`(마이그레이션 `015`)으로 센다. `updated_at`은 매시 작업이 한 번도 뽑히지 않은 공고를 만료할 때도 바뀌어서 쓰지 않는다. 선별이 끝나면 이번에 뽑힌 것만이 아니라 `SHORTLISTED`로 남은 공고 전부에 카드를 보낸다. 앞선 실행에서 카드를 못 보낸 공고도 여기서 다시 나간다. 점수는 받았지만 뽑히지 않은 것은 `SKIPPED`(`선별 탈락: …`)다. 모델이 점수를 안 준 후보와, 한도를 다 쓴 날의 후보 전부는 `COLLECTED`로 남아 다음 수집 때 다시 평가된다.
 
 ### 상태

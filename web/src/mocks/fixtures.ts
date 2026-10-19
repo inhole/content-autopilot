@@ -67,6 +67,7 @@ export const campaignRowsFixture: CampaignRow[] = [
     updated_at: hours(-1),
     next_deadline: { at: days(1), kind: 'apply', estimated: true },
     competition: 23.45,
+    price: 49000,
   },
   {
     id: 102,
@@ -82,6 +83,7 @@ export const campaignRowsFixture: CampaignRow[] = [
     updated_at: hours(-5),
     next_deadline: { at: days(3), kind: 'apply', estimated: false },
     competition: null,
+    price: 59000,
   },
   {
     id: 103,
@@ -97,6 +99,7 @@ export const campaignRowsFixture: CampaignRow[] = [
     updated_at: hours(-20),
     next_deadline: { at: days(5), kind: 'review', estimated: false },
     competition: 4,
+    price: null,
   },
   {
     id: 104,
@@ -112,6 +115,7 @@ export const campaignRowsFixture: CampaignRow[] = [
     updated_at: days(-3),
     next_deadline: null,
     competition: 1,
+    price: 32000,
   },
 ]
 
@@ -159,7 +163,13 @@ export const campaignDetailFixture = (id: number): CampaignDetailResponse | null
             reviewStartDate: '2026-10-31',
             reviewEndDate: '2026-11-14',
           }
-        : null,
+        : row.price != null
+          ? {
+              campaignId: `g${row.id}`,
+              campaignTitle: row.title,
+              price: { basic: row.price, selling: Math.round(row.price * 0.8) },
+            }
+          : null,
       score: row.score,
       reason: row.score ? '관심 카테고리이고 경쟁률이 보통 수준임' : null,
       skip_reason: null,

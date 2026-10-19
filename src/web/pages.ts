@@ -5,6 +5,7 @@ import {
   type Campaign,
   type CampaignSource,
   type CampaignStatus,
+  campaignPriceInfo,
   competition,
   musinsaCategoryLabel,
   musinsaFacts,
@@ -220,7 +221,18 @@ export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): 
             : '-',
         ),
       ]
-    : []
+    : c.source === 'kakao-gift'
+      ? [
+          field(
+            '정가',
+            (() => {
+              const p = campaignPriceInfo(c)
+              if (p.price == null) return '-'
+              return `${esc(formatWon(p.price))}${p.salePrice != null ? ` → ${esc(formatWon(p.salePrice))}` : ''}`
+            })(),
+          ),
+        ]
+      : []
   const listing = [
     field('출처', esc(sourceLabel(c.source))),
     field('브랜드', text(c.brand)),

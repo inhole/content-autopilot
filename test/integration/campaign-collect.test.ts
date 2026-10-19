@@ -24,10 +24,14 @@ const fetchList =
   })
 
 const now = new Date('2026-10-18T03:00:00Z')
+const stubPrice = async () => ({ basic: 50_000, selling: 40_000 })
 
 describe('collectGiftCampaigns', () => {
   it('inserts new campaigns as COLLECTED and returns their ids', async () => {
-    const out = await collectGiftCampaigns(now, { fetchList: fetchList([gift('a'), gift('b')], 2) })
+    const out = await collectGiftCampaigns(now, {
+      fetchPrice: stubPrice,
+      fetchList: fetchList([gift('a'), gift('b')], 2),
+    })
 
     expect(out).toMatchObject({ fetched: 2, updated: 0, invalid: 2, totalCount: 2 })
     expect(out.created).toHaveLength(2)
@@ -50,7 +54,10 @@ describe('collectGiftCampaigns', () => {
   })
 
   it('refreshes list fields without touching status, score or updated_at', async () => {
-    const first = await collectGiftCampaigns(now, { fetchList: fetchList([gift('a')]) })
+    const first = await collectGiftCampaigns(now, {
+      fetchPrice: stubPrice,
+      fetchList: fetchList([gift('a')]),
+    })
     const id = first.created[0] as number
     await query(
       `update campaigns set status = 'APPLIED', score = 8, reason = 'good', memo = 'mine',
@@ -60,6 +67,7 @@ describe('collectGiftCampaigns', () => {
 
     const later = new Date('2026-10-19T03:00:00Z')
     const out = await collectGiftCampaigns(later, {
+      fetchPrice: stubPrice,
       fetchList: fetchList([gift('a', { applicationCount: 99, remainingDays: 2 }), gift('c')]),
     })
 
@@ -80,11 +88,14 @@ describe('collectGiftCampaigns', () => {
   })
 
   it('handles an empty list and null optional fields', async () => {
-    expect(await collectGiftCampaigns(now, { fetchList: fetchList([]) })).toMatchObject({
+    expect(
+      await collectGiftCampaigns(now, { fetchPrice: stubPrice, fetchList: fetchList([]) }),
+    ).toMatchObject({
       fetched: 0,
       created: [],
     })
     const out = await collectGiftCampaigns(now, {
+      fetchPrice: stubPrice,
       fetchList: fetchList([
         {
           campaignId: 'n',
@@ -103,3 +114,81 @@ async function one(sql: string, params: unknown[] = []) {
   if (!row) throw new Error('no row')
   return row
 }
+
+describe('gift prices', () => {
+  const priceOf = async (ext: string) =>
+    (await one(`select detail from campaigns where external_id = '${ext}'`)).detail as {
+      price?: { basic: number | null; selling: number | null }
+      priceTriedAt?: string
+    }
+
+  it('stores the price of new rows in detail.price and keeps it on the next collection', async () => {
+    const calls: number[] = []
+    const fetchPrice = async (id: number) => {
+      calls.push(id)
+      return { basic: 49_000, selling: 39_200 }
+    }
+    await collectGiftCampaigns(now, {
+      fetchList: fetchList([gift('a', { productId: 11 })]),
+      fetchPrice,
+      priceDelayMs: 0,
+    })
+    expect((await priceOf('a')).price).toEqual({ basic: 49_000, selling: 39_200 })
+    expect(calls).toEqual([11])
+
+    // The list item has no price, so a refresh must neither wipe it nor fetch it again.
+    await collectGiftCampaigns(new Date(now.getTime() + 3_600_000), {
+      fetchList: fetchList([gift('a', { productId: 11, applicationCount: 99 })]),
+      fetchPrice,
+      priceDelayMs: 0,
+    })
+    expect((await priceOf('a')).price).toEqual({ basic: 49_000, selling: 39_200 })
+    expect(calls).toEqual([11])
+  })
+
+  it('tolerates failures, does not retry before the wait, then fills rows still without a price', async () => {
+    let fail = true
+    const calls: number[] = []
+    const fetchPrice = async (id: number) => {
+      calls.push(id)
+      if (fail) throw new Error('boom')
+      return { basic: 30_000, selling: null }
+    }
+    const list = fetchList([gift('a', { productId: 11 }), gift('b', { productId: 12 })])
+    const out = await collectGiftCampaigns(now, { fetchList: list, fetchPrice, priceDelayMs: 0 })
+    expect(out.created).toHaveLength(2)
+    expect((await priceOf('a')).price).toBeUndefined()
+    expect((await priceOf('a')).priceTriedAt).toBe(now.toISOString())
+    expect(calls).toHaveLength(2)
+
+    fail = false
+    const soon = new Date(now.getTime() + 3_600_000)
+    await collectGiftCampaigns(soon, { fetchList: list, fetchPrice, priceDelayMs: 0 })
+    expect(calls).toHaveLength(2)
+
+    const later = new Date(now.getTime() + 7 * 3_600_000)
+    await collectGiftCampaigns(later, { fetchList: list, fetchPrice, priceDelayMs: 0 })
+    expect(calls).toHaveLength(4)
+    expect((await priceOf('a')).price).toEqual({ basic: 30_000, selling: null })
+    expect((await priceOf('a')).priceTriedAt).toBeUndefined()
+  })
+
+  it('fetches at most the per-run cap and leaves the rest for the next run', async () => {
+    const fetchPrice = async () => ({ basic: 50_000, selling: 40_000 })
+    const list = fetchList([
+      gift('a', { productId: 1 }),
+      gift('b', { productId: 2 }),
+      gift('c', { productId: 3 }),
+    ])
+    await collectGiftCampaigns(now, { fetchList: list, fetchPrice, priceDelayMs: 0, priceCap: 2 })
+    const n = await one(
+      "select count(*) filter (where detail ? 'price') as n from campaigns where source = 'kakao-gift'",
+    )
+    expect(n.n).toBe(2)
+    await collectGiftCampaigns(now, { fetchList: list, fetchPrice, priceDelayMs: 0, priceCap: 2 })
+    const m = await one(
+      "select count(*) filter (where detail ? 'price') as n from campaigns where source = 'kakao-gift'",
+    )
+    expect(m.n).toBe(3)
+  })
+})

@@ -70,6 +70,12 @@ describe('CampaignTable', () => {
       '/campaigns/101',
     )
   })
+  it('shows the list price column, and a dash when the price is unknown', () => {
+    render(wrap(<CampaignTable rows={campaignRowsFixture} now={now} />))
+    expect(screen.getByRole('columnheader', { name: /정가/ })).toBeInTheDocument()
+    expect(screen.getAllByText('49,000원').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('정가 49,000원').length).toBeGreaterThan(0)
+  })
   it('emphasises deadlines of 2 days or less', () => {
     render(wrap(<CampaignTable rows={campaignRowsFixture} now={now} />))
     expect(screen.getAllByText('D-1')[0]).toHaveAttribute('data-variant', 'warning')

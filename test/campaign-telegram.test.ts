@@ -278,6 +278,16 @@ describe('source-aware cards', () => {
     expect(text).toContain('경쟁률 12.3:1')
     expect(text).not.toContain('정가')
   })
+  it('gift card shows the list price (and a lower selling price) once fetched', () => {
+    const withPrice = (price: unknown) =>
+      campaign({ detail: { campaignId: 'x', campaignTitle: 't', price } as never })
+    expect(formatCampaignCard(withPrice({ basic: 49000, selling: 49000 }), NOW, TZ)).toContain(
+      '정가 49,000원\n',
+    )
+    expect(formatCampaignCard(withPrice({ basic: 49000, selling: 39200 }), NOW, TZ)).toContain(
+      '정가 49,000원 → 39,200원',
+    )
+  })
   it('Musinsa card shows competition, price, dates and the PC instruction', () => {
     const text = formatCampaignCard(musinsaCampaign(), NOW, TZ)
     expect(text).toContain('[무신사] #12 후드 집업')

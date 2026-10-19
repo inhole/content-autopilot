@@ -25,6 +25,7 @@ import {
   CAMPAIGN_REJECT_REASONS,
   type Campaign,
   type CampaignStatus,
+  campaignPriceInfo,
   competition,
   isCampaignRejectReason,
   musinsaCategoryLabel,
@@ -147,6 +148,16 @@ export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
   const counts = formatCounts(c)
   if (counts) lines.push(counts)
   if (c.source === 'musinsa') lines.push(...formatMusinsaFacts(c, tz))
+  else {
+    const p = campaignPriceInfo(c)
+    if (p.price != null) {
+      lines.push(
+        p.salePrice != null
+          ? `정가 ${formatWon(p.price)} → ${formatWon(p.salePrice)}`
+          : `정가 ${formatWon(p.price)}`,
+      )
+    }
+  }
   if (c.apply_deadline) {
     const estimate = sourceInfo(c.source).estimatedDeadline ? ' (추정)' : ''
     lines.push(`마감 ${formatDday(daysUntil(c.apply_deadline, now, tz))}${estimate}`)
