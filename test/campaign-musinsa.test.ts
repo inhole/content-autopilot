@@ -104,6 +104,9 @@ describe('endOfLocalDay (KST date math)', () => {
     expect(() => endOfLocalDay('soon', 'Asia/Seoul')).toThrow()
     expect(() => endOfLocalDay('2026-10-25T00:00:00', 'Asia/Seoul')).toThrow()
   })
+  it('reads Musinsa dates as KST days by default, not in TZ_NAME', () => {
+    expect(endOfLocalDay('2026-10-25').toISOString()).toBe('2026-10-25T14:59:59.999Z')
+  })
 })
 
 describe('parseMusinsaDetail', () => {

@@ -118,7 +118,7 @@ export async function collectMusinsaCampaigns(
 
   const rows = items.map((item) => {
     const url = musinsaEventUrl(item.id)
-    const deadline = endOfLocalDay(item.endDate, config.TZ_NAME)
+    const deadline = endOfLocalDay(item.endDate)
     return {
       external_id: String(item.id),
       url,

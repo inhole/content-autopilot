@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { config } from '../config.ts'
 import { zonedToUtc } from '../lib/time.ts'
 import { makeGetJson, sleep } from './http.ts'
 
@@ -222,11 +221,15 @@ export function musinsaProductId(item: Pick<MusinsaItem, 'products'>): number | 
   return Number.isSafeInteger(n) && n > 0 ? n : null
 }
 
+/** Musinsa is a Korean service: its YYYY-MM-DD dates are KST days, whatever TZ_NAME says. */
+export const MUSINSA_TZ = 'Asia/Seoul'
+
 /**
- * End of the local calendar day `date` (YYYY-MM-DD) in `tz`, 23:59:59.999. Musinsa gives dates
- * only, so the real cut-off hour inside that day is not known; this is the latest it can be.
+ * End of the calendar day `date` (YYYY-MM-DD) in `tz` (KST by default), 23:59:59.999. Musinsa
+ * gives dates only, so the real cut-off hour inside that day is not known; this is the latest it
+ * can be. The scheduling/display timezone (TZ_NAME) must not shift the source's deadlines.
  */
-export function endOfLocalDay(date: string, tz: string = config.TZ_NAME): Date {
+export function endOfLocalDay(date: string, tz: string = MUSINSA_TZ): Date {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`unexpected musinsa date: ${date}`)
   return new Date(zonedToUtc(date, '23:59', tz).getTime() + 59_999)
 }
