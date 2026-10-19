@@ -65,7 +65,28 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
 }
 
-const dayFormat = new Intl.DateTimeFormat('en-CA', {
+const timeFormat = new Intl.DateTimeFormat('en-GB', {
+  timeZone: TZ,
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/** `14:30` in Asia/Seoul; `-` when empty or not a date. */
+export function formatTime(iso: string | Date | null | undefined): string {
+  if (!iso) return '-'
+  const d = typeof iso === 'string' ? new Date(iso) : iso
+  if (Number.isNaN(d.getTime())) return '-'
+  return timeFormat.format(d)
+}
+
+/** `10-25 14:30` in Asia/Seoul (year dropped for dense lists); `-` when empty. */
+export function formatShortDateTime(iso: string | null | undefined): string {
+  const full = formatDateTime(iso)
+  return full === '-' ? full : full.slice(5)
+}
+
+const dayFormat =new Intl.DateTimeFormat('en-CA', {
   timeZone: TZ,
   year: 'numeric',
   month: '2-digit',
