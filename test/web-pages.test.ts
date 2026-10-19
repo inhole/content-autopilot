@@ -328,7 +328,7 @@ describe('sources in the dashboard', () => {
     expect(html).toContain('<b>4</b><span>선물하기 진행 중 (전체 4)')
     expect(html).toContain('<b>1</b><span>무신사 진행 중 (전체 1)')
   })
-  it('detail shows price and review format for Musinsa, no applicant fields', () => {
+  it('detail shows category, price and dates for Musinsa', () => {
     const html = renderCampaignDetail(
       {
         campaign: campaign({
@@ -338,20 +338,28 @@ describe('sources in the dashboard', () => {
           recruit_count: null,
           application_count: null,
           detail: {
-            campaignId: 38933,
-            representativeGoods: { price: 129000 },
-            goodsCount: 1,
-            contentType: 'VIDEO',
+            products: [
+              {
+                isRepresentative: true,
+                prices: { normalPrice: { value: 129000 }, salePrice: { value: 89000 } },
+              },
+            ],
+            eventCategory: 'FASHION_ACCESSORY',
+            winnerDrawDate: '2026-10-27',
+            reviewStartDate: '2026-10-31',
+            reviewEndDate: '2026-11-14',
           },
         }),
         reminders: [],
       },
       ctx,
     )
-    expect(html).toContain('<dt>정가</dt><dd>129,000원</dd>')
-    expect(html).toContain('<dt>리뷰 형식</dt><dd>영상</dd>')
+    expect(html).toContain('<dt>품목</dt><dd>패션 소품</dd>')
+    expect(html).toContain('<dt>정가</dt><dd>129,000원 → 89,000원</dd>')
+    expect(html).toContain('<dt>발표일</dt><dd>2026-10-27</dd>')
+    expect(html).toContain('<dt>리뷰 기간</dt><dd>2026-10-31 ~ 2026-11-14</dd>')
     expect(html).toContain('무신사에서 열기')
     expect(html).toContain('<img src="https://image.msscdn.net/')
-    expect(html).not.toContain('<dt>신청자</dt>')
+    expect(html).toContain('<dt>신청자</dt>')
   })
 })

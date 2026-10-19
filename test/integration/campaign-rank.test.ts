@@ -169,23 +169,23 @@ describe('rankCollected', () => {
     // Gift already used its quota today; Musinsa has not.
     await seedCampaign({ status: 'SHORTLISTED' })
     const gift = await seedCampaign()
-    const detail = (contentType: string) => ({
-      campaignId: 1,
-      representativeGoods: { goodsName: 'x', price: 59000 },
-      goodsCount: 1,
-      contentType,
+    const detail = (eventCategory: string) => ({
+      eventCategory,
+      products: [
+        { uniqueId: '1', isRepresentative: true, prices: { normalPrice: { value: 59000 } } },
+      ],
     })
     const m1 = await seedCampaign({
       source: 'musinsa',
       recruitCount: null,
       applicationCount: null,
-      detail: detail('VIDEO'),
+      detail: detail('TOP'),
     })
     const m2 = await seedCampaign({
       source: 'musinsa',
       recruitCount: null,
       applicationCount: null,
-      detail: detail('IMAGE'),
+      detail: detail('SHOE'),
     })
     chatJson.mockResolvedValueOnce({ scores: [score(m1, 4), score(m2, 8)] })
 
@@ -196,8 +196,8 @@ describe('rankCollected', () => {
     const call = chatJson.mock.calls[0]?.[0] as { system: string; user: string }
     expect(call.system).toContain('무신사')
     expect(call.user).toContain('정가 59,000원')
-    expect(call.user).toContain('리뷰 형식 영상')
-    expect(call.user).toContain('리뷰 형식 사진')
+    expect(call.user).toContain('품목 상의')
+    expect(call.user).toContain('품목 신발')
     expect(call.user).not.toContain('경쟁률')
     expect((await getCampaign(gift)).status).toBe('COLLECTED')
     expect((await getCampaign(m1)).status).toBe('SKIPPED')

@@ -1,15 +1,9 @@
 import type { CampaignProfile } from './profile.ts'
-import { type Campaign, type ContentType, sourceInfo } from './types.ts'
+import { type Campaign, sourceInfo } from './types.ts'
 
 export type ReviewLimits = { min: number; max: number }
 
-export type ReviewTarget = { source?: string; contentType?: ContentType | null }
-
-/** The extra rule for a video review: the text is the written part that goes with the video. */
-const videoNote = (target: ReviewTarget) =>
-  target.contentType === 'VIDEO'
-    ? '\n- 이 체험단은 영상 리뷰를 요구해. 쓰는 글은 영상과 함께 올리는 글(캡션·본문)이야. 영상을 본다는 전제로 영상 내용을 설명하거나 지어내지 말고, 메모에 있는 사용 경험만 써.'
-    : ''
+export type ReviewTarget = { source?: string }
 
 export const reviewSystem = (
   profile: CampaignProfile,
@@ -27,7 +21,7 @@ ${profile.review.points.length ? `리뷰에 담을 관점:\n${profile.review.poi
 - 본문 글자 수는 공백 포함 ${limits.min}자 이상 ${limits.max}자 이하.
 - 일반 텍스트만 쓴다. 해시태그, 마크다운, 번호 목록, 따옴표로 감싸기 금지. 이모지는 꼭 필요할 때 한두 개까지만.
 - 광고·협찬 표기 문구는 쓰지 마. 그 줄은 코드가 따로 붙인다.
-- ${sourceInfo(target.source).reviewPlace}를 보는 사람에게 도움이 되는 솔직한 후기로 쓴다.${videoNote(target)}`
+- ${sourceInfo(target.source).reviewPlace}를 보는 사람에게 도움이 되는 솔직한 후기로 쓴다.`
 
 export function reviewUser(
   c: Pick<Campaign, 'title' | 'brand' | 'memo'>,

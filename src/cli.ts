@@ -1,7 +1,6 @@
-import { collectMusinsaCampaigns } from './campaigns/collect.ts'
 import { fetchGiftTrialList } from './campaigns/gift.ts'
-import { runGiftCollect } from './campaigns/jobs.ts'
-import { fetchMusinsaList, musinsaTitle } from './campaigns/musinsa.ts'
+import { runGiftCollect, runMusinsaCollect } from './campaigns/jobs.ts'
+import { fetchMusinsaList, representativeProduct } from './campaigns/musinsa.ts'
 import { rankCollected as rankCampaigns } from './campaigns/rank.ts'
 import { runCampaignReminders } from './campaigns/reminders.ts'
 import { generateReviewDraft, requestDraftRegeneration } from './campaigns/review-draft.ts'
@@ -59,8 +58,8 @@ const USAGE = `usage: npm run cli -- <command>
   revive [postId]             judge expired drafts and print the list, or revive one now (no Telegram)
 
   gift:list                   fetch the Kakao gift trial list and print it (writes nothing)
-  musinsa:list                fetch the Musinsa preuser list via Aside and print it (writes nothing)
-  musinsa:collect             collect the Musinsa list (via Aside), rank new campaigns and send cards
+  musinsa:list                fetch the public Musinsa 체험단 list and print it (writes nothing)
+  musinsa:collect             collect the Musinsa list, rank new campaigns and send their cards
   campaign:collect            collect the gift list, rank new campaigns and send their cards
   campaign:rank               rank COLLECTED campaigns (no Telegram)
   campaign:show <id>          print status, skip reason and the card text
@@ -288,25 +287,32 @@ try {
     }
     case 'musinsa:list': {
       const list = await fetchMusinsaList()
-      console.log(`${list.items.length} campaign(s), ${list.invalid} invalid`)
+      console.log(
+        `${list.items.length} open campaign(s) of ${list.totalCount ?? '?'}, ${list.invalid} invalid`,
+      )
       console.table(
-        list.items.slice(0, 40).map((i) => ({
-          id: i.campaignId,
-          title: musinsaTitle(i).slice(0, 40),
-          brand: i.brandName ?? '-',
-          ends: i.campaignEndDate,
-          type: i.contentType ?? '-',
-        })),
+        list.items.slice(0, 40).map((i) => {
+          const price = representativeProduct(i)?.prices?.normalPrice?.value
+          return {
+            id: i.id,
+            title: i.name.slice(0, 40),
+            brand: i.brand?.name ?? '-',
+            ends: i.endDate,
+            slots: i.recruitmentCount,
+            applicants: i.applicantsCount,
+            competition:
+              i.applicantsCount != null && i.recruitmentCount
+                ? Number((i.applicantsCount / i.recruitmentCount).toFixed(1))
+                : '-',
+            price: price ?? '-',
+          }
+        }),
       )
       break
     }
-    case 'musinsa:collect': {
-      const collected = await collectMusinsaCampaigns()
-      const picked = await rankCampaigns()
-      for (const id of picked) await sendCampaignCard(id)
-      console.log({ ...collected, created: collected.created.length, picked })
+    case 'musinsa:collect':
+      console.log(await runMusinsaCollect(sendCampaignCard))
       break
-    }
     case 'campaign:collect':
       console.log(await runGiftCollect(sendCampaignCard))
       break

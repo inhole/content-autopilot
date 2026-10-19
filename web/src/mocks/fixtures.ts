@@ -144,7 +144,21 @@ export const campaignDetailFixture = (id: number): CampaignDetailResponse | null
       remaining_days: musinsa ? null : 1,
       apply_deadline: row.apply_deadline,
       detail: musinsa
-        ? { representativeGoods: { price: 59000 }, goodsCount: 3, contentType: 'VIDEO' }
+        ? {
+            products: [
+              {
+                uniqueId: '7529016',
+                isRepresentative: true,
+                prices: { normalPrice: { value: 59000 }, salePrice: { value: 41300 } },
+              },
+              { uniqueId: '7529017', isRepresentative: false },
+              { uniqueId: '7529018', isRepresentative: false },
+            ],
+            eventCategory: 'FASHION_ACCESSORY',
+            winnerDrawDate: '2026-10-27',
+            reviewStartDate: '2026-10-31',
+            reviewEndDate: '2026-11-14',
+          }
         : null,
       score: row.score,
       reason: row.score ? '관심 카테고리이고 경쟁률이 보통 수준임' : null,

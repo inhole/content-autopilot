@@ -26,7 +26,7 @@ export const ACTIVE_CAMPAIGN_STATUSES = [
 
 /**
  * Where a campaign comes from (`campaigns.source`). Kakao gift only gives remaining days, so its
- * apply deadline is an estimate; Musinsa gives the exact end time.
+ * apply deadline is an estimate; Musinsa gives the exact end date.
  */
 export const CAMPAIGN_SOURCES = {
   'kakao-gift': {
@@ -54,32 +54,85 @@ export function sourceInfo(source: string | null | undefined) {
   return CAMPAIGN_SOURCES[isCampaignSource(source) ? source : 'kakao-gift']
 }
 
-/** One item of the Musinsa preuser recruitment list (src/campaigns/musinsa.ts), the fields we read. */
-export type MusinsaDetail = {
-  campaignId?: number | string
-  campaignEndDate?: string
-  brandName?: string
-  representativeGoods?: { goodsImageUrl?: string; goodsName?: string; price?: number | null } | null
-  goodsCount?: number | null
-  contentType?: string | null
+/** Korean names of the Musinsa preuser categories (ids of `/event/filters`); others show the raw id. */
+export const MUSINSA_CATEGORY_LABELS: Record<string, string> = {
+  BEAUTY: '뷰티',
+  SHOE: '신발',
+  TOP: '상의',
+  OUTER: '아우터',
+  PANTS: '바지',
+  DRESS_AND_SKIRT: '원피스/스커트',
+  BAG: '가방',
+  FASHION_ACCESSORY: '패션 소품',
+  UNDERWEAR: '속옷/홈웨어',
+  SPORTS: '스포츠/레저',
+  DIGITAL_LIFE: '디지털/라이프',
+  KIDS: '키즈',
 }
 
-export type ContentType = 'VIDEO' | 'IMAGE'
+export const musinsaCategoryLabel = (id: string) => MUSINSA_CATEGORY_LABELS[id] ?? id
+
+/**
+ * `campaigns.detail` of a Musinsa row: one list item of /preuser/api/v1/event/events (the fields
+ * we read), plus the fields of /event/events/:id that are fetched once for new rows
+ * (src/campaigns/musinsa.ts).
+ */
+export type MusinsaDetail = {
+  id?: number
+  type?: string
+  endDate?: string
+  products?: {
+    uniqueId?: string | number
+    isRepresentative?: boolean | null
+    prices?: {
+      normalPrice?: { value?: number | null } | null
+      salePrice?: { value?: number | null } | null
+    } | null
+  }[]
+  eventCategory?: string | null
+  winnerDrawDate?: string | null
+  deliveryDate?: string | null
+  reviewStartDate?: string | null
+  reviewEndDate?: string | null
+  minimumMemberLevel?: number | null
+  optionNames?: string[]
+}
+
+export type MusinsaFacts = {
+  /** Representative product's list price in won. */
+  price: number | null
+  /** Sale price in won, only when it is lower than the list price. */
+  salePrice: number | null
+  goodsCount: number | null
+  /** Raw category id (e.g. FASHION_ACCESSORY); see musinsaCategoryLabel. */
+  category: string | null
+  /** YYYY-MM-DD strings from the detail endpoint. */
+  winnerDrawDate: string | null
+  deliveryDate: string | null
+  reviewStartDate: string | null
+  reviewEndDate: string | null
+}
+
+const str = (v: unknown) => (typeof v === 'string' && v ? v : null)
 
 /** Reads the Musinsa-only facts out of `campaigns.detail`; null for any other source. */
-export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>): {
-  price: number | null
-  goodsCount: number | null
-  contentType: ContentType | null
-} | null {
+export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>): MusinsaFacts | null {
   if (c.source !== 'musinsa') return null
   const d = (c.detail ?? {}) as MusinsaDetail
-  const price = d.representativeGoods?.price
-  const contentType = d.contentType === 'VIDEO' || d.contentType === 'IMAGE' ? d.contentType : null
+  const products = Array.isArray(d.products) ? d.products : []
+  const rep = products.find((p) => p?.isRepresentative) ?? products[0]
+  const normal = rep?.prices?.normalPrice?.value
+  const sale = rep?.prices?.salePrice?.value
+  const price = typeof normal === 'number' ? normal : null
   return {
-    price: typeof price === 'number' ? price : null,
-    goodsCount: typeof d.goodsCount === 'number' ? d.goodsCount : null,
-    contentType,
+    price,
+    salePrice: typeof sale === 'number' && price !== null && sale < price ? sale : null,
+    goodsCount: products.length || null,
+    category: str(d.eventCategory),
+    winnerDrawDate: str(d.winnerDrawDate),
+    deliveryDate: str(d.deliveryDate),
+    reviewStartDate: str(d.reviewStartDate),
+    reviewEndDate: str(d.reviewEndDate),
   }
 }
 

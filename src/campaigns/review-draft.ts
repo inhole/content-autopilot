@@ -11,7 +11,6 @@ import {
   shortenReviewPrompt,
 } from './review-prompts.ts'
 import { loadCampaign } from './store.ts'
-import { musinsaFacts } from './types.ts'
 
 /**
  * Gift review drafts (docs/plans/campaign-autopilot.md): the owner's memo in, a short review text
@@ -139,10 +138,7 @@ export async function generateReviewDraft(
   const profile = await loadCampaignProfile()
   const limits = reviewLimits(profile)
   const body = await draftBody(
-    reviewSystem(profile, limits, {
-      source: c.source,
-      contentType: musinsaFacts(c)?.contentType ?? null,
-    }),
+    reviewSystem(profile, limits, { source: c.source }),
     reviewUser(c, { feedback: opts.feedback, previous: c.draft_text }),
     c.memo,
     limits,

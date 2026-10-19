@@ -1,0 +1,816 @@
+{
+  "data": {
+    "content": [
+      {
+        "id": 48340,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "헤베렛 스케치 워시드 볼 캡 4색상 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/03619a59-c890-11f1-885c-b9f970a69d0e.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 394,
+        "recruitmentCount": 5,
+        "brand": { "id": "heberet", "name": "헤베렛" },
+        "products": [
+          {
+            "productId": 75543,
+            "eventId": 48340,
+            "originUniqueId": null,
+            "uniqueId": "7529016",
+            "name": "스케치 워시드 볼 캡 (4색상)",
+            "link": "https://www.musinsa.com/products/7529016",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 25000.0 },
+              "salePrice": { "value": 14990.0 },
+              "discount": { "rate": 40.0 }
+            }
+          }
+        ],
+        "images": []
+      },
+      {
+        "id": 48339,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "슈퍼서브 워싱 크롭 데님 재킷 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/6ddaf368-c884-11f1-885c-cd3aa1c8d05e.png",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 685,
+        "recruitmentCount": 5,
+        "brand": { "id": "supersub", "name": "슈퍼서브" },
+        "products": [
+          {
+            "productId": 75540,
+            "eventId": 48339,
+            "originUniqueId": null,
+            "uniqueId": "3801342",
+            "name": "워싱 크롭 데님 재킷 - 워시드 브라운",
+            "link": "https://www.musinsa.com/products/3801342",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 99000.0 },
+              "salePrice": { "value": 69000.0 },
+              "discount": { "rate": 30.0 }
+            }
+          },
+          {
+            "productId": 75541,
+            "eventId": 48339,
+            "originUniqueId": null,
+            "uniqueId": "4287892",
+            "name": "워싱 크롭 데님 재킷 - 워시드 블루",
+            "link": "https://www.musinsa.com/products/4287892",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 99000.0 },
+              "salePrice": { "value": 69000.0 },
+              "discount": { "rate": 30.0 }
+            }
+          },
+          {
+            "productId": 75542,
+            "eventId": 48339,
+            "originUniqueId": null,
+            "uniqueId": "4326992",
+            "name": "워싱 크롭 데님 재킷_2COLOR",
+            "link": "https://www.musinsa.com/products/4326992",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 99000.0 },
+              "salePrice": { "value": 69000.0 },
+              "discount": { "rate": 30.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65078,
+            "eventId": 48339,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/5e8ad0b7-c884-11f1-885c-6d62397b625d.png"
+          },
+          {
+            "imageId": 65079,
+            "eventId": 48339,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/62a22e3e-c884-11f1-a638-95edc5cb456f.png"
+          }
+        ]
+      },
+      {
+        "id": 48337,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "매스노운 슬럽 레이어드 컷 패널드 핑거홀 후드티 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/4ce1959c-c87f-11f1-a638-55c4bfd8243b.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 744,
+        "recruitmentCount": 5,
+        "brand": { "id": "massnoun", "name": "매스노운" },
+        "products": [
+          {
+            "productId": 75538,
+            "eventId": 48337,
+            "originUniqueId": null,
+            "uniqueId": "7528131",
+            "name": "슬라브 레이어드 컷 패널드 핑거홀 후드티 NFSHD001-DG",
+            "link": "https://www.musinsa.com/products/7528131",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 66000.0 },
+              "salePrice": { "value": 62700.0 },
+              "discount": { "rate": 5.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65076,
+            "eventId": 48337,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/4f93963d-c87f-11f1-a638-ab4c4345b87e.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48336,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "매스노운 슬럽 레이어드 컷 패널드 핑거홀 후드티 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/2a4e4394-c87f-11f1-885c-436b8800d491.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 668,
+        "recruitmentCount": 5,
+        "brand": { "id": "massnoun", "name": "매스노운" },
+        "products": [
+          {
+            "productId": 75537,
+            "eventId": 48336,
+            "originUniqueId": null,
+            "uniqueId": "7528082",
+            "name": "슬라브 레이어드 컷 패널드 핑거홀 후드티 NFSHD001-BR",
+            "link": "https://www.musinsa.com/products/7528082",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 66000.0 },
+              "salePrice": { "value": 62700.0 },
+              "discount": { "rate": 5.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65075,
+            "eventId": 48336,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/2c37c49b-c87f-11f1-a638-e93c5b1f49d8.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48335,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "매스노운 슬럽 레이어드 컷 패널드 핑거홀 후드티 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/d1fab969-c87e-11f1-a638-c38eb98ee746.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 717,
+        "recruitmentCount": 5,
+        "brand": { "id": "massnoun", "name": "매스노운" },
+        "products": [
+          {
+            "productId": 75536,
+            "eventId": 48335,
+            "originUniqueId": null,
+            "uniqueId": "7524436",
+            "name": "슬라브 레이어드 컷 패널드 핑거홀 후드티 NFSHD001-BK",
+            "link": "https://www.musinsa.com/products/7524436",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 66000.0 },
+              "salePrice": { "value": 62700.0 },
+              "discount": { "rate": 5.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65074,
+            "eventId": 48335,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/d4222d4a-c87e-11f1-a638-211743047fef.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48334,
+        "type": "SAMPLE",
+        "state": "OPEN",
+        "name": "[샘플] 앳킨슨1799 앳킨슨 스파이스 오브 런던 퍼퓸 인텐스 체험단 10명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/d8f46b48-c87d-11f1-a638-27f2b13c86c3.png",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 449,
+        "recruitmentCount": 10,
+        "brand": { "id": "atkinsons1799", "name": "앳킨슨1799" },
+        "products": [
+          {
+            "productId": 75535,
+            "eventId": 48334,
+            "originUniqueId": "7399890",
+            "uniqueId": "7487755",
+            "name": "[체험단]스파이스 오브 런던 퍼퓸 인텐스 1.2ml",
+            "link": "https://www.musinsa.com/products/7487755",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 4760.0 },
+              "salePrice": { "value": 4760.0 },
+              "discount": { "rate": 0.0 }
+            }
+          }
+        ],
+        "images": []
+      },
+      {
+        "id": 48333,
+        "type": "SAMPLE",
+        "state": "OPEN",
+        "name": "[샘플] 앳킨슨1799 앳킨슨 미스틱 문라이트 퍼퓸 인텐스 체험단 10명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/5f57e967-c87d-11f1-a638-f15487e5a51f.png",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 430,
+        "recruitmentCount": 10,
+        "brand": { "id": "atkinsons1799", "name": "앳킨슨1799" },
+        "products": [
+          {
+            "productId": 75534,
+            "eventId": 48333,
+            "originUniqueId": "7399891",
+            "uniqueId": "7487725",
+            "name": "[체험단]미스틱 문라이트 퍼퓸 인텐스 1.2ml",
+            "link": "https://www.musinsa.com/products/7487725",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 4760.0 },
+              "salePrice": { "value": 4760.0 },
+              "discount": { "rate": 0.0 }
+            }
+          }
+        ],
+        "images": []
+      },
+      {
+        "id": 48332,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "닥터유아유아 피디알엔 바운스 리턴 앰플 체험단 50명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/8fe44b56-c878-11f1-a638-6f3592aa07e1.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 345,
+        "recruitmentCount": 50,
+        "brand": { "id": "drurur", "name": "닥터유아유아" },
+        "products": [
+          {
+            "productId": 75533,
+            "eventId": 48332,
+            "originUniqueId": null,
+            "uniqueId": "7482439",
+            "name": "PDRN 바운스 리턴 앰플 30ml",
+            "link": "https://www.musinsa.com/products/7482439",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 53000.0 },
+              "salePrice": { "value": 53000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          }
+        ],
+        "images": []
+      },
+      {
+        "id": 48327,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "바나코 패치 블랭킷 담요 체험단 10명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/43657f10-c875-11f1-885c-6beb83edba8c.png",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 685,
+        "recruitmentCount": 10,
+        "brand": { "id": "banaco", "name": "바나코" },
+        "products": [
+          {
+            "productId": 75528,
+            "eventId": 48327,
+            "originUniqueId": null,
+            "uniqueId": "7500030",
+            "name": "패치 블랭킷 담요 (4colors)",
+            "link": "https://www.musinsa.com/products/7500030",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 50000.0 },
+              "salePrice": { "value": 22900.0 },
+              "discount": { "rate": 54.0 }
+            }
+          }
+        ],
+        "images": []
+      },
+      {
+        "id": 48323,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "레이지비 트랙 피그먼트 오버핏 후드 집업 자켓 2컬러 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/07898b2d-c871-11f1-885c-1d06757272f6.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 648,
+        "recruitmentCount": 5,
+        "brand": { "id": "lazybee", "name": "레이지비" },
+        "products": [
+          {
+            "productId": 75524,
+            "eventId": 48323,
+            "originUniqueId": null,
+            "uniqueId": "7348131",
+            "name": "트랙 피그먼트 오버핏 후드 집업 자켓 M (2컬러)",
+            "link": "https://www.musinsa.com/products/7348131",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 117000.0 },
+              "salePrice": { "value": 65200.0 },
+              "discount": { "rate": 44.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65066,
+            "eventId": 48323,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/0be829de-c871-11f1-a638-919fc9dd77a2.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48322,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "큐스 엑스트라 파인 울 브이넥 가디건 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/d3bd594c-c870-11f1-a638-238a5abe7a61.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 507,
+        "recruitmentCount": 5,
+        "brand": { "id": "qsofficial", "name": "큐스" },
+        "products": [
+          {
+            "productId": 75522,
+            "eventId": 48322,
+            "originUniqueId": null,
+            "uniqueId": "4476335",
+            "name": "엑스트라 파인 울 브이넥 가디건 - 멜란지그레이",
+            "link": "https://www.musinsa.com/products/4476335",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 149000.0 },
+              "salePrice": { "value": 149000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          },
+          {
+            "productId": 75523,
+            "eventId": 48322,
+            "originUniqueId": null,
+            "uniqueId": "4476396",
+            "name": "엑스트라 파인 울 브이넥 가디건 - 네이비",
+            "link": "https://www.musinsa.com/products/4476396",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 149000.0 },
+              "salePrice": { "value": 149000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65065,
+            "eventId": 48322,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/d832188d-c870-11f1-a638-c353e1b6b7aa.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48321,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "레이지비 스트링 와이드 밴딩 트랙 피그먼트 스웨트 팬츠 2컬러 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/6260cffc-c870-11f1-885c-cdaeaaa26416.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 599,
+        "recruitmentCount": 5,
+        "brand": { "id": "lazybee", "name": "레이지비" },
+        "products": [
+          {
+            "productId": 75521,
+            "eventId": 48321,
+            "originUniqueId": null,
+            "uniqueId": "7347230",
+            "name": "스트링 와이드 밴딩 트랙 피그먼트 스웨트 팬츠 M (2컬러)",
+            "link": "https://www.musinsa.com/products/7347230",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 102000.0 },
+              "salePrice": { "value": 49900.0 },
+              "discount": { "rate": 51.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65064,
+            "eventId": 48321,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/6722010a-c870-11f1-a638-519fc99c052d.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48320,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "레이지비 엘립스 오버핏 피그먼트 후드티 2컬러 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/0460a24a-c870-11f1-885c-9b2ffbe38f10.png",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 582,
+        "recruitmentCount": 5,
+        "brand": { "id": "lazybee", "name": "레이지비" },
+        "products": [
+          {
+            "productId": 75520,
+            "eventId": 48320,
+            "originUniqueId": null,
+            "uniqueId": "7348495",
+            "name": "엘립스 오버핏 피그먼트 후드티 M (2컬러)",
+            "link": "https://www.musinsa.com/products/7348495",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 102000.0 },
+              "salePrice": { "value": 57000.0 },
+              "discount": { "rate": 44.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65063,
+            "eventId": 48320,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/0900b74b-c870-11f1-885c-99c88de43918.png"
+          }
+        ]
+      },
+      {
+        "id": 48319,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "레이지비 사계절기모 컨투어 벌룬 스트링 밴딩 와이드 스웨트 팬츠 3컬러 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/9bb56ff8-c86f-11f1-885c-b790e3018aad.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 547,
+        "recruitmentCount": 5,
+        "brand": { "id": "lazybee", "name": "레이지비" },
+        "products": [
+          {
+            "productId": 75519,
+            "eventId": 48319,
+            "originUniqueId": null,
+            "uniqueId": "7364026",
+            "name": "(사계절/기모) 컨투어 벌룬 스트링 밴딩 와이드 스웨트 팬츠 M (3컬러)",
+            "link": "https://www.musinsa.com/products/7364026",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 81000.0 },
+              "salePrice": { "value": 39900.0 },
+              "discount": { "rate": 51.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65061,
+            "eventId": 48319,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/a0457f69-c86f-11f1-885c-f9bbeb19c755.jpg"
+          },
+          {
+            "imageId": 65062,
+            "eventId": 48319,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/a50577f9-c86f-11f1-a638-b7ed69150f41.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48315,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "다미쉬 크로스 자수 와플 헨리넥 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/6a203f25-c86b-11f1-a638-bd36b8984010.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 360,
+        "recruitmentCount": 5,
+        "brand": { "id": "callmeyourhighness", "name": "다미쉬" },
+        "products": [
+          {
+            "productId": 75510,
+            "eventId": 48315,
+            "originUniqueId": null,
+            "uniqueId": "7119512",
+            "name": "크로스 자수 와플 헨리넥_블랙",
+            "link": "https://www.musinsa.com/products/7119512",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 55000.0 },
+              "salePrice": { "value": 35500.0 },
+              "discount": { "rate": 35.0 }
+            }
+          },
+          {
+            "productId": 75511,
+            "eventId": 48315,
+            "originUniqueId": null,
+            "uniqueId": "7118546",
+            "name": "크로스 자수 와플 헨리넥_화이트",
+            "link": "https://www.musinsa.com/products/7118546",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 55000.0 },
+              "salePrice": { "value": 44000.0 },
+              "discount": { "rate": 20.0 }
+            }
+          },
+          {
+            "productId": 75512,
+            "eventId": 48315,
+            "originUniqueId": null,
+            "uniqueId": "7119454",
+            "name": "크로스 자수 와플 헨리넥_그레이",
+            "link": "https://www.musinsa.com/products/7119454",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 55000.0 },
+              "salePrice": { "value": 44000.0 },
+              "discount": { "rate": 20.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65056,
+            "eventId": 48315,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/6d6000d6-c86b-11f1-a638-bb287ecebf42.jpg"
+          },
+          {
+            "imageId": 65057,
+            "eventId": 48315,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/70878013-c86b-11f1-885c-63bef031fed5.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48314,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "피인오 슬럽 워머 스트라이프 롱 슬리브 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/bea6eab3-c868-11f1-a638-0f41cc5e88ea.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 431,
+        "recruitmentCount": 5,
+        "brand": { "id": "pino", "name": "피인오" },
+        "products": [
+          {
+            "productId": 75508,
+            "eventId": 48314,
+            "originUniqueId": null,
+            "uniqueId": "7518477",
+            "name": "슬럽 워머 스트라이프 롱 슬리브 - 차콜",
+            "link": "https://www.musinsa.com/products/7518477",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 53860.0 },
+              "salePrice": { "value": 37700.0 },
+              "discount": { "rate": 30.0 }
+            }
+          },
+          {
+            "productId": 75509,
+            "eventId": 48314,
+            "originUniqueId": null,
+            "uniqueId": "7518536",
+            "name": "슬럽 워머 스트라이프 롱 슬리브 - 브라운",
+            "link": "https://www.musinsa.com/products/7518536",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 53860.0 },
+              "salePrice": { "value": 37700.0 },
+              "discount": { "rate": 30.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65055,
+            "eventId": 48314,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/c1197154-c868-11f1-a638-674075589ee4.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48313,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "슈펜 워시드 더비 체험단 10명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/f48624f2-c865-11f1-a638-b9e5ef0fb0b7.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 448,
+        "recruitmentCount": 10,
+        "brand": { "id": "shoopen", "name": "슈펜" },
+        "products": [
+          {
+            "productId": 75507,
+            "eventId": 48313,
+            "originUniqueId": null,
+            "uniqueId": "7144865",
+            "name": "Washed Derby",
+            "link": "https://www.musinsa.com/products/7144865",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 99900.0 },
+              "salePrice": { "value": 89910.0 },
+              "discount": { "rate": 10.0 }
+            }
+          }
+        ],
+        "images": []
+      },
+      {
+        "id": 48311,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "마흐 시로 고 백팩 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/664006ef-c865-11f1-885c-e772b196773a.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 576,
+        "recruitmentCount": 5,
+        "brand": { "id": "mah", "name": "마흐" },
+        "products": [
+          {
+            "productId": 75502,
+            "eventId": 48311,
+            "originUniqueId": null,
+            "uniqueId": "7346247",
+            "name": "시로 고 백팩 - 클라우드블루",
+            "link": "https://www.musinsa.com/products/7346247",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 94000.0 },
+              "salePrice": { "value": 94000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          },
+          {
+            "productId": 75503,
+            "eventId": 48311,
+            "originUniqueId": null,
+            "uniqueId": "7346253",
+            "name": "시로 고 백팩 - 라일락",
+            "link": "https://www.musinsa.com/products/7346253",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 94000.0 },
+              "salePrice": { "value": 94000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          },
+          {
+            "productId": 75504,
+            "eventId": 48311,
+            "originUniqueId": null,
+            "uniqueId": "7346255",
+            "name": "시로 고 백팩 - 라이트그레이",
+            "link": "https://www.musinsa.com/products/7346255",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 94000.0 },
+              "salePrice": { "value": 94000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          },
+          {
+            "productId": 75505,
+            "eventId": 48311,
+            "originUniqueId": null,
+            "uniqueId": "7346262",
+            "name": "시로 고 백팩 - 블랙",
+            "link": "https://www.musinsa.com/products/7346262",
+            "isRepresentative": false,
+            "prices": {
+              "normalPrice": { "value": 94000.0 },
+              "salePrice": { "value": 94000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65052,
+            "eventId": 48311,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/69843570-c865-11f1-885c-c937149db6f4.jpg"
+          },
+          {
+            "imageId": 65053,
+            "eventId": 48311,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/6b805311-c865-11f1-a638-0b281a590442.jpg"
+          },
+          {
+            "imageId": 65054,
+            "eventId": 48311,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/6e1e2ff1-c865-11f1-885c-71a3ff9532ed.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48310,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "엑세스 라운드 커브드 크롭 스웻셔츠 멜란지 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/65aa2f0f-c865-11f1-a638-790227aa019e.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 226,
+        "recruitmentCount": 5,
+        "brand": { "id": "xx", "name": "엑세스" },
+        "products": [
+          {
+            "productId": 75501,
+            "eventId": 48310,
+            "originUniqueId": null,
+            "uniqueId": "6627543",
+            "name": "XX Round Curved Crop Sweatshirt Melange",
+            "link": "https://www.musinsa.com/products/6627543",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 59000.0 },
+              "salePrice": { "value": 59000.0 },
+              "discount": { "rate": 0.0 }
+            }
+          }
+        ],
+        "images": [
+          {
+            "imageId": 65051,
+            "eventId": 48310,
+            "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/69529da0-c865-11f1-a638-dfdc6450798a.jpg"
+          }
+        ]
+      },
+      {
+        "id": 48308,
+        "type": "GOODS",
+        "state": "OPEN",
+        "name": "블론드나인 스트라이프 풀오버 세미오버핏 니트 블랙 체험단 5명 모집",
+        "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/c1b3a83b-c863-11f1-885c-3fbc217aad88.jpg",
+        "startDate": "2026-10-19",
+        "endDate": "2026-10-25",
+        "applicantsCount": 570,
+        "recruitmentCount": 5,
+        "brand": { "id": "blond9", "name": "블론드나인" },
+        "products": [
+          {
+            "productId": 75499,
+            "eventId": 48308,
+            "originUniqueId": null,
+            "uniqueId": "7524359",
+            "name": "스트라이프 풀오버 세미오버핏 니트_블랙",
+            "link": "https://www.musinsa.com/products/7524359",
+            "isRepresentative": true,
+            "prices": {
+              "normalPrice": { "value": 59800.0 },
+              "salePrice": { "value": 39800.0 },
+              "discount": { "rate": 33.0 }
+            }
+          }
+        ],
+        "images": []
+      }
+    ],
+    "hasNext": true
+  }
+}

@@ -236,14 +236,19 @@ const musinsaCampaign = (over: Partial<Campaign> = {}) =>
     source: 'musinsa',
     url: 'https://www.musinsa.com/preuser/events/38933',
     title: '후드 집업',
-    recruit_count: null,
-    application_count: null,
     detail: {
-      campaignId: 38933,
-      brandName: '브랜드',
-      representativeGoods: { goodsName: '후드 집업', price: 129000 },
-      goodsCount: 1,
-      contentType: 'VIDEO',
+      id: 38933,
+      products: [
+        {
+          uniqueId: '7529016',
+          isRepresentative: true,
+          prices: { normalPrice: { value: 129000 }, salePrice: { value: 89000 } },
+        },
+      ],
+      eventCategory: 'FASHION_ACCESSORY',
+      winnerDrawDate: '2026-10-27',
+      reviewStartDate: '2026-10-31',
+      reviewEndDate: '2026-11-14',
     },
     ...over,
   })
@@ -255,22 +260,37 @@ describe('source-aware cards', () => {
     expect(text).toContain('경쟁률 12.3:1')
     expect(text).not.toContain('정가')
   })
-  it('Musinsa card shows price, review format and the PC instruction', () => {
+  it('Musinsa card shows competition, price, dates and the PC instruction', () => {
     const text = formatCampaignCard(musinsaCampaign(), NOW, TZ)
     expect(text).toContain('[무신사] #12 후드 집업')
-    expect(text).toContain('정가 129,000원')
-    expect(text).toContain('📹 영상 리뷰')
+    expect(text).toContain('경쟁률 12.3:1')
+    expect(text).toContain('패션 소품 · 정가 129,000원 → 89,000원')
+    expect(text).toContain('발표 10/27(화) · 리뷰 10/31(토)~11/14(토)')
     expect(text).toContain('💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
-    expect(text).not.toMatch(/모집|📱/)
-    // Musinsa gives the exact end time, so its deadline is not marked as an estimate.
+    expect(text).not.toMatch(/📱|영상 리뷰|사진 리뷰/)
+    // Musinsa gives the exact end date, so its deadline is not marked as an estimate.
     expect(text).toContain('마감 D-')
     expect(text).not.toContain('추정')
-    const image = formatCampaignCard(
-      musinsaCampaign({ detail: { contentType: 'IMAGE', representativeGoods: { price: 1000 } } }),
+  })
+  it('Musinsa card leaves out the sale price when it is not lower, and unknown dates', () => {
+    const text = formatCampaignCard(
+      musinsaCampaign({
+        detail: {
+          products: [
+            {
+              isRepresentative: true,
+              prices: { normalPrice: { value: 1000 }, salePrice: { value: 1000 } },
+            },
+            { uniqueId: '2' },
+          ],
+        },
+      }),
       NOW,
       TZ,
     )
-    expect(image).toContain('📷 사진 리뷰')
+    expect(text).toContain('정가 1,000원 · 상품 2개')
+    expect(text).not.toContain('→')
+    expect(text).not.toMatch(/발표|리뷰 /)
   })
   it('Musinsa card without detail still renders and fits a caption', () => {
     expect(formatCampaignCard(musinsaCampaign({ detail: null }), NOW, TZ)).toContain('[무신사]')
