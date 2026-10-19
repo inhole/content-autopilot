@@ -75,6 +75,17 @@ describe('CampaignTable', () => {
     expect(screen.getAllByText('D-1')[0]).toHaveAttribute('data-variant', 'warning')
     expect(screen.getAllByText('D-5')[0]).toHaveAttribute('data-variant', 'outline')
   })
+  it('searches title and brand even when the first row has no competition, score or deadline', async () => {
+    const base = campaignRowsFixture[0] as CampaignRow
+    const rows: CampaignRow[] = [
+      { ...base, id: 1, title: '무선 이어폰', brand: '사운드랩', competition: null, score: null, next_deadline: null },
+      { ...base, id: 2, title: '핸드크림 3종', brand: '비건하우스', competition: 3, score: 70 },
+    ]
+    render(wrap(<CampaignTable rows={rows} now={now} />))
+    await userEvent.type(screen.getByPlaceholderText('제목·브랜드 검색'), '비건')
+    await waitFor(() => expect(screen.queryAllByText(/무선 이어폰/)).toHaveLength(0))
+    expect(screen.getAllByText(/핸드크림 3종/).length).toBeGreaterThan(0)
+  })
   it('shows an empty state', () => {
     render(wrap(<CampaignTable rows={[]} />))
     expect(screen.getByText('해당하는 체험단이 없어요.')).toBeInTheDocument()

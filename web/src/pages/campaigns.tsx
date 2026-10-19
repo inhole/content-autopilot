@@ -86,6 +86,9 @@ const columns = (now?: Date): ColumnDef<CampaignRow>[] => [
     id: 'title',
     header: '제목',
     enableSorting: false,
+    // The search text. TanStack only filters columns with an accessor, and by default decides
+    // which ones from the first row's values, so the search needs a string accessor of its own.
+    accessorFn: (r) => `${r.title ?? ''} ${r.brand ?? ''}`,
     cell: ({ row: { original: c } }) => <CampaignTitle row={c} />,
   },
   {
@@ -178,6 +181,8 @@ export function CampaignTable({ rows, now }: { rows: CampaignRow[]; now?: Date }
     state: { sorting, globalFilter: search },
     onSortingChange: setSorting,
     onGlobalFilterChange: setSearch,
+    // Search title and brand only, whatever the first row's numeric columns hold.
+    getColumnCanGlobalFilter: (column) => column.id === 'title',
     globalFilterFn: (row, _id, value: string) => {
       const needle = String(value).trim().toLowerCase()
       const c = row.original

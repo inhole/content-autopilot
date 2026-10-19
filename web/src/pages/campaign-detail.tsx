@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ExternalLinkIcon, GiftIcon } from 'lucide-react'
-import { Children, type ReactNode } from 'react'
+import { Children, type ReactNode, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { EmptyState, QueryBoundary } from '@/components/query-state.tsx'
 import { CampaignStatusBadge, SourceLabel } from '@/components/status-badge.tsx'
@@ -345,9 +345,22 @@ export function CampaignSheet() {
   const q = useCampaign(id ?? 0)
   const navigate = useNavigate()
   const title = q.data ? titleOf(q.data.campaign) : '체험단 상세'
+  // The sheet is a route without a Radix trigger, so Radix cannot give focus back on close.
+  // Remember the link that opened it (still mounted in the list behind) and return focus there.
+  const [opener] = useState(() =>
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  )
   return (
     <Sheet open onOpenChange={(open) => !open && navigate(-1)}>
-      <SheetContent className="w-full gap-0 sm:max-w-xl">
+      <SheetContent
+        className="w-full gap-0 sm:max-w-xl"
+        onCloseAutoFocus={(e) => {
+          if (opener?.isConnected) {
+            e.preventDefault()
+            opener.focus()
+          }
+        }}
+      >
         <SheetHeader className="border-b">
           <SheetTitle className="pr-8 leading-snug break-words">{title}</SheetTitle>
           <SheetDescription>체험단 상세</SheetDescription>
