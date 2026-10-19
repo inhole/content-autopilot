@@ -30,9 +30,9 @@ export const ACTIVE_CAMPAIGN_STATUSES = [
  */
 export const CAMPAIGN_SOURCES = {
   'kakao-gift': {
-    label: '선물하기',
+    label: '카카오톡',
     applyOn: 'mobile',
-    reviewPlace: '선물하기 상품 리뷰',
+    reviewPlace: '카카오톡 선물하기 상품 리뷰',
     estimatedDeadline: true,
   },
   musinsa: {

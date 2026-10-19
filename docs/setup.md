@@ -122,11 +122,11 @@
 |---|---|---|
 | `GIFT_COLLECT_CRON` | `0 9,15,21 * * *` | 공개 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `GIFT_TRIAL_PAGE_ID` | `33325` | 선물하기 체험단 탭의 페이지 번호. `gift.kakao.com/page/<번호>`다. 탭이 바뀌면 이 값을 고친다. |
-| `CAMPAIGN_DAILY_MAX` | `5` | 출처(선물하기, 무신사)마다 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
+| `CAMPAIGN_DAILY_MAX` | `5` | 출처(카카오톡, 무신사)마다 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
 | `MUSINSA_COLLECT_CRON` | `0 10,16,22 * * *` | 무신사 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 선별 규칙과 리뷰 문체, 광고 표기를 담은 프로필 파일 |
 
-선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
+선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 카카오톡 카드 버튼이 카카오톡 앱으로 바로 열리게 하려면 `PUBLIC_BASE_URL`(대시보드 공개 https 주소, 경로 없이)도 넣는다([dashboard.md](dashboard.md)). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
 
 ### 5-2. 프로필 `config/campaign-profile.json`
 

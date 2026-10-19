@@ -20,6 +20,10 @@ const MAX_OPTION_NAMES = 30
 export const musinsaEventUrl = (eventId: number | string) =>
   `https://www.musinsa.com/preuser/events/${eventId}`
 
+/** Universal link into the Musinsa app (iOS); redirects to the web page without the app or on a PC. */
+export const musinsaAppUrl = (eventId: number | string) =>
+  `https://link.musinsa.com/preuser/events/${eventId}`
+
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const optionalDate = isoDate.nullish().catch(null)
 const count = z.number().int().nullish()

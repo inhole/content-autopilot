@@ -8,7 +8,7 @@ const bool = z
   .default('false')
   .transform((v) => v === 'true')
 
-const schema = z.object({
+export const schema = z.object({
   DATABASE_URL: z.string().min(1),
   // Defaults to true because production runs on Supabase; CI and local Postgres have no SSL.
   DATABASE_SSL: z
@@ -66,6 +66,13 @@ const schema = z.object({
   // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
   PORT: z.coerce.number().int().min(1).max(65535).optional(),
   DASHBOARD_PASSWORD: z.string().optional(),
+  // Public https origin of the dashboard server (no path). Gift cards then open KakaoTalk through
+  // `${PUBLIC_BASE_URL}/go/gift/<id>`; the dashboard must be enabled for that route to exist.
+  PUBLIC_BASE_URL: z
+    .string()
+    .refine((v) => /^https:\/\/[^/?#\s]+\/?$/.test(v), 'must be an https origin without a path')
+    .transform((v) => v.replace(/\/$/, ''))
+    .optional(),
 })
 
 export type Config = z.infer<typeof schema>

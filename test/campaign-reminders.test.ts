@@ -102,7 +102,7 @@ describe('source label', () => {
       new Date('2026-10-15T00:00:00Z'),
       TZ,
     )
-    expect(gift?.text).toContain('[선물하기]')
+    expect(gift?.text).toContain('[카카오톡]')
     expect(gift?.text).toContain('카카오톡')
     const [musinsa] = dueReminders(
       c({ source: 'musinsa', status: 'APPLIED', selected_at: null }),

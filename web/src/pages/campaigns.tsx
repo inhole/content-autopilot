@@ -368,7 +368,7 @@ export function CampaignsPage() {
     <>
       <PageHeader
         title="체험단"
-        description="마감이 가까운 순 · 선물하기 신청 마감은 남은 일수로 추정한 값"
+        description="마감이 가까운 순 · 카카오톡 체험단 신청 마감은 남은 일수로 추정한 값"
       >
         {q.data && (
           <Badge variant="outline" className="tabular-nums">

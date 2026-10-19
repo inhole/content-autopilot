@@ -15,7 +15,7 @@ export const CAMPAIGN_STATUS_LABELS: Record<string, string> = {
 }
 
 export const SOURCES = [
-  { key: 'kakao-gift', label: '선물하기', linkLabel: '선물하기에서 열기', estimatedDeadline: true },
+  { key: 'kakao-gift', label: '카카오톡', linkLabel: '카카오톡에서 열기', estimatedDeadline: true },
   { key: 'musinsa', label: '무신사', linkLabel: '무신사에서 열기', estimatedDeadline: false },
 ] as const
 

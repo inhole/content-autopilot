@@ -2,6 +2,8 @@ import type { Bot } from 'grammy'
 import { config } from '../config.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
 import { type CampaignCallback, parseCampaignCallback } from './callbacks.ts'
+import { GIFT_CAMPAIGN_ID_RE } from './gift.ts'
+import { musinsaAppUrl } from './musinsa.ts'
 import {
   loadActiveCampaigns,
   markApplied,
@@ -40,7 +42,7 @@ export const CAMPAIGN_HELP_LINES = [
   '/camps — 진행 중인 체험단 보기',
   '/due <번호> <날짜> — 리뷰 기한 알려주기 (예: /due 12 10/30)',
   '- 선물하기: 카드의 "📱 선물하기에서 열기"로 폰 카톡에서 신청한 뒤 "✅ 신청함"을 눌러요',
-  '- 무신사: 카드의 "💻 무신사에서 열기"로 PC에서 신청한 뒤 "✅ 신청함"을 눌러요',
+  '- 무신사: 카드의 "📱 무신사 앱에서 열기"로 앱이나 PC에서 신청한 뒤 "✅ 신청함"을 눌러요',
 ]
 
 export const CAMPAIGN_BOT_COMMANDS = [
@@ -135,7 +137,7 @@ export function formatMusinsaFacts(
 /** What the owner does with the card, by where the source is applied on. */
 const applyInstruction = (source: string) =>
   sourceInfo(source).applyOn === 'pc'
-    ? '💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요'
+    ? '📱 무신사 앱이나 💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요'
     : '📱 폰 카톡에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요'
 
 /** The review card; always fits a 1024-char photo caption. */
@@ -171,12 +173,24 @@ const cb = (
   ...(arg ? { arg } : {}),
 })
 
+/** Base of the public KakaoTalk hand-off route; null when it cannot work (no dashboard or no public URL). */
+export function handoffBaseUrl(): string | null {
+  return config.DASHBOARD_PASSWORD && config.PUBLIC_BASE_URL ? config.PUBLIC_BASE_URL : null
+}
+
 export function campaignCardButtons(
-  c: Pick<Campaign, 'id' | 'url' | 'revision'> & { source?: string },
+  c: Pick<Campaign, 'id' | 'url' | 'revision'> & { source?: string; external_id?: string },
+  handoffBase: string | null = handoffBaseUrl(),
 ): CampaignButton[] {
   const info = sourceInfo(c.source)
+  const open: CampaignButton =
+    info.applyOn !== 'pc' && handoffBase && GIFT_CAMPAIGN_ID_RE.test(c.external_id ?? '')
+      ? { text: '📱 카카오톡에서 열기', url: `${handoffBase}/go/gift/${c.external_id}` }
+      : c.source === 'musinsa' && c.external_id
+        ? { text: '📱 무신사 앱에서 열기', url: musinsaAppUrl(c.external_id) }
+        : { text: `${info.applyOn === 'pc' ? '💻' : '📱'} ${info.label}에서 열기`, url: c.url }
   return [
-    { text: `${info.applyOn === 'pc' ? '💻' : '📱'} ${info.label}에서 열기`, url: c.url },
+    open,
     { text: '✅ 신청함', callback: cb(c, 'applied', c.revision) },
     { text: '🙅 패스', callback: cb(c, 'pass', c.revision) },
   ]

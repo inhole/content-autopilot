@@ -12,6 +12,9 @@ const PAGE_DELAY_MS = 400
 // Hard stop against a pagination loop that never reports its end (475 items = 19 pages today).
 const MAX_PAGES = 40
 
+/** Gift campaign ids are 24 lowercase hex chars (see test/fixtures/gift). */
+export const GIFT_CAMPAIGN_ID_RE = /^[0-9a-f]{24}$/
+
 /** The in-app detail route of a campaign; the owner opens it from the Telegram card. */
 export function giftTrialUrl(campaignId: string): string {
   return `https://gift.kakao.com/giftbox/trial-campaign/${campaignId}`

@@ -30,7 +30,7 @@ describe('OverviewView', () => {
     expect(screen.getByText('발행 예정', { selector: '[data-slot=card-title]' })).toBeInTheDocument()
     expect(screen.getByText(/Vite 7 나왔음/)).toBeInTheDocument()
     expect(screen.getByText(/그때 확인한 체험단 475건/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '선물하기 진행 중 8건, 전체 317건' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '카카오톡 진행 중 8건, 전체 317건' })).toHaveAttribute(
       'href',
       '/campaigns?source=kakao-gift',
     )
@@ -128,7 +128,7 @@ describe('CampaignDetailView', () => {
     const data = campaignDetailFixture(103)
     if (!data) throw new Error('fixture')
     const { container } = render(wrap(<CampaignDetailView data={data} />))
-    const link = screen.getByRole('link', { name: '선물하기에서 열기' })
+    const link = screen.getByRole('link', { name: '카카오톡에서 열기' })
     expect(link).toHaveAttribute('rel', 'noreferrer noopener')
     expect(container.querySelector('img')).toHaveAttribute(
       'src',

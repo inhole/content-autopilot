@@ -141,7 +141,7 @@ describe('prompts', () => {
 
 describe('review prompts per source', () => {
   it('names where the review goes', () => {
-    expect(reviewSystem(profile(), { min: 100, max: 500 })).toContain('선물하기 상품 리뷰')
+    expect(reviewSystem(profile(), { min: 100, max: 500 })).toContain('카카오톡 선물하기 상품 리뷰')
     const musinsa = reviewSystem(profile(), { min: 100, max: 500 }, { source: 'musinsa' })
     expect(musinsa).toContain('무신사 상품 후기')
   })

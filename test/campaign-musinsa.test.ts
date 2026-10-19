@@ -7,6 +7,7 @@ import {
   MusinsaDetailResponseSchema,
   MusinsaItemSchema,
   MusinsaListSchema,
+  musinsaAppUrl,
   musinsaEventUrl,
   musinsaProductId,
   parseMusinsaDetail,
@@ -68,6 +69,7 @@ describe('musinsa schemas', () => {
 
   it('builds the campaign page url from the event id', () => {
     expect(musinsaEventUrl(48092)).toBe('https://www.musinsa.com/preuser/events/48092')
+    expect(musinsaAppUrl(48092)).toBe('https://link.musinsa.com/preuser/events/48092')
   })
 })
 
