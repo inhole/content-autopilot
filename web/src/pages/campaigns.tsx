@@ -1,9 +1,43 @@
-import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table'
-import type { ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { EmptyState, QueryBoundary } from '@/components/query-state.tsx'
+import {
+  type ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  type SortingState,
+  useReactTable,
+} from '@tanstack/react-table'
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ChevronsUpDownIcon,
+  GiftIcon,
+  SearchIcon,
+} from 'lucide-react'
+import { useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { EmptyState, PageHeader, QueryBoundary } from '@/components/query-state.tsx'
+import {
+  CampaignStatusBadge,
+  DeadlineBadge,
+  SourceDot,
+  SourceLabel,
+} from '@/components/status-badge.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
-import { buttonVariants } from '@/components/ui/button.tsx'
+import { Button } from '@/components/ui/button.tsx'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group.tsx'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select.tsx'
+import { Skeleton } from '@/components/ui/skeleton.tsx'
 import {
   Table,
   TableBody,
@@ -12,203 +46,389 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table.tsx'
-import {
-  daysUntil,
-  formatCompetition,
-  formatDday,
-  SOURCES,
-  sourceLabel,
-  statusLabel,
-} from '@/lib/format.ts'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group.tsx'
+import { formatCompetition, SOURCES, statusLabel } from '@/lib/format.ts'
 import { useCampaigns } from '@/lib/queries.ts'
 import type { CampaignRow } from '@/lib/types.ts'
 import { cn } from '@/lib/utils.ts'
 
-const STATUS_CHIPS = [
-  'PENDING_REVIEW',
-  'APPLIED',
-  'SELECTED',
-  'DRAFT_REVIEW',
-  'POSTED',
-  'NOT_SELECTED',
-  'REJECTED',
-  'EXPIRED',
-  'SKIPPED',
-  'SHORTLISTED',
-  'COLLECTED',
-]
-
-const FILTER_CHIPS = [
-  { value: 'active', label: '진행 중' },
-  { value: 'all', label: '전체' },
-  ...STATUS_CHIPS.map((s) => ({ value: s, label: statusLabel(s) })),
-]
-
 export const DEFAULT_STATUS = 'active'
 
-const isSource = (v: string | null): v is (typeof SOURCES)[number]['key'] =>
-  SOURCES.some((s) => s.key === v)
+/** Statuses shown as tabs; the rest sit behind the "기타 상태" select. */
+const TAB_STATUSES = ['active', 'all', 'PENDING_REVIEW', 'APPLIED', 'SELECTED', 'DRAFT_REVIEW', 'POSTED']
+const OTHER_STATUSES = ['NOT_SELECTED', 'REJECTED', 'EXPIRED', 'SKIPPED', 'SHORTLISTED', 'COLLECTED']
+const ALL_STATUSES = [...TAB_STATUSES, ...OTHER_STATUSES]
 
-export function Chip({ to, on, children }: { to: string; on: boolean; children: ReactNode }) {
-  return (
-    <Link
-      to={to}
-      replace
-      aria-current={on}
-      className={cn(buttonVariants({ variant: 'chip', size: 'chip' }), 'shrink-0')}
-    >
-      {children}
-    </Link>
-  )
+const filterLabel = (v: string) => (v === 'active' ? '진행 중' : v === 'all' ? '전체' : statusLabel(v))
+
+type SourceKey = (typeof SOURCES)[number]['key']
+const isSource = (v: string | null): v is SourceKey => SOURCES.some((s) => s.key === v)
+
+const PAGE_SIZE = 20
+
+type ListState = { background?: unknown }
+
+/** Link to the detail that opens as a sheet over the list (filters stay in the query string). */
+export function useCampaignLink() {
+  const location = useLocation()
+  return (id: number) => ({
+    to: { pathname: `/campaigns/${id}`, search: location.search },
+    state: { background: location } satisfies ListState,
+  })
 }
 
-/** `D-3`, plus `추정` only when the API marks the deadline as estimated. */
-export function DeadlineBadge({ row, now }: { row: CampaignRow; now?: Date }) {
-  const d = row.next_deadline
-  if (!d) return <span className="text-muted-foreground">-</span>
-  return (
-    <span className="inline-flex items-center gap-1">
-      <Badge variant="outline">{formatDday(daysUntil(d.at, now))}</Badge>
-      {d.estimated && <small className="text-muted-foreground">추정</small>}
-    </span>
-  )
-}
+const byNumber = (get: (r: CampaignRow) => number | null | undefined) => (r: CampaignRow) =>
+  get(r) ?? undefined
 
 const columns = (now?: Date): ColumnDef<CampaignRow>[] => [
   {
     id: 'title',
     header: '제목',
-    cell: ({ row: { original: c } }) => (
-      <Link to={`/campaigns/${c.id}`} className="font-medium text-primary hover:underline">
-        #{c.id} {c.title || '(제목 없음)'}
-      </Link>
-    ),
+    enableSorting: false,
+    cell: ({ row: { original: c } }) => <CampaignTitle row={c} />,
   },
-  { id: 'source', header: '출처', cell: ({ row }) => sourceLabel(row.original.source) },
-  { id: 'brand', header: '브랜드', cell: ({ row }) => row.original.brand ?? '-' },
+  {
+    id: 'source',
+    header: '출처',
+    enableSorting: false,
+    cell: ({ row }) => <SourceLabel source={row.original.source} />,
+  },
   {
     id: 'status',
     header: '상태',
-    cell: ({ row }) => <Badge>{statusLabel(row.original.status)}</Badge>,
+    enableSorting: false,
+    cell: ({ row }) => <CampaignStatusBadge status={row.original.status} />,
   },
   {
     id: 'competition',
     header: '경쟁률',
-    cell: ({ row }) => formatCompetition(row.original.competition),
+    accessorFn: byNumber((r) => r.competition),
+    sortUndefined: 'last',
+    meta: { align: 'right' },
+    cell: ({ row }) => (
+      <span className="tabular-nums">{formatCompetition(row.original.competition)}</span>
+    ),
   },
   {
     id: 'deadline',
     header: '마감',
+    accessorFn: byNumber((r) => (r.next_deadline ? Date.parse(r.next_deadline.at) : null)),
+    sortUndefined: 'last',
     cell: ({ row }) => <DeadlineBadge row={row.original} now={now} />,
   },
-  { id: 'score', header: '점수', cell: ({ row }) => row.original.score ?? '-' },
+  {
+    id: 'score',
+    header: '점수',
+    accessorFn: byNumber((r) => r.score),
+    sortUndefined: 'last',
+    meta: { align: 'right' },
+    cell: ({ row }) => <span className="tabular-nums">{row.original.score ?? '-'}</span>,
+  },
 ]
 
+function CampaignTitle({ row: c }: { row: CampaignRow }) {
+  const link = useCampaignLink()(c.id)
+  return (
+    <div className="flex min-w-0 max-w-md flex-col gap-0.5">
+      <Link {...link} className="truncate font-medium underline-offset-4 hover:underline">
+        #{c.id} {c.title || '(제목 없음)'}
+      </Link>
+      {c.brand && <span className="truncate text-xs text-muted-foreground">{c.brand}</span>}
+    </div>
+  )
+}
+
+function SortHeader({
+  label,
+  sorted,
+  onToggle,
+  align,
+}: {
+  label: string
+  sorted: false | 'asc' | 'desc'
+  onToggle: () => void
+  align?: 'right'
+}) {
+  const Icon = sorted === 'asc' ? ArrowUpIcon : sorted === 'desc' ? ArrowDownIcon : ChevronsUpDownIcon
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onToggle}
+      className={cn('-ml-2 h-8 px-2', align === 'right' && 'ml-auto -mr-2')}
+    >
+      {label}
+      <Icon data-icon="inline-end" className={cn(!sorted && 'text-muted-foreground')} />
+    </Button>
+  )
+}
+
+const ariaSort = (s: false | 'asc' | 'desc') =>
+  s === 'asc' ? 'ascending' : s === 'desc' ? 'descending' : undefined
+
 export function CampaignTable({ rows, now }: { rows: CampaignRow[]; now?: Date }) {
+  const navigate = useNavigate()
+  const campaignLink = useCampaignLink()
+  const [sorting, setSorting] = useState<SortingState>([])
+  const [search, setSearch] = useState('')
   const table = useReactTable({
     data: rows,
     columns: columns(now),
+    state: { sorting, globalFilter: search },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setSearch,
+    globalFilterFn: (row, _id, value: string) => {
+      const needle = String(value).trim().toLowerCase()
+      const c = row.original
+      return `${c.title ?? ''} ${c.brand ?? ''}`.toLowerCase().includes(needle)
+    },
     getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageSize: PAGE_SIZE } },
   })
-  if (rows.length === 0) return <EmptyState>해당하는 체험단이 없어요.</EmptyState>
+  if (rows.length === 0) {
+    return <EmptyState title="해당하는 체험단이 없어요." icon={GiftIcon} />
+  }
+
+  const pageRows = table.getRowModel().rows
+  const total = table.getFilteredRowModel().rows.length
+  const { pageIndex } = table.getState().pagination
+  const pageCount = table.getPageCount()
+
+  const openRow = (c: CampaignRow, target: EventTarget) => {
+    if (target instanceof Element && target.closest('a, button')) return
+    const l = campaignLink(c.id)
+    navigate(l.to, { state: l.state })
+  }
+
   return (
-    <>
-      <div className="hidden rounded-lg border bg-card md:block">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((hg) => (
-              <TableRow key={hg.id} className="hover:bg-transparent">
-                {hg.headers.map((h) => (
-                  <TableHead key={h.id}>
-                    {flexRender(h.column.columnDef.header, h.getContext())}
-                  </TableHead>
+    <div className="flex flex-col gap-3">
+      <InputGroup className="max-w-sm">
+        <InputGroupAddon>
+          <SearchIcon />
+        </InputGroupAddon>
+        <InputGroupInput
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="제목·브랜드 검색"
+          aria-label="제목·브랜드 검색"
+        />
+      </InputGroup>
+
+      {pageRows.length === 0 ? (
+        <EmptyState title="검색 결과가 없어요." description="다른 검색어를 입력해 보세요." icon={SearchIcon} />
+      ) : (
+        <>
+          <div className="hidden overflow-hidden rounded-xl border bg-card md:block">
+            <Table>
+              <TableHeader>
+                {table.getHeaderGroups().map((hg) => (
+                  <TableRow key={hg.id} className="hover:bg-transparent">
+                    {hg.headers.map((h) => {
+                      const right = (h.column.columnDef.meta as { align?: 'right' } | undefined)
+                        ?.align
+                      const sorted = h.column.getIsSorted()
+                      return (
+                        <TableHead
+                          key={h.id}
+                          aria-sort={ariaSort(sorted)}
+                          className={cn(right && 'text-right')}
+                        >
+                          {h.column.getCanSort() ? (
+                            <SortHeader
+                              label={String(h.column.columnDef.header)}
+                              sorted={sorted}
+                              onToggle={() => h.column.toggleSorting(sorted === 'asc')}
+                              align={right}
+                            />
+                          ) : (
+                            flexRender(h.column.columnDef.header, h.getContext())
+                          )}
+                        </TableHead>
+                      )
+                    })}
+                  </TableRow>
                 ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.map((r) => (
-              <TableRow key={r.id}>
-                {r.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+              </TableHeader>
+              <TableBody>
+                {pageRows.map((r) => (
+                  <TableRow
+                    key={r.id}
+                    className="cursor-pointer"
+                    onClick={(e) => openRow(r.original, e.target)}
+                  >
+                    {r.getVisibleCells().map((cell) => {
+                      const right = (cell.column.columnDef.meta as { align?: 'right' } | undefined)
+                        ?.align
+                      return (
+                        <TableCell key={cell.id} className={cn(right && 'text-right')}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      )
+                    })}
+                  </TableRow>
                 ))}
-              </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+
+          <ul className="flex flex-col gap-2 md:hidden">
+            {pageRows.map(({ original: c }) => (
+              <li key={c.id}>
+                <div
+                  className="flex flex-col gap-2 rounded-xl border bg-card p-3"
+                  onClick={(e) => openRow(c, e.target)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <CampaignTitle row={c} />
+                    <CampaignStatusBadge status={c.status} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <SourceLabel source={c.source} />
+                    <span className="tabular-nums">경쟁률 {formatCompetition(c.competition)}</span>
+                    <span className="tabular-nums">점수 {c.score ?? '-'}</span>
+                    <DeadlineBadge row={c} now={now} />
+                  </div>
+                </div>
+              </li>
             ))}
-          </TableBody>
-        </Table>
-      </div>
-      <ul className="space-y-2 md:hidden">
-        {rows.map((c) => (
-          <li key={c.id} className="rounded-lg border bg-card p-3">
-            <Link
-              to={`/campaigns/${c.id}`}
-              className="block break-words text-sm font-medium text-primary"
+          </ul>
+        </>
+      )}
+
+      <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span className="tabular-nums">
+          {total}건{pageCount > 1 && ` · ${pageIndex + 1} / ${pageCount} 쪽`}
+        </span>
+        {pageCount > 1 && (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
             >
-              #{c.id} {c.title || '(제목 없음)'}
-            </Link>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <Badge>{statusLabel(c.status)}</Badge>
-              <span>{sourceLabel(c.source)}</span>
-              <span>{c.brand ?? '-'}</span>
-              <span>경쟁률 {formatCompetition(c.competition)}</span>
-              <DeadlineBadge row={c} now={now} />
-              <span>점수 {c.score ?? '-'}</span>
-            </div>
-          </li>
+              <ChevronLeftIcon data-icon="inline-start" />
+              이전
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+            >
+              다음
+              <ChevronRightIcon data-icon="inline-end" />
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CampaignsSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" role="status" aria-label="불러오는 중">
+      <Skeleton className="h-9 w-full max-w-sm" />
+      <div className="overflow-hidden rounded-xl border">
+        {Array.from({ length: 8 }, (_, i) => (
+          <Skeleton key={i} className="h-14 w-full rounded-none border-b" />
         ))}
-      </ul>
-    </>
+      </div>
+    </div>
   )
 }
 
 export function CampaignsPage() {
-  const [params] = useSearchParams()
-  const status = FILTER_CHIPS.some((c) => c.value === params.get('status'))
-    ? (params.get('status') as string)
-    : DEFAULT_STATUS
+  const [params, setParams] = useSearchParams()
+  const statusParam = params.get('status')
+  const status =
+    statusParam && ALL_STATUSES.includes(statusParam) ? statusParam : DEFAULT_STATUS
   const sourceParam = params.get('source')
   const source = isSource(sourceParam) ? sourceParam : null
   const q = useCampaigns(status, source)
 
-  const href = (s: string, src: string | null) => {
+  const update = (nextStatus: string, nextSource: string | null) => {
     const p = new URLSearchParams()
-    if (s !== DEFAULT_STATUS) p.set('status', s)
-    if (src) p.set('source', src)
-    const qs = p.toString()
-    return qs ? `/campaigns?${qs}` : '/campaigns'
+    if (nextStatus !== DEFAULT_STATUS) p.set('status', nextStatus)
+    if (nextSource) p.set('source', nextSource)
+    setParams(p, { replace: true })
   }
-  const sourceChips = [
-    { value: null, label: '모든 출처' },
-    ...SOURCES.map((s) => ({ value: s.key as string, label: s.label })),
-  ]
 
   return (
     <>
-      <h1 className="flex items-center gap-2 text-lg font-semibold">
-        체험단 {q.data && <Badge variant="outline">{q.data.rows.length}</Badge>}
-      </h1>
-      <div className="space-y-2">
-        <nav className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1" aria-label="출처 필터">
-          {sourceChips.map((c) => (
-            <Chip key={c.label} to={href(status, c.value)} on={c.value === source}>
-              {c.label}
-            </Chip>
-          ))}
-        </nav>
-        <nav className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1" aria-label="상태 필터">
-          {FILTER_CHIPS.map((c) => (
-            <Chip key={c.value} to={href(c.value, source)} on={c.value === status}>
-              {c.label}
-            </Chip>
-          ))}
-        </nav>
+      <PageHeader
+        title="체험단"
+        description="마감이 가까운 순 · 선물하기 신청 마감은 남은 일수로 추정한 값"
+      >
+        {q.data && (
+          <Badge variant="outline" className="tabular-nums">
+            {q.data.rows.length}건
+          </Badge>
+        )}
+      </PageHeader>
+
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={source ?? 'all'}
+            onValueChange={(v) => v && update(status, v === 'all' ? null : v)}
+            aria-label="출처 필터"
+          >
+            <ToggleGroupItem value="all">모든 출처</ToggleGroupItem>
+            {SOURCES.map((s) => (
+              <ToggleGroupItem key={s.key} value={s.key}>
+                <SourceDot source={s.key} className="mr-1.5" />
+                {s.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 overflow-x-auto">
+            <Tabs
+              value={TAB_STATUSES.includes(status) ? status : ''}
+              onValueChange={(v) => update(v, source)}
+            >
+              <TabsList aria-label="상태 필터">
+                {TAB_STATUSES.map((s) => (
+                  <TabsTrigger key={s} value={s}>
+                    {filterLabel(s)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+          <Select
+            value={OTHER_STATUSES.includes(status) ? status : ''}
+            onValueChange={(v) => update(v, source)}
+          >
+            <SelectTrigger size="sm" className="shrink-0" aria-label="기타 상태">
+              <SelectValue placeholder="기타 상태" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {OTHER_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {filterLabel(s)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
-      <QueryBoundary query={q}>{(data) => <CampaignTable rows={data.rows} />}</QueryBoundary>
-      <p className="text-xs text-muted-foreground">
-        마감이 가까운 순 · 선물하기 신청 마감은 남은 일수로 추정한 값
-      </p>
+
+      <QueryBoundary query={q} skeleton={<CampaignsSkeleton />}>
+        {(data) => <CampaignTable rows={data.rows} />}
+      </QueryBoundary>
     </>
   )
 }

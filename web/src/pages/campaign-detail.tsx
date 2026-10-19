@@ -1,8 +1,26 @@
-import type { ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { ArrowLeftIcon, ExternalLinkIcon, GiftIcon } from 'lucide-react'
+import { Children, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { EmptyState, QueryBoundary } from '@/components/query-state.tsx'
+import { CampaignStatusBadge, SourceLabel } from '@/components/status-badge.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx'
+import { Button } from '@/components/ui/button.tsx'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card.tsx'
+import { Separator } from '@/components/ui/separator.tsx'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet.tsx'
+import { Skeleton } from '@/components/ui/skeleton.tsx'
 import {
   competitionOf,
   daysUntil,
@@ -16,9 +34,9 @@ import {
   isHttpUrl,
   sourceLabel,
   sourceLinkLabel,
-  statusLabel,
 } from '@/lib/format.ts'
 import { useCampaign } from '@/lib/queries.ts'
+import { deadlineTone } from '@/lib/status.ts'
 import type { CampaignDetailResponse } from '@/lib/types.ts'
 
 type Campaign = CampaignDetailResponse['campaign']
@@ -41,91 +59,144 @@ export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>) {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[7.5rem_1fr] gap-2 border-b py-1.5 text-sm last:border-0">
+    <div className="grid grid-cols-[6.5rem_1fr] gap-3 py-2 text-sm">
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-words">{children}</dd>
     </div>
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/** A definition list whose rows are divided by Separators. */
+function FieldList({ children }: { children: ReactNode }) {
+  const rows = Children.toArray(children).filter(Boolean)
   return (
-    <Card>
-      <CardHeader>
+    <dl className="flex flex-col">
+      {rows.map((row, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static rows
+        <div key={i}>
+          {i > 0 && <Separator />}
+          {row}
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <Card className="gap-3 py-4">
+      <CardHeader className="px-4">
         <CardTitle>{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="px-4">{children}</CardContent>
     </Card>
   )
 }
 
-const dateWithDday = (iso: string | null, now?: Date) =>
-  iso ? (
-    <>
-      {formatDateTime(iso)} <Badge variant="outline">{formatDday(daysUntil(iso, now))}</Badge>
-    </>
-  ) : (
-    '-'
+const dateWithDday = (iso: string | null, now?: Date) => {
+  if (!iso) return '-'
+  const days = daysUntil(iso, now)
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span className="tabular-nums">{formatDateTime(iso)}</span>
+      <Badge variant={deadlineTone(days)} className="tabular-nums">
+        {formatDday(days)}
+      </Badge>
+    </span>
   )
+}
 
 const text = (v: string | null | undefined) => v || '-'
+const when = (iso: string | null) => <span className="tabular-nums">{formatDateTime(iso)}</span>
 
-export function CampaignDetailView({ data, now }: { data: CampaignDetailResponse; now?: Date }) {
+const titleOf = (c: Pick<Campaign, 'id' | 'title'>) => `#${c.id} ${c.title || '(제목 없음)'}`
+
+export function CampaignDetailView({
+  data,
+  now,
+  heading = true,
+}: {
+  data: CampaignDetailResponse
+  now?: Date
+  /** false when the surrounding sheet already shows the title. */
+  heading?: boolean
+}) {
   const { campaign: c, reminders } = data
   const m = musinsaFacts(c)
   return (
-    <div className="space-y-4">
-      <h1 className="flex flex-wrap items-start gap-2 text-lg font-semibold">
-        <span className="break-words">
-          #{c.id} {c.title || '(제목 없음)'}
-        </span>
-        <Badge>{statusLabel(c.status)}</Badge>
-      </h1>
-
-      {isAllowedImageUrl(c.image_url) && (
-        <img
-          src={c.image_url}
-          alt=""
-          width={160}
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          className="max-w-40 rounded-lg border"
-        />
-      )}
-
-      {isHttpUrl(c.url) ? (
-        <a
-          href={c.url}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="inline-block text-sm font-medium text-primary hover:underline"
-        >
-          {sourceLinkLabel(c.source)}
-        </a>
-      ) : (
-        <span className="text-sm text-muted-foreground">링크 없음</span>
-      )}
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start gap-4">
+        {isAllowedImageUrl(c.image_url) && (
+          <img
+            src={c.image_url}
+            alt=""
+            width={96}
+            height={96}
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            className="size-24 shrink-0 rounded-lg border object-cover"
+          />
+        )}
+        <div className="flex min-w-0 flex-col items-start gap-2">
+          {heading && (
+            <h1 className="text-xl font-semibold tracking-tight break-words">{titleOf(c)}</h1>
+          )}
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <CampaignStatusBadge status={c.status} />
+            <SourceLabel source={c.source} />
+          </div>
+          {isHttpUrl(c.url) ? (
+            <Button asChild size="sm" variant="outline">
+              <a href={c.url} target="_blank" rel="noreferrer noopener">
+                {sourceLinkLabel(c.source)}
+                <ExternalLinkIcon data-icon="inline-end" />
+              </a>
+            </Button>
+          ) : (
+            <span className="text-sm text-muted-foreground">링크 없음</span>
+          )}
+        </div>
+      </div>
 
       <Section title="공고">
-        <dl>
+        <FieldList>
           <Field label="출처">{sourceLabel(c.source)}</Field>
           <Field label="브랜드">{text(c.brand)}</Field>
           {m && (
-            <>
-              <Field label="정가">{m.price != null ? formatWon(m.price) : '-'}</Field>
-              <Field label="상품 수">{m.goodsCount ?? '-'}</Field>
-              <Field label="리뷰 형식">
-                {m.contentType === 'VIDEO' ? '영상' : m.contentType === 'IMAGE' ? '사진' : '-'}
-              </Field>
-            </>
+            <Field label="정가">
+              <span className="tabular-nums">{m.price != null ? formatWon(m.price) : '-'}</span>
+            </Field>
+          )}
+          {m && <Field label="상품 수">{m.goodsCount ?? '-'}</Field>}
+          {m && (
+            <Field label="리뷰 형식">
+              {m.contentType === 'VIDEO' ? '영상' : m.contentType === 'IMAGE' ? '사진' : '-'}
+            </Field>
           )}
           <Field label="상품 ID">{c.product_id ?? '-'}</Field>
           {!m && (
-            <>
-              <Field label="모집 인원">{formatNumber(c.recruit_count)}</Field>
-              <Field label="신청자">{formatNumber(c.application_count)}</Field>
-              <Field label="경쟁률">{formatCompetition(competitionOf(c))}</Field>
-            </>
+            <Field label="모집 인원">
+              <span className="tabular-nums">{formatNumber(c.recruit_count)}</span>
+            </Field>
+          )}
+          {!m && (
+            <Field label="신청자">
+              <span className="tabular-nums">{formatNumber(c.application_count)}</span>
+            </Field>
+          )}
+          {!m && (
+            <Field label="경쟁률">
+              <span className="tabular-nums">{formatCompetition(competitionOf(c))}</span>
+            </Field>
           )}
           <Field label="남은 일수">
             {c.remaining_days != null ? `${c.remaining_days}일` : '-'}
@@ -133,73 +204,133 @@ export function CampaignDetailView({ data, now }: { data: CampaignDetailResponse
           <Field label={hasEstimatedDeadline(c.source) ? '신청 마감 (추정)' : '신청 마감'}>
             {dateWithDday(c.apply_deadline, now)}
           </Field>
-          <Field label="처음 본 시각">{formatDateTime(c.first_seen_at)}</Field>
-          <Field label="마지막으로 본 시각">{formatDateTime(c.last_seen_at)}</Field>
-        </dl>
+          <Field label="처음 본 시각">{when(c.first_seen_at)}</Field>
+          <Field label="마지막으로 본 시각">{when(c.last_seen_at)}</Field>
+        </FieldList>
       </Section>
 
-      <Section title="평가">
-        <dl>
-          <Field label="점수">{c.score ?? '-'}</Field>
+      <Section title="선별" description="점수와 제외·패스 사유">
+        <FieldList>
+          <Field label="점수">
+            <span className="tabular-nums">{c.score ?? '-'}</span>
+          </Field>
           <Field label="평가 이유">{text(c.reason)}</Field>
           <Field label="제외 사유">{text(c.skip_reason)}</Field>
           <Field label="패스 사유">{text(c.reject_reason)}</Field>
-        </dl>
+        </FieldList>
       </Section>
 
-      <Section title="진행 상태">
-        <dl>
-          <Field label="신청">{formatDateTime(c.applied_at)}</Field>
-          <Field label="선정">{formatDateTime(c.selected_at)}</Field>
-          <Field label="결과 확인">{formatDateTime(c.result_at)}</Field>
+      <Section title="진행" description="신청부터 리뷰 완료까지">
+        <FieldList>
+          <Field label="신청">{when(c.applied_at)}</Field>
+          <Field label="선정">{when(c.selected_at)}</Field>
+          <Field label="결과 확인">{when(c.result_at)}</Field>
           <Field label="리뷰 마감">{dateWithDday(c.review_deadline, now)}</Field>
-          <Field label="리뷰 완료">{formatDateTime(c.posted_at)}</Field>
+          <Field label="리뷰 완료">{when(c.posted_at)}</Field>
           <Field label="알림 발송">
             {reminders.length
               ? reminders.map((r) => `${r.kind} (${formatDateTime(r.sent_at)})`).join(', ')
               : '-'}
           </Field>
-          <Field label="생성">{formatDateTime(c.created_at)}</Field>
-          <Field label="갱신">{formatDateTime(c.updated_at)}</Field>
-        </dl>
+          <Field label="생성">{when(c.created_at)}</Field>
+          <Field label="갱신">{when(c.updated_at)}</Field>
+        </FieldList>
       </Section>
 
-      <Section title="메모">
-        {c.memo ? (
-          <pre className="whitespace-pre-wrap break-words font-[inherit] text-sm">{c.memo}</pre>
-        ) : (
-          <p className="text-sm text-muted-foreground">메모가 없어요.</p>
-        )}
-      </Section>
-
-      <Section title="리뷰 초안">
-        {c.draft_text ? (
-          <pre className="whitespace-pre-wrap break-words font-[inherit] text-sm">
-            {c.draft_text}
-          </pre>
-        ) : (
-          <p className="text-sm text-muted-foreground">아직 초안이 없어요.</p>
-        )}
+      <Section title="메모·초안">
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">메모</span>
+            {c.memo ? (
+              <pre className="font-[inherit] break-words whitespace-pre-wrap">{c.memo}</pre>
+            ) : (
+              <p className="text-muted-foreground">메모가 없어요.</p>
+            )}
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">리뷰 초안</span>
+            {c.draft_text ? (
+              <pre className="font-[inherit] break-words whitespace-pre-wrap">{c.draft_text}</pre>
+            ) : (
+              <p className="text-muted-foreground">아직 초안이 없어요.</p>
+            )}
+          </div>
+        </div>
       </Section>
     </div>
   )
 }
 
+function DetailSkeleton() {
+  return (
+    <div className="flex flex-col gap-4" role="status" aria-label="불러오는 중">
+      <div className="flex gap-4">
+        <Skeleton className="size-24 rounded-lg" />
+        <div className="flex flex-1 flex-col gap-2">
+          <Skeleton className="h-5 w-2/3" />
+          <Skeleton className="h-5 w-1/3" />
+        </div>
+      </div>
+      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-32 rounded-xl" />
+    </div>
+  )
+}
+
+const parseId = (raw: string | undefined) => {
+  const n = Number(raw)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/** Direct navigation to /campaigns/:id: a full page. */
 export function CampaignDetailPage() {
-  const { id } = useParams()
-  const num = Number(id)
-  const valid = Number.isInteger(num) && num > 0
-  const q = useCampaign(valid ? num : 0)
+  const id = parseId(useParams().id)
+  const q = useCampaign(id ?? 0)
+  const { search } = useLocation()
   return (
     <>
-      <Link to="/campaigns" className="text-sm text-primary hover:underline">
-        ← 목록
-      </Link>
-      {valid ? (
-        <QueryBoundary query={q}>{(data) => <CampaignDetailView data={data} />}</QueryBoundary>
+      <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
+        <Link to={{ pathname: '/campaigns', search }}>
+          <ArrowLeftIcon data-icon="inline-start" />
+          목록
+        </Link>
+      </Button>
+      {id ? (
+        <QueryBoundary query={q} skeleton={<DetailSkeleton />}>
+          {(data) => <CampaignDetailView data={data} />}
+        </QueryBoundary>
       ) : (
-        <EmptyState>잘못된 주소예요.</EmptyState>
+        <EmptyState title="잘못된 주소예요." icon={GiftIcon} />
       )}
     </>
   )
 }
+
+/** The same detail as a sheet over the list (opened from a row, history keeps the list behind). */
+export function CampaignSheet() {
+  const id = parseId(useParams().id)
+  const q = useCampaign(id ?? 0)
+  const navigate = useNavigate()
+  const title = q.data ? titleOf(q.data.campaign) : '체험단 상세'
+  return (
+    <Sheet open onOpenChange={(open) => !open && navigate(-1)}>
+      <SheetContent className="w-full gap-0 sm:max-w-xl">
+        <SheetHeader className="border-b">
+          <SheetTitle className="pr-8 leading-snug break-words">{title}</SheetTitle>
+          <SheetDescription>체험단 상세</SheetDescription>
+        </SheetHeader>
+        <div className="flex-1 overflow-y-auto p-4">
+          {id ? (
+            <QueryBoundary query={q} skeleton={<DetailSkeleton />}>
+              {(data) => <CampaignDetailView data={data} heading={false} />}
+            </QueryBoundary>
+          ) : (
+            <EmptyState title="잘못된 주소예요." icon={GiftIcon} />
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
