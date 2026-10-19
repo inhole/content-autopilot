@@ -1,0 +1,65 @@
+{
+  "data": {
+    "eventId": 48092,
+    "eventType": "GOODS",
+    "eventCategory": "FASHION_ACCESSORY",
+    "name": "피드파이퍼 사운드 뱃지 셋트 체험단 50명 모집",
+    "productName": "사운드 뱃지 셋트",
+    "mainImage": "https://image.msscdn.net/thumbnails/community/preuser/images/810a20e4-c6b9-11f1-a638-798b79e138bd.jpg",
+    "companyId": "pppstudio",
+    "brand": "piedpiper",
+    "brandName": "피드파이퍼",
+    "logoImage": "//image.msscdn.net/mfile_s01/_brand/free_medium/piedpiper.png?1769652424764",
+    "state": "OPEN",
+    "startDate": "2026-10-19",
+    "endDate": "2026-10-25",
+    "winnerNumber": 50,
+    "winnerDrawDate": "2026-10-27",
+    "entryNumber": 148,
+    "deliveryDate": "2026-10-29",
+    "reviewStartDate": "2026-10-31",
+    "reviewEndDate": "2026-11-14",
+    "products": [
+      {
+        "productId": 75208,
+        "eventId": 48092,
+        "originUniqueId": null,
+        "uniqueId": "7492604",
+        "optionItems": [
+          {
+            "no": 33759689,
+            "managedCode": "NONE",
+            "optionValues": [
+              {
+                "no": 25895655,
+                "name": "NONE",
+                "code": "NONE",
+                "optionNo": 11023572,
+                "optionName": "NONE"
+              }
+            ],
+            "outOfStock": false,
+            "activated": true,
+            "isDeleted": false
+          }
+        ],
+        "name": "사운드 뱃지 셋트",
+        "link": "https://www.musinsa.com/products/7492604",
+        "isRepresentative": true,
+        "content": "<img src=\"https://image.msscdn.net/images/2026/10/12/c1130f247e234d0cb6008d2bea51a505.jpg\" alt=\"\"><p></p>",
+        "isOnSale": true,
+        "isOriginOnSale": false
+      }
+    ],
+    "images": [
+      {
+        "imageId": 64799,
+        "eventId": 48092,
+        "imageUrl": "https://image.msscdn.net/thumbnails/community/preuser/images/836c53d5-c6b9-11f1-a638-7d0df4cf19bf.jpg"
+      }
+    ],
+    "registrationPolicy": { "minimumMemberLevel": 2 },
+    "isRegistration": false,
+    "version": 2
+  }
+}

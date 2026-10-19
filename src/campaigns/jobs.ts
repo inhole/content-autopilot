@@ -1,11 +1,9 @@
 import type { Bot } from 'grammy'
 import type { PgBoss } from 'pg-boss'
-import { AsideNotRunningError } from '../aside/client.ts'
 import { config } from '../config.ts'
 import { formatFinalFailure, isFinalAttempt } from '../jobs.ts'
 import { localHour } from '../lib/time.ts'
 import { collectGiftCampaigns, collectMusinsaCampaigns } from './collect.ts'
-import { MusinsaLoginError } from './musinsa.ts'
 import { rankCollected } from './rank.ts'
 import { runCampaignReminders } from './reminders.ts'
 import { expireCampaigns } from './review.ts'
@@ -20,20 +18,10 @@ export const CQ = {
   card: 'campaign-card',
   reviewDraft: 'review-draft',
   maintenance: 'campaign-maintenance',
-  // Musinsa is read on the owner's PC (role local); ranking and cards stay on the cloud worker.
+  // Public Musinsa 체험단 list (no login). Ranking is shared with gift; this queue only collects.
   musinsaCollect: 'musinsa-collect',
   rank: 'campaign-rank',
 } as const
-
-/** Queues each worker role works. Disjoint: a job is only ever handled by the role that owns it. */
-export const LOCAL_QUEUES: readonly string[] = [CQ.musinsaCollect]
-export const CLOUD_QUEUES: readonly string[] = [
-  CQ.collect,
-  CQ.card,
-  CQ.reviewDraft,
-  CQ.maintenance,
-  CQ.rank,
-]
 
 // Same idea as the retry limits in src/jobs.ts: shared by createQueue and the final-failure check.
 const COLLECT_RETRY_LIMIT = 1
@@ -117,59 +105,18 @@ export async function runGiftCollect(
   return { ...collected, created: collected.created.length, picked }
 }
 
-/** Min gap between two "log in to Musinsa" Telegram alerts. */
-export const LOGIN_ALERT_INTERVAL_MS = 12 * 60 * 60 * 1000
-
-/**
- * Rate limiter for the login alert. Kept in memory per process on purpose: only the single local
- * worker alerts, so no shared state or migration is needed. A restart may repeat an alert once,
- * which is harmless because the owner has to act on it anyway.
- */
-export function createLoginAlerter(
-  send: (text: string) => Promise<unknown>,
-  intervalMs = LOGIN_ALERT_INTERVAL_MS,
-) {
-  let last = 0
-  return async (reason: string, now = Date.now()): Promise<boolean> => {
-    if (last && now - last < intervalMs) return false
-    last = now
-    await send(
-      `무신사 체험단 수집을 못 했어요: ${reason}\nPC에서 Aside를 켜고 musinsa.com에 로그인해 주세요. (다음 알림은 12시간 뒤)`,
-    )
-    return true
-  }
-}
-
-/**
- * Collects the Musinsa list on the owner's PC, then asks the cloud worker to rank and send cards.
- * A logged-out or closed Aside is not retried: the owner is told (rate-limited) and the run ends.
- */
+/** Collects the public Musinsa list, ranks what is new and sends a card for every pick. */
 export async function runMusinsaCollect(
-  deps: {
-    collect?: typeof collectMusinsaCampaigns
-    enqueueRank: () => Promise<unknown>
-    alert: (reason: string) => Promise<unknown>
-  },
+  send: (campaignId: number) => Promise<unknown>,
   now = new Date(),
 ) {
-  try {
-    const collected = await (deps.collect ?? collectMusinsaCampaigns)(now)
-    await deps.enqueueRank()
-    return { ...collected, created: collected.created.length }
-  } catch (err) {
-    if (err instanceof MusinsaLoginError) {
-      await deps.alert('무신사에 로그인되어 있지 않아요.')
-      return { skipped: 'logged-out' as const }
-    }
-    if (err instanceof AsideNotRunningError) {
-      await deps.alert('Aside가 실행 중이 아니에요.')
-      return { skipped: 'aside-not-running' as const }
-    }
-    throw err
-  }
+  const collected = await collectMusinsaCampaigns(now)
+  const picked = await rankCollected(now)
+  await sendPendingCards(send)
+  return { ...collected, created: collected.created.length, picked }
 }
 
-/** Creates every campaign queue and schedule. Idempotent; both worker roles call it. */
+/** Creates every campaign queue and schedule. Idempotent. */
 export async function createCampaignQueues(boss: PgBoss): Promise<void> {
   const tz = config.TZ_NAME
   await boss.createQueue(CQ.collect, {
@@ -205,25 +152,7 @@ export async function createCampaignQueues(boss: PgBoss): Promise<void> {
   await boss.schedule(CQ.musinsaCollect, config.MUSINSA_COLLECT_CRON, null, { tz })
 }
 
-/** Local (owner's PC) role: only the Musinsa collector. No Telegram polling, no Threads. */
-export async function registerLocalCampaignJobs(boss: PgBoss): Promise<void> {
-  await createCampaignQueues(boss)
-  const alert = createLoginAlerter(sendCampaignMessage)
-  await boss.work(CQ.musinsaCollect, async ([job]) => {
-    if (!job) return
-    await alertOnFinalFailure(job, MUSINSA_RETRY_LIMIT, '무신사 체험단 수집', async () => {
-      console.log(
-        '[musinsa-collect]',
-        await runMusinsaCollect({
-          enqueueRank: () => boss.send(CQ.rank, null),
-          alert: (reason) => alert(reason),
-        }),
-      )
-    })
-  })
-}
-
-/** Cloud role: gift collector, ranking, cards, review drafts and maintenance. */
+/** Gift and Musinsa collectors, ranking, cards, review drafts and maintenance. */
 export async function registerCampaignJobs(boss: PgBoss): Promise<void> {
   const tz = config.TZ_NAME
   await createCampaignQueues(boss)
@@ -232,6 +161,13 @@ export async function registerCampaignJobs(boss: PgBoss): Promise<void> {
     if (!job) return
     await alertOnFinalFailure(job, COLLECT_RETRY_LIMIT, '체험단 수집', async () => {
       console.log('[gift-collect]', await runGiftCollect((id) => sendCard(boss, id)))
+    })
+  })
+
+  await boss.work(CQ.musinsaCollect, async ([job]) => {
+    if (!job) return
+    await alertOnFinalFailure(job, MUSINSA_RETRY_LIMIT, '무신사 체험단 수집', async () => {
+      console.log('[musinsa-collect]', await runMusinsaCollect((id) => sendCard(boss, id)))
     })
   })
 

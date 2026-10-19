@@ -60,13 +60,8 @@ const schema = z.object({
   CAMPAIGN_DAILY_MAX: z.coerce.number().int().min(1).max(20).default(5),
   CAMPAIGN_PROFILE_PATH: z.string().default('config/campaign-profile.json'),
 
-  // Musinsa preuser trials (docs/plans/campaign-autopilot.md). The list needs the owner's Musinsa
-  // login, so it is read through the Aside browser on the owner's Windows PC (WORKER_ROLE=local).
-  WORKER_ROLE: z.enum(['cloud', 'local']).default('cloud'),
+  // Musinsa 체험단 (preuser) trials (docs/plans/campaign-autopilot.md). The list is public.
   MUSINSA_COLLECT_CRON: z.string().default('0 10,16,22 * * *'),
-  // Default: %LOCALAPPDATA%\Aside\CLI\current\aside.exe when it exists, else `aside` from PATH.
-  ASIDE_BIN: z.string().optional(),
-  ASIDE_ACCOUNT: z.string().optional(),
 
   // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
   PORT: z.coerce.number().int().min(1).max(65535).optional(),

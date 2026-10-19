@@ -82,7 +82,7 @@ describe('pickTopCampaigns', () => {
   })
 })
 
-describe('Musinsa campaigns (no applicant counts)', () => {
+describe('Musinsa campaigns', () => {
   it('are never skipped for competition, only by keyword, brand or deadline', () => {
     const musinsa = { ...base, application_count: null, recruit_count: null }
     expect(ruleSkipReason(musinsa, profile, now)).toBeNull()
@@ -101,10 +101,15 @@ describe('Musinsa campaigns (no applicant counts)', () => {
 
 describe('rank prompts per source', () => {
   const detail = {
-    campaignId: 1,
-    representativeGoods: { goodsName: '후드 집업', price: 129000 },
-    goodsCount: 2,
-    contentType: 'VIDEO',
+    eventCategory: 'TOP',
+    products: [
+      {
+        uniqueId: '7529016',
+        isRepresentative: true,
+        prices: { normalPrice: { value: 129000 }, salePrice: { value: 89000 } },
+      },
+      { uniqueId: '7529017' },
+    ],
   }
   const row = (over: Record<string, unknown>) =>
     ({
@@ -112,24 +117,28 @@ describe('rank prompts per source', () => {
       source: 'musinsa',
       title: '후드 집업',
       brand: '브랜드',
-      application_count: null,
-      recruit_count: null,
+      application_count: 50,
+      recruit_count: 10,
       remaining_days: 3,
       detail,
       ...over,
     }) as Parameters<typeof toRankCandidate>[0]
 
-  it('shows price, goods count and review format for Musinsa instead of competition', () => {
+  it('shows category, price, goods count and competition for Musinsa', () => {
     const line = candidateLine(toRankCandidate(row({})))
     expect(line).toContain('[5] 후드 집업')
-    expect(line).toContain('정가 129,000원')
+    expect(line).toContain('품목 상의')
+    expect(line).toContain('정가 129,000원 (할인가 89,000원)')
     expect(line).toContain('상품 2개')
-    expect(line).toContain('리뷰 형식 영상')
+    expect(line).toContain('모집 10명 / 신청 50명 (경쟁률 5.0:1)')
     expect(line).toContain('남은 기간 3일')
-    expect(line).not.toContain('경쟁률')
-    expect(
-      candidateLine(toRankCandidate(row({ detail: { ...detail, contentType: 'IMAGE' } }))),
-    ).toContain('리뷰 형식 사진')
+    expect(line).not.toContain('리뷰 형식')
+  })
+  it('leaves out what Musinsa did not give', () => {
+    const line = candidateLine(
+      toRankCandidate(row({ detail: null, application_count: null, recruit_count: null })),
+    )
+    expect(line).not.toMatch(/정가|상품 \d|경쟁률|품목/)
   })
   it('keeps competition for gift campaigns', () => {
     const line = candidateLine(
@@ -142,7 +151,9 @@ describe('rank prompts per source', () => {
   })
   it('system prompts name the shop and the competition rule', () => {
     expect(rankSystem('musinsa')).toContain('무신사')
-    expect(rankSystem('musinsa')).toContain('경쟁률 정보는 없다')
+    expect(rankSystem('musinsa')).toContain('경쟁률(신청자 수 / 모집 인원)')
+    expect(rankSystem('musinsa')).toContain('정가')
+    expect(rankSystem('kakao-gift')).not.toContain('정가')
     expect(rankSystem('kakao-gift')).toContain('선물하기')
     expect(rankSystem('kakao-gift')).toContain('경쟁률(신청자 수 / 모집 인원)')
   })

@@ -25,6 +25,7 @@ import {
   type CampaignStatus,
   competition,
   isCampaignRejectReason,
+  musinsaCategoryLabel,
   musinsaFacts,
   sourceInfo,
 } from './types.ts'
@@ -95,19 +96,40 @@ export function formatCounts(
   return parts.length ? parts.join(' · ') : null
 }
 
-const CONTENT_TYPE_TEXT = { VIDEO: '📹 영상 리뷰', IMAGE: '📷 사진 리뷰' } as const
+/** `10/27(화)` for a YYYY-MM-DD source date, read as a day in `tz`. */
+export const formatIsoDay = (date: string, tz: string) =>
+  formatKstDate(zonedToUtc(date, '12:00', tz), tz)
 
-/** Musinsa facts lines: list price, goods count and the requested review format. */
-export function formatMusinsaFacts(c: Pick<Campaign, 'source' | 'detail'>): string[] {
+/**
+ * Musinsa facts lines: category · list price (→ sale price) · goods count, then the announcement
+ * date and the review period. Whatever the source did not give is left out.
+ */
+export function formatMusinsaFacts(
+  c: Pick<Campaign, 'source' | 'detail'>,
+  tz: string = config.TZ_NAME,
+): string[] {
   const m = musinsaFacts(c)
   if (!m) return []
-  const parts: string[] = []
-  if (m.price != null) parts.push(`정가 ${formatWon(m.price)}`)
-  if (m.goodsCount != null && m.goodsCount > 1) parts.push(`상품 ${m.goodsCount}개`)
-  const out: string[] = []
-  if (parts.length) out.push(parts.join(' · '))
-  if (m.contentType) out.push(CONTENT_TYPE_TEXT[m.contentType])
-  return out
+  const price =
+    m.price == null
+      ? null
+      : m.salePrice != null
+        ? `정가 ${formatWon(m.price)} → ${formatWon(m.salePrice)}`
+        : `정가 ${formatWon(m.price)}`
+  const head = [
+    m.category ? musinsaCategoryLabel(m.category) : null,
+    price,
+    m.goodsCount != null && m.goodsCount > 1 ? `상품 ${m.goodsCount}개` : null,
+  ].filter(Boolean)
+  const day = (d: string) => formatIsoDay(d, tz)
+  const review =
+    m.reviewStartDate && m.reviewEndDate
+      ? `리뷰 ${day(m.reviewStartDate)}~${day(m.reviewEndDate)}`
+      : m.reviewEndDate
+        ? `리뷰 ~${day(m.reviewEndDate)}`
+        : null
+  const dates = [m.winnerDrawDate ? `발표 ${day(m.winnerDrawDate)}` : null, review].filter(Boolean)
+  return [head.join(' · '), dates.join(' · ')].filter(Boolean)
 }
 
 /** What the owner does with the card, by where the source is applied on. */
@@ -120,11 +142,9 @@ const applyInstruction = (source: string) =>
 export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
   const lines: string[] = [`🎁 [${sourceInfo(c.source).label}] #${c.id} ${clip(c.title, 200)}`]
   if (c.brand) lines.push(clip(c.brand, 80))
-  if (c.source === 'musinsa') lines.push(...formatMusinsaFacts(c))
-  else {
-    const counts = formatCounts(c)
-    if (counts) lines.push(counts)
-  }
+  const counts = formatCounts(c)
+  if (counts) lines.push(counts)
+  if (c.source === 'musinsa') lines.push(...formatMusinsaFacts(c, tz))
   if (c.apply_deadline) {
     const estimate = sourceInfo(c.source).estimatedDeadline ? ' (추정)' : ''
     lines.push(`마감 ${formatDday(daysUntil(c.apply_deadline, now, tz))}${estimate}`)

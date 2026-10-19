@@ -1,12 +1,12 @@
 import { z } from 'zod'
 import { config } from '../config.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
+import { makeGetJson, sleep } from './http.ts'
 import { type GiftTrialItem, giftTrialItemSchema } from './types.ts'
 
 const BASE = 'https://gift.kakao.com/a/content-builder'
 const USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 KakaoTalk'
-const REQUEST_TIMEOUT_MS = 15_000
 const RETRY_DELAY_MS = 2_000
 const PAGE_DELAY_MS = 400
 // Hard stop against a pagination loop that never reports its end (475 items = 19 pages today).
@@ -46,45 +46,6 @@ const collectionsSchema = z.object({
   paging: z.object({ isLast: z.boolean().optional() }).passthrough().optional(),
 })
 
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    url: string,
-  ) {
-    super(`gift.kakao.com responded ${status} for ${url}`)
-  }
-}
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
-
-function isRetryable(err: unknown): boolean {
-  if (err instanceof HttpError) return err.status === 429 || err.status >= 500
-  if (err instanceof DOMException) return err.name === 'TimeoutError' || err.name === 'AbortError'
-  return err instanceof TypeError // network failure
-}
-
-type GetJson = (url: string) => Promise<unknown>
-
-function makeGetJson(fetchImpl: typeof fetch, retryDelayMs: number): GetJson {
-  const once = async (url: string) => {
-    const res = await fetchImpl(url, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (!res.ok) throw new HttpError(res.status, url)
-    return (await res.json()) as unknown
-  }
-  return async (url) => {
-    try {
-      return await once(url)
-    } catch (err) {
-      if (!isRetryable(err)) throw err
-      await sleep(retryDelayMs)
-      return once(url)
-    }
-  }
-}
-
 /**
  * Reads the public Kakao gift trial-campaign list. The first page (`/v2/pages/<pageId>`) carries
  * 50 campaigns plus the search condition and paging; the remaining ones come from
@@ -99,7 +60,11 @@ function makeGetJson(fetchImpl: typeof fetch, retryDelayMs: number): GetJson {
 export async function fetchGiftTrialList(
   opts: { pageId?: number; fetch?: typeof fetch; delayMs?: number; retryDelayMs?: number } = {},
 ): Promise<{ items: GiftTrialItem[]; totalCount: number | null; invalid: number }> {
-  const getJson = makeGetJson(opts.fetch ?? fetch, opts.retryDelayMs ?? RETRY_DELAY_MS)
+  const getJson = makeGetJson({
+    fetch: opts.fetch ?? fetch,
+    retryDelayMs: opts.retryDelayMs ?? RETRY_DELAY_MS,
+    userAgent: USER_AGENT,
+  })
   const delayMs = opts.delayMs ?? PAGE_DELAY_MS
   const pageId = opts.pageId ?? config.GIFT_TRIAL_PAGE_ID
 

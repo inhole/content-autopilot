@@ -392,7 +392,8 @@ export function CampaignsPage() {
           </ToggleGroup>
         </div>
         <div className="flex items-center gap-2">
-          <div className="min-w-0 overflow-x-auto">
+          {/* Scrolls sideways on narrow screens; no vertical overflow, no visible scrollbar. */}
+          <div className="min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <Tabs
               value={TAB_STATUSES.includes(status) ? status : ''}
               onValueChange={(v) => update(v, source)}

@@ -1,10 +1,10 @@
 import type { CampaignProfile } from './profile.ts'
-import type { ContentType } from './types.ts'
+import { musinsaCategoryLabel } from './types.ts'
 
 const RANK_CRITERIA_GIFT =
   '- 경쟁률(신청자 수 / 모집 인원)이 낮을수록 당첨 가능성이 높으므로 가산하고, 높으면 감점한다. 경쟁률이 비슷하면 취향 적합도를 우선한다.'
-const RANK_CRITERIA_MUSINSA =
-  '- 정가가 너무 낮은 소모성 상품보다 실제로 써볼 만한 상품을 우선한다. 영상 리뷰 형식은 부담이 크므로 취향 적합도가 아주 높을 때만 높은 점수를 준다. 경쟁률 정보는 없다.'
+const RANK_CRITERIA_MUSINSA = `${RANK_CRITERIA_GIFT}
+- 정가가 너무 낮은 소모성 상품보다 실제로 써볼 만한 상품을 우선한다.`
 
 /** Rank system prompt of one source; the source decides the shop and the competition rule. */
 export const rankSystem = (source: string = 'kakao-gift') =>
@@ -37,24 +37,25 @@ export type RankCandidate = {
   application_count: number | null
   recruit_count: number | null
   remaining_days: number | null
-  /** Musinsa only: list price in won. */
+  /** Musinsa only: category id, list price and sale price (won), number of goods. */
+  category?: string | null
   price?: number | null
-  /** Musinsa only: number of goods in the campaign. */
+  sale_price?: number | null
   goods_count?: number | null
-  /** Musinsa only: the review format the campaign asks for. */
-  content_type?: ContentType | null
 }
-
-export const contentTypeLabel = (t: ContentType) => (t === 'VIDEO' ? '영상' : '사진')
 
 export function candidateLine(c: RankCandidate): string {
   const parts = [`[${c.id}] ${c.title}`]
   if (c.brand) parts.push(`브랜드: ${c.brand}`)
   if (c.source === 'musinsa') {
-    if (c.price != null) parts.push(`정가 ${c.price.toLocaleString('en-US')}원`)
-    if (c.goods_count != null) parts.push(`상품 ${c.goods_count}개`)
-    if (c.content_type) parts.push(`리뷰 형식 ${contentTypeLabel(c.content_type)}`)
-  } else if (c.recruit_count != null && c.application_count != null) {
+    if (c.category) parts.push(`품목 ${musinsaCategoryLabel(c.category)}`)
+    if (c.price != null) {
+      const sale = c.sale_price != null ? ` (할인가 ${c.sale_price.toLocaleString('en-US')}원)` : ''
+      parts.push(`정가 ${c.price.toLocaleString('en-US')}원${sale}`)
+    }
+    if (c.goods_count != null && c.goods_count > 1) parts.push(`상품 ${c.goods_count}개`)
+  }
+  if (c.recruit_count != null && c.application_count != null) {
     const ratio = c.recruit_count > 0 ? (c.application_count / c.recruit_count).toFixed(1) : '?'
     parts.push(`모집 ${c.recruit_count}명 / 신청 ${c.application_count}명 (경쟁률 ${ratio}:1)`)
   }

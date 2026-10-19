@@ -6,6 +6,7 @@ import {
   type CampaignSource,
   type CampaignStatus,
   competition,
+  musinsaCategoryLabel,
   musinsaFacts,
   sourceInfo,
 } from '../campaigns/types.ts'
@@ -203,11 +204,20 @@ export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): 
   const m = musinsaFacts(c)
   const sourceFields = m
     ? [
-        field('정가', m.price != null ? esc(formatWon(m.price)) : '-'),
-        field('상품 수', m.goodsCount != null ? esc(m.goodsCount) : '-'),
+        field('품목', m.category ? esc(musinsaCategoryLabel(m.category)) : '-'),
         field(
-          '리뷰 형식',
-          m.contentType === 'VIDEO' ? '영상' : m.contentType === 'IMAGE' ? '사진' : '-',
+          '정가',
+          m.price != null
+            ? `${esc(formatWon(m.price))}${m.salePrice != null ? ` → ${esc(formatWon(m.salePrice))}` : ''}`
+            : '-',
+        ),
+        field('상품 수', m.goodsCount != null ? esc(m.goodsCount) : '-'),
+        field('발표일', text(m.winnerDrawDate)),
+        field(
+          '리뷰 기간',
+          m.reviewStartDate || m.reviewEndDate
+            ? `${esc(m.reviewStartDate ?? '?')} ~ ${esc(m.reviewEndDate ?? '?')}`
+            : '-',
         ),
       ]
     : []
@@ -216,9 +226,9 @@ export function renderCampaignDetail(data: CampaignDetailData, ctx: RenderCtx): 
     field('브랜드', text(c.brand)),
     ...sourceFields,
     field('상품 ID', c.product_id != null ? esc(c.product_id) : '-'),
-    ...(m ? [] : [field('모집 인원', count(c.recruit_count))]),
-    ...(m ? [] : [field('신청자', count(c.application_count))]),
-    ...(m ? [] : [field('경쟁률', esc(formatCompetition(c)))]),
+    field('모집 인원', count(c.recruit_count)),
+    field('신청자', count(c.application_count)),
+    field('경쟁률', esc(formatCompetition(c))),
     field('남은 일수', c.remaining_days != null ? `${esc(c.remaining_days)}일` : '-'),
     field(
       sourceInfo(c.source).estimatedDeadline ? '신청 마감 (추정)' : '신청 마감',

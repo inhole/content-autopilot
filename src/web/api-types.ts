@@ -25,7 +25,7 @@ export type CampaignListResponse = {
   rows: (Jsonify<CampaignListRow> & {
     /** Deadline of the current stage (see nextDeadline in data.ts); null when it has none. */
     next_deadline: { at: string; kind: 'apply' | 'review'; estimated: boolean } | null
-    /** Applicants per slot; null when unknown (always null for Musinsa). */
+    /** Applicants per slot; null when unknown. */
     competition: number | null
   })[]
 }

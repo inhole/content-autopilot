@@ -98,7 +98,7 @@ async function countShortlistedToday(now: Date): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [r.source, Number(r.n)]))
 }
 
-/** The facts of one campaign the rank prompt shows; Musinsa has price and format instead of counts. */
+/** The facts of one campaign the rank prompt shows; Musinsa adds category, price and goods count. */
 export function toRankCandidate(c: Campaign): RankCandidate {
   const m = musinsaFacts(c)
   return {
@@ -109,7 +109,14 @@ export function toRankCandidate(c: Campaign): RankCandidate {
     application_count: c.application_count,
     recruit_count: c.recruit_count,
     remaining_days: c.remaining_days,
-    ...(m ? { price: m.price, goods_count: m.goodsCount, content_type: m.contentType } : {}),
+    ...(m
+      ? {
+          category: m.category,
+          price: m.price,
+          sale_price: m.salePrice,
+          goods_count: m.goodsCount,
+        }
+      : {}),
   }
 }
 
