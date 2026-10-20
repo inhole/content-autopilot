@@ -41,6 +41,11 @@ describe('generatePost with follow-ups', () => {
     const parts = await loadParts(postId as number)
     expect(parts.map((p) => p.idx)).toEqual([2, 3])
     expect(parts[0]?.text).toContain('첫 답글')
+    const [stored] = await query<{ v: string | null }>(
+      "select generation->>'prompt_version' as v from posts where id = $1",
+      [postId],
+    )
+    expect(stored?.v).toBe('2')
 
     const seq = await requestRegeneration(topicId)
     chatJson.mockResolvedValueOnce(draft(`${main}!`, ['새 답글'.repeat(20)]))

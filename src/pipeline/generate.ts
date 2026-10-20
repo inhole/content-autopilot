@@ -4,12 +4,12 @@ import { type Query, query, transaction } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 import { lastFollowupLimit, loadParts, MAX_FOLLOWUPS, replaceParts } from './parts.ts'
-import { CHAIN_RULES, GENERATE_SYSTEM } from './prompts.ts'
-import { gatherSources } from './sources.ts'
+import { CHAIN_RULES, GENERATE_SYSTEM, PROMPT_VERSION } from './prompts.ts'
+import { type GatheredSources, gatherSources } from './sources.ts'
 import { buildStylePrompt, loadStyleContext } from './style.ts'
 
 export const generationSchema = z.object({
-  text: z.string().min(50).max(THREADS_TEXT_LIMIT),
+  text: z.string().min(20).max(THREADS_TEXT_LIMIT),
   /** Follow-up replies continuing the main post; empty for a single post. */
   followups: z.array(z.string().max(THREADS_TEXT_LIMIT)).max(MAX_FOLLOWUPS),
   angle: z.string(),
@@ -17,12 +17,17 @@ export const generationSchema = z.object({
   caveats: z.array(z.string()),
 })
 export type Generation = z.infer<typeof generationSchema>
+/** What is stored in posts.generation: the draft plus the prompt voice version it was written under. */
+export type StoredGeneration = Generation & { prompt_version: number }
+
+/** With follow-ups the main post is only a teaser; it is fitted to this limit (shortened once). */
+export const CHAIN_MAIN_LIMIT = 200
 
 // Providers do not reliably enforce maxLength in structured output (Opus routinely writes 500+
 // chars), so the first pass accepts long text and an over-limit piece is shortened once. The
 // follow-up count is capped in code for the same reason.
 const draftSchema = generationSchema.extend({
-  text: z.string().min(50).max(4000),
+  text: z.string().min(20).max(4000),
   followups: z.array(z.string().max(4000)),
 })
 // With the chain disabled the model is not asked for follow-ups at all.
@@ -31,7 +36,7 @@ const shortenSchema = (limit: number) => z.object({ text: z.string().min(1).max(
 const SHORTEN_MARGIN = 50
 
 export const shortenPrompt = (text: string, target = THREADS_TEXT_LIMIT - SHORTEN_MARGIN) =>
-  `아래 Threads 글을 공백 포함 ${target}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅, 마지막 질문은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
+  `아래 Threads 글을 공백 포함 ${target}자 이내로 줄여라. 사실과 관점, 첫 줄의 훅, 마지막 줄은 유지하고, 새로운 사실을 더하지 마라. 문체도 그대로 둔다.\n\n${text}`
 
 export const charCount = (text: string) => [...text].length
 
@@ -44,7 +49,7 @@ export async function draftPost(
   user: string,
   model = config.LLM_MODEL,
   chain = config.THREAD_CHAIN_ENABLED,
-): Promise<Generation> {
+): Promise<StoredGeneration> {
   const system = chain ? `${GENERATE_SYSTEM}\n\n${CHAIN_RULES}` : GENERATE_SYSTEM
   const raw = chain
     ? await chatJson({ model, system, user, schema: draftSchema, schemaName: 'threads_chain' })
@@ -78,7 +83,8 @@ export async function draftPost(
   const lastIdx = followups.length - 1
   return {
     ...raw,
-    text: await fitTo(raw.text, THREADS_TEXT_LIMIT),
+    prompt_version: PROMPT_VERSION,
+    text: await fitTo(raw.text, followups.length > 0 ? CHAIN_MAIN_LIMIT : THREADS_TEXT_LIMIT),
     followups: await Promise.all(
       followups.map((f, i) =>
         fitTo(f, i === lastIdx ? lastFollowupLimit(config.THREAD_CTA_TEXT) : THREADS_TEXT_LIMIT),
@@ -140,6 +146,46 @@ export async function pendingShortlistedTopicIds(): Promise<number[]> {
 }
 
 /**
+ * The user prompt of a draft: the article, aux context and the style fragment. Style learning
+ * (owner's edited/approved posts, recent hooks, reject reasons) is a nice-to-have: a failure to
+ * load it must not block the draft. Labeled parts are joined by blank lines.
+ */
+async function buildUserPrompt(topic: Topic, sources: GatheredSources): Promise<string> {
+  const stylePrompt = await loadStyleContext()
+    .then(buildStylePrompt)
+    .catch((err: unknown) => {
+      console.warn(`[generate] style context unavailable: ${(err as Error).message}`)
+      return ''
+    })
+  const parts = [
+    `제목: ${topic.title}\n출처: ${sources.sourceUrl ?? '(직접 입력)'}`,
+    `본문:\n${sources.body}`,
+    ...sources.aux.map((a) => `${a.label}:\n${a.text}`),
+    ...(stylePrompt ? [stylePrompt] : []),
+  ]
+  return parts.join('\n\n')
+}
+
+/**
+ * Builds the prompt generatePost would send for a topic and drafts it, writing nothing (CLI
+ * draft:preview). Returns null when the article cannot be read.
+ */
+export async function previewDraft(
+  topicId: number,
+  chain: boolean,
+): Promise<StoredGeneration | null> {
+  const [topic] = await query<Topic>(
+    'select id, title, url, discussion_url, feed_summary, note from topics where id = $1',
+    [topicId],
+  )
+  if (!topic) throw new Error(`topic ${topicId} not found`)
+  const sources = await gatherSources(topic)
+  if (!sources) return null
+  const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
+  return draftPost(`${await buildUserPrompt(topic, sources)}${notePrompt}`, config.LLM_MODEL, chain)
+}
+
+/**
  * Generates (or regenerates) the Threads draft for a topic and leaves it PENDING_REVIEW.
  * Returns the post id, or null when there is nothing to review (the post was rejected or has
  * moved past review). An initial generation reuses an existing PENDING_REVIEW draft so job
@@ -187,25 +233,8 @@ export async function generatePost(
   // The note is the owner's opinion (the angle), never a source of facts.
   const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
 
-  // Style learning (owner's edited/approved posts, recent hooks, reject reasons) is a nice-to-have:
-  // a failure to load it must not block the draft.
-  const stylePrompt = await loadStyleContext()
-    .then(buildStylePrompt)
-    .catch((err: unknown) => {
-      console.warn(`[generate] style context unavailable: ${(err as Error).message}`)
-      return ''
-    })
-
-  // Labeled parts joined by blank lines; add new context as another part.
-  const parts = [
-    `제목: ${topic.title}\n출처: ${sources.sourceUrl ?? '(직접 입력)'}`,
-    `본문:\n${sources.body}`,
-    ...sources.aux.map((a) => `${a.label}:\n${a.text}`),
-    ...(stylePrompt ? [stylePrompt] : []),
-  ]
-
   const gen = await draftPost(
-    `${parts.join('\n\n')}${notePrompt}${revisionPrompt}`,
+    `${await buildUserPrompt(topic, sources)}${notePrompt}${revisionPrompt}`,
     config.LLM_MODEL,
     chain,
   )

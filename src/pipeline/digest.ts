@@ -5,9 +5,9 @@ import { localDate } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 import { DIGEST_RULES, type DigestPromptItem, digestUserPrompt } from './digest-prompts.ts'
-import { charCount, type Generation, shortenPrompt } from './generate.ts'
+import { charCount, type StoredGeneration, shortenPrompt } from './generate.ts'
 import { lastFollowupLimit, loadParts, MAX_FOLLOWUPS, replaceParts } from './parts.ts'
-import { GENERATE_SYSTEM } from './prompts.ts'
+import { GENERATE_SYSTEM, PROMPT_VERSION } from './prompts.ts'
 
 // The weekly "이번 주 놓친 소식" chain (docs/plans/roadmap.md 1): EXPIRED news drafts that were not
 // revived are folded into one chain post. Item 1 is the main post, items 2 and 3 are follow-ups,
@@ -101,7 +101,7 @@ export async function draftDigest(
   items: DigestPromptItem[],
   revision?: { previous: string[]; feedback?: string | undefined },
   model = config.LLM_MODEL,
-): Promise<Generation> {
+): Promise<StoredGeneration> {
   const raw = await chatJson({
     model,
     system: DIGEST_SYSTEM,
@@ -130,6 +130,7 @@ export async function draftDigest(
   const lastIdx = followups.length - 1
   return {
     ...raw,
+    prompt_version: PROMPT_VERSION,
     text: await fitTo(raw.text, THREADS_TEXT_LIMIT),
     followups: await Promise.all(
       followups.map((f, i) =>

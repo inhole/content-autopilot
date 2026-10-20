@@ -6,7 +6,10 @@ process.env.THREAD_CTA_TEXT = '팔로우하면 다음 소식도 받아볼 수 �
 const chatJson = vi.fn()
 vi.mock('../src/llm/openrouter.ts', () => ({ chatJson: (...args: unknown[]) => chatJson(...args) }))
 
-const { draftPost, generationSchema } = await import('../src/pipeline/generate.ts')
+const { CHAIN_MAIN_LIMIT, draftPost, generationSchema } = await import(
+  '../src/pipeline/generate.ts'
+)
+const { PROMPT_VERSION } = await import('../src/pipeline/prompts.ts')
 const { lastFollowupLimit, MAX_FOLLOWUPS } = await import('../src/pipeline/parts.ts')
 const { config } = await import('../src/config.ts')
 const { z } = await import('zod')
@@ -43,6 +46,44 @@ describe('draftPost', () => {
   })
 })
 
+describe('draftPost voice version and main limit', () => {
+  beforeEach(() => chatJson.mockReset())
+
+  it('marks every draft with the prompt version', async () => {
+    chatJson.mockResolvedValueOnce(draft('가'.repeat(300)))
+    expect((await draftPost('user', 'm', false)).prompt_version).toBe(PROMPT_VERSION)
+    expect(PROMPT_VERSION).toBeGreaterThanOrEqual(2)
+  })
+
+  it('fits the main post to the teaser limit only when follow-ups exist', async () => {
+    chatJson
+      .mockResolvedValueOnce(draft('가'.repeat(260), ['나'.repeat(100)]))
+      .mockResolvedValueOnce({ text: '다'.repeat(150) })
+    const out = await draftPost('user', 'm', true)
+    expect(out.text).toBe('다'.repeat(150))
+    const call = chatJson.mock.calls[1]?.[0] as { user: string }
+    expect(call.user).toContain(`${CHAIN_MAIN_LIMIT - 50}자 이내`)
+
+    // No follow-ups: a single post keeps the normal 500-char limit.
+    chatJson.mockReset()
+    chatJson.mockResolvedValueOnce(draft('가'.repeat(260), []))
+    const single = await draftPost('user', 'm', true)
+    expect(single.text).toBe('가'.repeat(260))
+    expect(chatJson).toHaveBeenCalledOnce()
+  })
+
+  it('describes the 반말 voice without a forced closing question', async () => {
+    chatJson.mockResolvedValueOnce(draft('가'.repeat(150), ['나'.repeat(100)]))
+    await draftPost('user', 'm', true)
+    const [first] = chatJson.mock.calls as [{ system: string }][]
+    const system = first?.[0].system ?? ''
+    expect(system).toContain('반말')
+    expect(system).not.toContain('음슴체로 쓴다')
+    expect(system).not.toContain('질문 하나로 끝낸다')
+    expect(system).toContain('150자')
+  })
+})
+
 describe('draftPost chain', () => {
   beforeEach(() => chatJson.mockReset())
   const schemaKeys = (call: number) =>
@@ -57,7 +98,7 @@ describe('draftPost chain', () => {
     expect(schemaKeys(0)).not.toContain('followups')
     expect(chatJson.mock.calls[0]?.[0].system).not.toContain('followups')
 
-    chatJson.mockResolvedValueOnce(draft('가'.repeat(300), ['나'.repeat(100)]))
+    chatJson.mockResolvedValueOnce(draft('가'.repeat(150), ['나'.repeat(100)]))
     const on = await draftPost('user', 'm', true)
     expect(on.followups).toEqual(['나'.repeat(100)])
     expect(schemaKeys(1)).toContain('followups')
@@ -66,7 +107,7 @@ describe('draftPost chain', () => {
 
   it('drops empty follow-ups and caps the count', async () => {
     chatJson.mockResolvedValueOnce(
-      draft('가'.repeat(300), ['  ', '나'.repeat(60), '다'.repeat(60), '라'.repeat(60)]),
+      draft('가'.repeat(150), ['  ', '나'.repeat(60), '다'.repeat(60), '라'.repeat(60)]),
     )
     const out = await draftPost('user', 'm', true)
     expect(out.followups).toEqual(['나'.repeat(60), '다'.repeat(60)])
@@ -81,11 +122,11 @@ describe('draftPost chain', () => {
     const tail = '다'.repeat(480)
     chatJson
       .mockResolvedValueOnce(draft('가'.repeat(520), [mid, tail]))
-      .mockResolvedValueOnce({ text: '가'.repeat(440) })
+      .mockResolvedValueOnce({ text: '가'.repeat(180) })
       .mockResolvedValueOnce({ text: '다'.repeat(last - 10) })
     const out = await draftPost('user', 'm', true)
     expect(chatJson).toHaveBeenCalledTimes(3)
-    expect(out.text).toBe('가'.repeat(440))
+    expect(out.text).toBe('가'.repeat(180))
     expect(out.followups[0]).toBe(mid)
     expect(out.followups[1]).toBe('다'.repeat(last - 10))
     const lastCall = chatJson.mock.calls[2]?.[0] as { user: string }

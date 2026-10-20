@@ -5,6 +5,7 @@ import { localDate } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 import { charCount, shortenPrompt } from './generate.ts'
+import { PROMPT_VERSION } from './prompts.ts'
 import { JUDGE_SYSTEM, judgePrompt, REVIVE_SYSTEM, revivePrompt } from './revive-prompts.ts'
 
 /** Expired drafts older than this are left alone: even evergreen ones lose their hook. */
@@ -178,6 +179,7 @@ export async function reviveDraft(postId: number, now: Date = new Date()): Promi
 
   const patch = JSON.stringify({
     text,
+    prompt_version: PROMPT_VERSION,
     revived: { from_text: post.text, changes: revived.changes, at: now.toISOString() },
   })
   const rows = await query<{ id: number }>(

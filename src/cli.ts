@@ -14,7 +14,13 @@ import { pool, query } from './db/pool.ts'
 import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { buildWeeklyDigest } from './pipeline/digest.ts'
-import { generatePost, pendingShortlistedTopicIds, SkipTopicError } from './pipeline/generate.ts'
+import {
+  charCount,
+  generatePost,
+  pendingShortlistedTopicIds,
+  previewDraft,
+  SkipTopicError,
+} from './pipeline/generate.ts'
 import { collectInsights, loadInsightRows, weeklyReport } from './pipeline/insights.ts'
 import { loadParts, retryFailedParts } from './pipeline/parts.ts'
 import { approvePost, publishPost, rejectPost } from './pipeline/publish.ts'
@@ -39,6 +45,7 @@ const USAGE = `usage: npm run cli -- <command>
   collect                     fetch RSS feeds into topics
   daily                       collect → rank → generate drafts (no queue)
   add-topic "<title>" [url] [note]  create a draft from a manual topic
+  draft:preview <topicId...> [--chain]  draft with the live prompt and print it (read-only: no DB write, no queue)
   list [status]               list posts (default: all recent)
   show <postId>               print a draft as it appears in review
   review [postId]             (re)send a draft, or all PENDING_REVIEW drafts, to Telegram
@@ -133,6 +140,27 @@ try {
       const postId = await generatePost(await addManualTopic(title, url, note))
       if (postId === null) throw new Error('no draft to review (post is rejected or past review)')
       await sendReview(postId)
+      break
+    }
+    case 'draft:preview': {
+      const chain = args.includes('--chain') || config.THREAD_CHAIN_ENABLED
+      const ids = args.filter((a) => !a.startsWith('--')).map(Number)
+      if (!ids.length || ids.some((n) => !Number.isInteger(n))) {
+        throw new Error('at least one numeric topicId is required')
+      }
+      for (const topicId of ids) {
+        const gen = await previewDraft(topicId, chain)
+        console.log(`===== topic ${topicId} (chain: ${chain}) =====`)
+        if (!gen) {
+          console.log('(no readable article body)\n')
+          continue
+        }
+        console.log(`[본 글 · ${charCount(gen.text)}자]\n${gen.text}\n`)
+        for (const [i, f] of gen.followups.entries()) {
+          console.log(`[답글 ${i + 1} · ${charCount(f)}자]\n${f}\n`)
+        }
+        if (gen.caveats.length) console.log(`caveats: ${gen.caveats.join(' / ')}\n`)
+      }
       break
     }
     case 'list': {
