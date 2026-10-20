@@ -70,7 +70,7 @@ npm run cli -- revive <postId>       # 그 만료 초안을 지금 재활용하�
 npm run cli -- digest                # 주간 묶음 연결 글을 지금 만들고 출력 (검수 메시지는 review로 따로 보낸다)
 ```
 
-체험단 명령은 [아래](#체험단-cli)에 있다.
+체험단 명령은 [아래](#체험단-cli)에 있다. Aside 브라우저 스크립트(`aside:list`, `aside:run`)는 [aside.md](aside.md)에 있다.
 
 CLI는 Telegram 봇을 polling하지 않는다. 그래서 워커가 실행 중일 때 같이 써도 된다.
 

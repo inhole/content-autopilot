@@ -1,3 +1,4 @@
+import { listScripts, parseArgs, runAsideScript } from './aside/scripts.ts'
 import { fetchGiftTrialList } from './campaigns/gift.ts'
 import { runGiftCollect, runMusinsaCollect } from './campaigns/jobs.ts'
 import { fetchMusinsaList, representativeProduct } from './campaigns/musinsa.ts'
@@ -65,7 +66,10 @@ const USAGE = `usage: npm run cli -- <command>
   campaign:show <id>          print status, skip reason and the card text
   campaign:card <id>          (re)send the campaign card to Telegram
   campaign:remind             send due campaign reminders now
-  review:draft <id> [feedback]  write (or rewrite) the gift review draft and send it`
+  review:draft <id> [feedback]  write (or rewrite) the gift review draft and send it
+
+  aside:list                  list the Aside Browser scripts in aside/scripts
+  aside:run <name> [k=v ...]  run an aside/scripts script with \`aside repl\` and print its result`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
 const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
@@ -347,6 +351,19 @@ try {
       console.log(
         written ? 'draft written' : 'nothing written (no memo yet, or the campaign moved on)',
       )
+      break
+    }
+    case 'aside:list':
+      for (const s of await listScripts()) {
+        const sig = s.args.map((a) => (a.optional ? `[${a.name}=]` : `${a.name}=`)).join(' ')
+        console.log(`${`${s.name} ${sig}`.padEnd(32)} ${s.description}`)
+      }
+      break
+    case 'aside:run': {
+      const [name, ...rest] = args
+      if (!name) throw new Error('script name is required (see aside:list)')
+      const result = await runAsideScript(name, parseArgs(rest))
+      console.log(typeof result === 'string' ? result : JSON.stringify(result, null, 2))
       break
     }
     default:

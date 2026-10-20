@@ -63,6 +63,11 @@ export const schema = z.object({
   // Musinsa 체험단 (preuser) trials (docs/plans/campaign-autopilot.md). The list is public.
   MUSINSA_COLLECT_CRON: z.string().default('0 10,16,22 * * *'),
 
+  // Aside browser on the owner's PC, driven by `aside repl` scripts in aside/scripts (docs/aside.md).
+  // Default: %LOCALAPPDATA%\Aside\CLI\current\aside.exe when it exists, else `aside` from PATH.
+  ASIDE_BIN: z.string().optional(),
+  ASIDE_ACCOUNT: z.string().optional(),
+
   // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
   PORT: z.coerce.number().int().min(1).max(65535).optional(),
   DASHBOARD_PASSWORD: z.string().optional(),
