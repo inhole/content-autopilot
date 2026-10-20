@@ -33,6 +33,18 @@ type RuleInput = Pick<
 > &
   Partial<Pick<Campaign, 'source' | 'detail'>>
 
+/**
+ * A gift campaign whose price fetch has not been tried yet (fillGiftPrices reads at most a capped
+ * number per run). Ranking it now would apply neither the price rule nor the price preference, and
+ * ranking is final, so it waits COLLECTED for a later run. A failed fetch (`priceTriedAt`) or a
+ * row without a product id is ranked with an unknown price.
+ */
+export function awaitingPrice(c: Pick<Campaign, 'source' | 'product_id' | 'detail'>): boolean {
+  if (c.source !== 'kakao-gift' || c.product_id == null) return false
+  const detail = (c.detail ?? {}) as Record<string, unknown>
+  return !('price' in detail) && !('priceTriedAt' in detail)
+}
+
 /** Why code alone rules a campaign out (before the LLM sees it), or null to let it through. */
 export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date): string | null {
   const haystack = `${c.title}\n${c.brand ?? ''}`.toLowerCase()
@@ -146,7 +158,8 @@ async function loadHistory(): Promise<RankHistory> {
 /**
  * Filters COLLECTED campaigns by rule, scores the rest with the LLM (in batches) and shortlists the
  * best ones up to today's remaining quota. Returns shortlisted ids in score order. Candidates the
- * model leaves out, or all of them when the quota is used up, stay COLLECTED for the next run.
+ * model leaves out, or all of them when the quota is used up, stay COLLECTED for the next run, and
+ * so do gift campaigns still awaiting their price (`awaitingPrice`).
  */
 export async function rankCollected(now = new Date()): Promise<number[]> {
   const profile = await loadCampaignProfile()
@@ -159,7 +172,7 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   for (const c of rows) {
     const skip = ruleSkipReason(c, profile, now)
     if (skip === null) {
-      candidates.push(c)
+      if (!awaitingPrice(c)) candidates.push(c)
       continue
     }
     await query(
