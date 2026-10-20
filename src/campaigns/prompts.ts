@@ -13,6 +13,7 @@ export const rankSystem = (source: string = 'kakao-gift') =>
 평가 기준:
 - 프로필의 소개와 관심사에 맞는 제품일수록, 실제로 써보고 후기를 쓸 만한 제품일수록 높은 점수를 준다.
 ${source === 'musinsa' ? RANK_CRITERIA_MUSINSA : RANK_CRITERIA_GIFT}
+- 정가가 높은 제품(가치가 큰 제품)일수록, 다른 조건이 비슷하다면 더 높은 점수를 준다. 가격이 적혀 있지 않은 후보는 가격으로 가산하거나 감점하지 않는다.
 - 최근 신청한 체험단과 비슷하면 가산하고, 거절한 이유와 비슷하면 감점한다.
 - 후보에 적힌 정보만 근거로 삼고, 적혀 있지 않은 제품 특성은 추측하지 않는다.
 - 모든 후보를 하나도 빠짐없이 평가한다. reason은 한국어 한 문장이다.`
@@ -37,23 +38,24 @@ export type RankCandidate = {
   application_count: number | null
   recruit_count: number | null
   remaining_days: number | null
-  /** Musinsa only: category id, list price and sale price (won), number of goods. */
-  category?: string | null
+  /** List price and the lower sale price (won) when known; any source. */
   price?: number | null
   sale_price?: number | null
+  /** Musinsa only: category id and number of goods. */
+  category?: string | null
   goods_count?: number | null
 }
 
 export function candidateLine(c: RankCandidate): string {
   const parts = [`[${c.id}] ${c.title}`]
   if (c.brand) parts.push(`브랜드: ${c.brand}`)
-  if (c.source === 'musinsa') {
-    if (c.category) parts.push(`품목 ${musinsaCategoryLabel(c.category)}`)
-    if (c.price != null) {
-      const sale = c.sale_price != null ? ` (할인가 ${c.sale_price.toLocaleString('en-US')}원)` : ''
-      parts.push(`정가 ${c.price.toLocaleString('en-US')}원${sale}`)
-    }
-    if (c.goods_count != null && c.goods_count > 1) parts.push(`상품 ${c.goods_count}개`)
+  if (c.source === 'musinsa' && c.category) parts.push(`품목 ${musinsaCategoryLabel(c.category)}`)
+  if (c.price != null) {
+    const sale = c.sale_price != null ? ` (할인가 ${c.sale_price.toLocaleString('en-US')}원)` : ''
+    parts.push(`정가 ${c.price.toLocaleString('en-US')}원${sale}`)
+  }
+  if (c.source === 'musinsa' && c.goods_count != null && c.goods_count > 1) {
+    parts.push(`상품 ${c.goods_count}개`)
   }
   if (c.recruit_count != null && c.application_count != null) {
     const ratio = c.recruit_count > 0 ? (c.application_count / c.recruit_count).toFixed(1) : '?'

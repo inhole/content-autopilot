@@ -107,3 +107,53 @@ describe('dashboard server', () => {
     expect(await res.text()).toBe('')
   })
 })
+
+describe('public gift hand-off', () => {
+  const id = '6a9e80dda960071e0ef70bb2'
+  const web = `https://gift.kakao.com/giftbox/trial-campaign/${id}`
+  const app = `kakaotalk://inappbrowser?url=${encodeURIComponent(web)}`
+
+  it('serves the page without auth, with exact URLs and strict headers', async () => {
+    const res = await fetch(`${base}/go/gift/${id}`)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(app).toBe(
+      'kakaotalk://inappbrowser?url=https%3A%2F%2Fgift.kakao.com%2Fgiftbox%2Ftrial-campaign%2F6a9e80dda960071e0ef70bb2',
+    )
+    expect(html).toContain(`content="0;url=${app}"`)
+    expect(html).toContain(`<a class="primary" href="${app}">카카오톡에서 열기</a>`)
+    expect(html).toContain(`href="${web}">웹 브라우저로 열기`)
+    expect(html).not.toContain('<script')
+    const csp = res.headers.get('content-security-policy')
+    expect(csp).toContain("default-src 'none'")
+    expect(csp).not.toContain('script-src')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('x-robots-tag')).toBe('noindex')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect((await fetch(`${base}/go/gift/${id}`, { method: 'HEAD' })).status).toBe(200)
+  })
+  it('ignores query strings and never redirects elsewhere', async () => {
+    const res = await fetch(`${base}/go/gift/${id}?url=https://evil.example`)
+    expect(res.status).toBe(200)
+    expect(await res.text()).not.toContain('evil')
+  })
+  it.each([
+    '/go/gift/..%2F..%2Fx',
+    '/go/gift/../x',
+    `/go/gift/${id.toUpperCase()}`,
+    `/go/gift/${id}0`,
+    `/go/gift/${id.slice(1)}`,
+    `/go/gift/${id}/`,
+    '/go/gift/',
+    '/go/musinsa/38933',
+    '/go/',
+  ])('404s %s without auth', async (p) => {
+    const res = await fetch(`${base}${p}`)
+    expect(res.status).toBe(404)
+    expect(res.headers.get('www-authenticate')).toBeNull()
+  })
+  it('does not open other routes', async () => {
+    expect((await fetch(`${base}/campaigns`)).status).toBe(401)
+    expect((await fetch(`${base}/api/overview`)).status).toBe(401)
+  })
+})

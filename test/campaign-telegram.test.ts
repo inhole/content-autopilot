@@ -20,7 +20,7 @@ function campaign(over: Partial<Campaign> = {}): Campaign {
   return {
     id: 12,
     source: 'kakao-gift',
-    external_id: 'g12',
+    external_id: '6a9e80dda960071e0ef70bb2',
     url: 'https://gift.kakao.com/product/12',
     url_hash: 'h',
     status: 'PENDING_REVIEW',
@@ -114,13 +114,30 @@ describe('formatCampaignCard', () => {
 describe('buttons', () => {
   it('card buttons: url, applied and pass bound to the revision', () => {
     const [open, applied, pass] = campaignCardButtons(campaign())
-    expect(open).toEqual({ text: '📱 선물하기에서 열기', url: 'https://gift.kakao.com/product/12' })
+    expect(open).toEqual({ text: '📱 카카오톡에서 열기', url: 'https://gift.kakao.com/product/12' })
     expect(applied && 'callback' in applied && encodeCampaignCallback(applied.callback)).toBe(
       'camp:applied:12:2',
     )
     expect(pass && 'callback' in pass && encodeCampaignCallback(pass.callback)).toBe(
       'camp:pass:12:2',
     )
+  })
+  it('gift card opens KakaoTalk through the hand-off route when a base is given', () => {
+    const [open, applied] = campaignCardButtons(campaign(), 'https://x.example')
+    expect(open).toEqual({
+      text: '📱 카카오톡에서 열기',
+      url: 'https://x.example/go/gift/6a9e80dda960071e0ef70bb2',
+    })
+    expect(applied && 'callback' in applied).toBe(true)
+    // Musinsa is unchanged, and an id of the wrong shape falls back to the direct link.
+    expect(campaignCardButtons(musinsaCampaign(), 'https://x.example')[0]).toMatchObject({
+      text: '📱 무신사 앱에서 열기',
+    })
+    expect(campaignCardButtons(campaign({ external_id: 'g12' }), 'https://x.example')[0]).toEqual({
+      text: '📱 카카오톡에서 열기',
+      url: 'https://gift.kakao.com/product/12',
+    })
+    expect(campaignCardButtons(campaign(), null)[0]).toMatchObject({ text: '📱 카카오톡에서 열기' })
   })
   it('reject reasons: one per reason plus cancel, all bound to the revision', () => {
     const data = rejectReasonButtons(campaign()).map((b) =>
@@ -215,12 +232,12 @@ describe('formatActiveCampaigns', () => {
       NOW,
       TZ,
     )
-    expect(text).toContain('신청 대기 (1)\n#1 [선물하기] A · D-3')
-    expect(text).toContain('결과 대기 (1)\n#2 [선물하기] B · D-3')
-    expect(text).toContain('#3 [선물하기] C · 기한 모름 (/due 3 10/30)')
-    expect(text).toContain('#4 [선물하기] D · D-2')
-    expect(text).not.toMatch(/#4 \[선물하기\] D.*\/due/)
-    expect(text).toContain('초안 검수 (1)\n#5 [선물하기] E')
+    expect(text).toContain('신청 대기 (1)\n#1 [카카오톡] A · D-3')
+    expect(text).toContain('결과 대기 (1)\n#2 [카카오톡] B · D-3')
+    expect(text).toContain('#3 [카카오톡] C · 기한 모름 (/due 3 10/30)')
+    expect(text).toContain('#4 [카카오톡] D · D-2')
+    expect(text).not.toMatch(/#4 \[카카오톡\] D.*\/due/)
+    expect(text).toContain('초안 검수 (1)\n#5 [카카오톡] E')
   })
 })
 
@@ -234,6 +251,7 @@ describe('help', () => {
 const musinsaCampaign = (over: Partial<Campaign> = {}) =>
   campaign({
     source: 'musinsa',
+    external_id: '38933',
     url: 'https://www.musinsa.com/preuser/events/38933',
     title: '후드 집업',
     detail: {
@@ -256,9 +274,19 @@ const musinsaCampaign = (over: Partial<Campaign> = {}) =>
 describe('source-aware cards', () => {
   it('gift card keeps competition and the phone instruction with a source label', () => {
     const text = formatCampaignCard(campaign(), NOW, TZ)
-    expect(text).toContain('[선물하기] #12')
+    expect(text).toContain('[카카오톡] #12')
     expect(text).toContain('경쟁률 12.3:1')
     expect(text).not.toContain('정가')
+  })
+  it('gift card shows the list price (and a lower selling price) once fetched', () => {
+    const withPrice = (price: unknown) =>
+      campaign({ detail: { campaignId: 'x', campaignTitle: 't', price } as never })
+    expect(formatCampaignCard(withPrice({ basic: 49000, selling: 49000 }), NOW, TZ)).toContain(
+      '정가 49,000원\n',
+    )
+    expect(formatCampaignCard(withPrice({ basic: 49000, selling: 39200 }), NOW, TZ)).toContain(
+      '정가 49,000원 → 39,200원',
+    )
   })
   it('Musinsa card shows competition, price, dates and the PC instruction', () => {
     const text = formatCampaignCard(musinsaCampaign(), NOW, TZ)
@@ -266,8 +294,8 @@ describe('source-aware cards', () => {
     expect(text).toContain('경쟁률 12.3:1')
     expect(text).toContain('패션 소품 · 정가 129,000원 → 89,000원')
     expect(text).toContain('발표 10/27(화) · 리뷰 10/31(토)~11/14(토)')
-    expect(text).toContain('💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
-    expect(text).not.toMatch(/📱|영상 리뷰|사진 리뷰/)
+    expect(text).toContain('📱 무신사 앱이나 💻 PC에서 열어 신청한 뒤 ✅ 신청함을 눌러주세요')
+    expect(text).not.toMatch(/영상 리뷰|사진 리뷰/)
     // Musinsa gives the exact end date, so its deadline is not marked as an estimate.
     expect(text).toContain('마감 D-')
     expect(text).not.toContain('추정')
@@ -308,19 +336,19 @@ describe('source-aware cards', () => {
   it('url button text follows the source', () => {
     const [gift] = campaignCardButtons(campaign())
     const [musinsa, applied] = campaignCardButtons(musinsaCampaign())
-    expect(gift).toMatchObject({ text: '📱 선물하기에서 열기' })
+    expect(gift).toMatchObject({ text: '📱 카카오톡에서 열기' })
     expect(musinsa).toEqual({
-      text: '💻 무신사에서 열기',
-      url: 'https://www.musinsa.com/preuser/events/38933',
+      text: '📱 무신사 앱에서 열기',
+      url: 'https://link.musinsa.com/preuser/events/38933',
     })
     expect(applied && 'callback' in applied && applied.callback.action).toBe('applied')
   })
   it('/camps shows the source label', () => {
     const text = formatActiveCampaigns([campaign(), musinsaCampaign({ id: 13 })], NOW, TZ)
-    expect(text).toContain('#12 [선물하기]')
+    expect(text).toContain('#12 [카카오톡]')
     expect(text).toContain('#13 [무신사]')
   })
   it('help mentions both sources', () => {
-    expect(CAMPAIGN_HELP_LINES.join('\n')).toContain('무신사에서 열기')
+    expect(CAMPAIGN_HELP_LINES.join('\n')).toContain('무신사 앱에서 열기')
   })
 })

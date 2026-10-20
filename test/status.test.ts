@@ -45,7 +45,7 @@ describe('status extras', () => {
     expect(out).toContain('리뷰 초안: 1건')
     expect(out).toContain('최근 30일 리뷰 완료: 4건')
     expect(out).not.toContain('선정·리뷰 전')
-    expect(out).not.toContain('[선물하기]')
+    expect(out).not.toContain('[카카오톡]')
     expect(out).not.toContain('로컬 워커')
   })
   it('parses key info, preferring monthly usage', () => {
@@ -172,7 +172,7 @@ describe('formatStatus per source', () => {
       },
       'Asia/Seoul',
     )
-    expect(out).toContain('[선물하기] 검수 대기 2 · 마지막 수집 10-09 06:05')
+    expect(out).toContain('[카카오톡] 검수 대기 2 · 마지막 수집 10-09 06:05')
     expect(out).toContain('[무신사] 검수 대기 1 · 신청함 3')
   })
 })

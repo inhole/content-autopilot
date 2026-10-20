@@ -64,6 +64,28 @@ describe('rankCollected', () => {
     })
   })
 
+  it('keeps gift campaigns whose price was not tried yet COLLECTED', async () => {
+    const waiting = await seedCampaign({ productId: 101 })
+    const priced = await seedCampaign({
+      productId: 102,
+      detail: { price: { basic: 50000, selling: 45000 } },
+    })
+    const failed = await seedCampaign({
+      productId: 103,
+      detail: { priceTriedAt: now.toISOString() },
+    })
+    const noProduct = await seedCampaign()
+    chatJson.mockResolvedValueOnce({
+      scores: [score(priced, 9), score(failed, 8), score(noProduct, 1)],
+    })
+
+    const shortlisted = await rankCollected(now)
+
+    expect(shortlisted).toEqual([priced, failed])
+    expect((await getCampaign(waiting)).status).toBe('COLLECTED')
+    expect((await getCampaign(noProduct)).status).toBe('SKIPPED')
+  })
+
   it('counts campaigns shortlisted today against the quota', async () => {
     await seedCampaign({ status: 'SHORTLISTED' })
     // Older rows do not count.

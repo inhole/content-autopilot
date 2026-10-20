@@ -13,6 +13,7 @@
     "성인"
   ],
   "excludeBrands": [],
+  "minPriceWon": 30000,
   "review": {
     "tone": "담백한 1인칭, 과장 없이 실사용 위주",
     "minChars": 100,

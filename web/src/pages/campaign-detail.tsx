@@ -58,6 +58,18 @@ const MUSINSA_CATEGORY_LABELS: Record<string, string> = {
 
 const asString = (v: unknown) => (typeof v === 'string' && v ? v : null)
 
+/** Kakao gift price out of `campaigns.detail.price` (same reading as campaignPriceInfo in src/campaigns/types.ts). */
+export function giftPrice(c: Pick<Campaign, 'source' | 'detail'>) {
+  const raw = (c.detail as { price?: { basic?: unknown; selling?: unknown } | null } | null)?.price
+  const num = (v: unknown) => (typeof v === 'number' && v >= 0 ? v : null)
+  const selling = num(raw?.selling)
+  const price = num(raw?.basic) ?? selling
+  return {
+    price,
+    salePrice: selling !== null && price !== null && selling < price ? selling : null,
+  }
+}
+
 /** Musinsa-only facts out of `campaigns.detail` (same reading as src/campaigns/types.ts). */
 export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>) {
   if (c.source !== 'musinsa') return null
@@ -163,6 +175,7 @@ export function CampaignDetailView({
 }) {
   const { campaign: c, reminders } = data
   const m = musinsaFacts(c)
+  const gift = giftPrice(c)
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-start gap-4">
@@ -219,6 +232,14 @@ export function CampaignDetailView({
                   : '-'}
               </Field>
             </>
+          )}
+          {!m && (
+            <Field label="정가">
+              <span className="tabular-nums">
+                {gift.price != null ? formatWon(gift.price) : '-'}
+                {gift.price != null && gift.salePrice != null && ` → ${formatWon(gift.salePrice)}`}
+              </span>
+            </Field>
           )}
           <Field label="상품 ID">{c.product_id ?? '-'}</Field>
           <Field label="모집 인원">

@@ -2,7 +2,12 @@ import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { localDate } from '../lib/time.ts'
 import { urlHash } from '../lib/url.ts'
-import { estimateApplyDeadline, fetchGiftTrialList, giftTrialUrl } from './gift.ts'
+import {
+  estimateApplyDeadline,
+  fetchGiftProductPrice,
+  fetchGiftTrialList,
+  giftTrialUrl,
+} from './gift.ts'
 import { sleep } from './http.ts'
 import {
   endOfLocalDay,
@@ -12,6 +17,7 @@ import {
   musinsaEventUrl,
   musinsaProductId,
 } from './musinsa.ts'
+import type { GiftPrice } from './types.ts'
 
 export type GiftCollectResult = {
   fetched: number
@@ -29,7 +35,12 @@ export type GiftCollectResult = {
  */
 export async function collectGiftCampaigns(
   now = new Date(),
-  opts: { fetchList?: typeof fetchGiftTrialList } = {},
+  opts: {
+    fetchList?: typeof fetchGiftTrialList
+    fetchPrice?: (productId: number) => Promise<GiftPrice>
+    priceDelayMs?: number
+    priceCap?: number
+  } = {},
 ): Promise<GiftCollectResult> {
   const { items, totalCount, invalid } = await (opts.fetchList ?? fetchGiftTrialList)()
   if (items.length === 0) return { fetched: 0, created: [], updated: 0, invalid, totalCount }
@@ -71,11 +82,17 @@ export async function collectGiftCampaigns(
        application_count = excluded.application_count,
        remaining_days = excluded.remaining_days,
        apply_deadline = excluded.apply_deadline,
-       detail = excluded.detail,
+       detail = coalesce(campaigns.detail, '{}'::jsonb) || excluded.detail,
        last_seen_at = excluded.last_seen_at
      returning id, (xmax = 0) as inserted`,
     [JSON.stringify(rows), now],
   )
+
+  await fillGiftPrices(now, {
+    fetchPrice: opts.fetchPrice ?? fetchGiftProductPrice,
+    delayMs: opts.priceDelayMs ?? PRICE_DELAY_MS,
+    cap: opts.priceCap ?? PRICE_CAP_PER_RUN,
+  })
 
   const created = result
     .filter((r) => r.inserted)
@@ -88,6 +105,60 @@ export async function collectGiftCampaigns(
     invalid,
     totalCount,
   }
+}
+
+const PRICE_DELAY_MS = 300
+// One run fetches at most this many prices (the first run sees ~475 rows; the rest follow later).
+const PRICE_CAP_PER_RUN = 150
+// A product whose price fetch failed is not retried before this much time has passed.
+const PRICE_RETRY_AFTER_HOURS = 6
+
+/**
+ * Fetches the list price of COLLECTED gift rows that have none yet (new rows first) and stores it
+ * in `detail.price` ({ basic, selling }). One request at a time, `delayMs` apart, at most `cap` per
+ * run. A failure is logged and remembered in `detail.priceTriedAt` so it neither fails the
+ * collection nor eats the cap on every run. updated_at is not touched.
+ */
+export async function fillGiftPrices(
+  now: Date,
+  opts: { fetchPrice: (productId: number) => Promise<GiftPrice>; delayMs: number; cap: number },
+): Promise<{ filled: number; failed: number }> {
+  const rows = await query<{ id: number; product_id: number }>(
+    `select id, product_id from campaigns
+      where source = 'kakao-gift' and status = 'COLLECTED' and product_id is not null
+        and not (coalesce(detail, '{}'::jsonb) ? 'price')
+        and (detail->>'priceTriedAt' is null
+             or (detail->>'priceTriedAt')::timestamptz < $1::timestamptz - make_interval(hours => $2))
+      order by first_seen_at desc, id desc
+      limit $3`,
+    [now, PRICE_RETRY_AFTER_HOURS, opts.cap],
+  )
+  let filled = 0
+  let failed = 0
+  let first = true
+  for (const row of rows) {
+    if (!first) await sleep(opts.delayMs)
+    first = false
+    try {
+      const price = await opts.fetchPrice(row.product_id)
+      await query(
+        `update campaigns set detail = (coalesce(detail, '{}'::jsonb) - 'priceTriedAt')
+           || jsonb_build_object('price', $2::jsonb) where id = $1`,
+        [row.id, JSON.stringify(price)],
+      )
+      filled++
+    } catch (err) {
+      failed++
+      const reason = err instanceof Error ? err.message : String(err)
+      console.warn(`gift price: #${row.id} (product ${row.product_id}) skipped: ${reason}`)
+      await query(
+        `update campaigns set detail = coalesce(detail, '{}'::jsonb)
+           || jsonb_build_object('priceTriedAt', $2::text) where id = $1`,
+        [row.id, now.toISOString()],
+      )
+    }
+  }
+  return { filled, failed }
 }
 
 /** Whole local calendar days from `now` to `target` in `tz` (negative when past). */

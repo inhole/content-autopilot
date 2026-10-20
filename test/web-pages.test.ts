@@ -112,6 +112,7 @@ const listRow = (over: Partial<CampaignListRow> = {}): CampaignListRow => ({
   review_deadline: null,
   score: 82,
   updated_at: new Date('2026-10-18T01:00:00Z'),
+  price: null,
   ...over,
 })
 
@@ -213,7 +214,7 @@ describe('renderCampaignDetail', () => {
     expect(html).toContain('평가 &lt;이유&gt;')
     expect(html).not.toContain('<script>x')
     expect(html).toContain('href="https://gift.kakao.com/product/123"')
-    expect(html).toContain('선물하기에서 열기')
+    expect(html).toContain('카카오톡에서 열기')
     expect(html).not.toMatch(/revu|블로그|하트비트|스크린샷/)
   })
   it('embeds allowlisted https thumbnails only', () => {
@@ -313,19 +314,19 @@ describe('sources in the dashboard', () => {
       'musinsa',
     )
     expect(html).toContain('<th>출처</th>')
-    expect(html).toContain('<td data-label="출처">선물하기</td>')
+    expect(html).toContain('<td data-label="출처">카카오톡</td>')
     expect(html).toContain('<td data-label="출처">무신사</td>')
     expect(html).toContain(
       'href="/campaigns?status=APPLIED&amp;source=musinsa" class="on"'.replace('&amp;', '&'),
     )
     expect(html).toContain('href="/campaigns?status=APPLIED">모든 출처')
-    expect(html).toContain('href="/campaigns?status=APPLIED&source=kakao-gift">선물하기')
+    expect(html).toContain('href="/campaigns?status=APPLIED&source=kakao-gift">카카오톡')
     expect(html).toContain('href="/campaigns?status=SELECTED&source=musinsa"')
   })
   it('overview shows per-source counts linking to the filter', () => {
     const html = renderOverview(overview(), ctx)
     expect(html).toContain('href="/campaigns?source=kakao-gift"')
-    expect(html).toContain('<b>4</b><span>선물하기 진행 중 (전체 4)')
+    expect(html).toContain('<b>4</b><span>카카오톡 진행 중 (전체 4)')
     expect(html).toContain('<b>1</b><span>무신사 진행 중 (전체 1)')
   })
   it('detail shows category, price and dates for Musinsa', () => {

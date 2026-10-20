@@ -30,9 +30,9 @@ export const ACTIVE_CAMPAIGN_STATUSES = [
  */
 export const CAMPAIGN_SOURCES = {
   'kakao-gift': {
-    label: '선물하기',
+    label: '카카오톡',
     applyOn: 'mobile',
-    reviewPlace: '선물하기 상품 리뷰',
+    reviewPlace: '카카오톡 선물하기 상품 리뷰',
     estimatedDeadline: true,
   },
   musinsa: {
@@ -154,7 +154,7 @@ export type Campaign = {
   apply_deadline: Date | null
   first_seen_at: Date
   last_seen_at: Date
-  detail: GiftTrialItem | MusinsaDetail | null
+  detail: (GiftTrialItem & { price?: GiftPrice | null }) | MusinsaDetail | null
   score: number | null
   reason: string | null
   /** When the ranker picked it (migration 015); the daily pick quota counts this. */
@@ -195,6 +195,35 @@ export const giftTrialItemSchema = z
   })
   .passthrough()
 export type GiftTrialItem = z.infer<typeof giftTrialItemSchema>
+
+/** Gift product price in won, stored by the collector in `campaigns.detail.price`. */
+export type GiftPrice = { basic: number | null; selling: number | null }
+
+export type CampaignPriceInfo = {
+  /** List price (정가) in won; null when unknown. */
+  price: number | null
+  /** Lower selling/sale price in won, only when it is below the list price. */
+  salePrice: number | null
+}
+
+const wonOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
+
+/** Price facts of any source: Musinsa representative product, Kakao gift `detail.price`. */
+export function campaignPriceInfo(c: { source?: string; detail?: unknown }): CampaignPriceInfo {
+  const m = musinsaFacts({ source: c.source ?? '', detail: c.detail as Campaign['detail'] })
+  if (m) return { price: m.price, salePrice: m.salePrice }
+  const raw = (c.detail as { price?: { basic?: unknown; selling?: unknown } | null } | null)?.price
+  const selling = wonOrNull(raw?.selling)
+  const price = wonOrNull(raw?.basic) ?? selling
+  return {
+    price,
+    salePrice: selling !== null && price !== null && selling < price ? selling : null,
+  }
+}
+
+/** The normal price (정가) in won, or null when unknown. */
+export const campaignPrice = (c: { source?: string; detail?: unknown }): number | null =>
+  campaignPriceInfo(c).price
 
 /** Applicants per slot, or null when either count is unknown. */
 export function competition(c: Pick<Campaign, 'application_count' | 'recruit_count'>) {

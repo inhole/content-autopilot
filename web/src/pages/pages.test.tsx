@@ -30,7 +30,7 @@ describe('OverviewView', () => {
     expect(screen.getByText('발행 예정', { selector: '[data-slot=card-title]' })).toBeInTheDocument()
     expect(screen.getByText(/Vite 7 나왔음/)).toBeInTheDocument()
     expect(screen.getByText(/그때 확인한 체험단 475건/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '선물하기 진행 중 8건, 전체 317건' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '카카오톡 진행 중 8건, 전체 317건' })).toHaveAttribute(
       'href',
       '/campaigns?source=kakao-gift',
     )
@@ -69,6 +69,12 @@ describe('CampaignTable', () => {
       'href',
       '/campaigns/101',
     )
+  })
+  it('shows the list price column, and a dash when the price is unknown', () => {
+    render(wrap(<CampaignTable rows={campaignRowsFixture} now={now} />))
+    expect(screen.getByRole('columnheader', { name: /정가/ })).toBeInTheDocument()
+    expect(screen.getAllByText('49,000원').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('정가 49,000원').length).toBeGreaterThan(0)
   })
   it('emphasises deadlines of 2 days or less', () => {
     render(wrap(<CampaignTable rows={campaignRowsFixture} now={now} />))
@@ -128,7 +134,7 @@ describe('CampaignDetailView', () => {
     const data = campaignDetailFixture(103)
     if (!data) throw new Error('fixture')
     const { container } = render(wrap(<CampaignDetailView data={data} />))
-    const link = screen.getByRole('link', { name: '선물하기에서 열기' })
+    const link = screen.getByRole('link', { name: '카카오톡에서 열기' })
     expect(link).toHaveAttribute('rel', 'noreferrer noopener')
     expect(container.querySelector('img')).toHaveAttribute(
       'src',

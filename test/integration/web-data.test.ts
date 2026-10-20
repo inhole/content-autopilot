@@ -144,6 +144,20 @@ describe('loadCampaignList', () => {
     expect(row).toMatchObject({ brand: 'B', recruit_count: 10, application_count: 250 })
     expect(Number(row?.score)).toBe(77)
   })
+  it('adds the list price for gift (detail.price) and Musinsa (representative product)', async () => {
+    const gift = await seedCampaign({ detail: { price: { basic: 49000, selling: 39200 } } })
+    const musinsa = await seedCampaign({
+      source: 'musinsa',
+      detail: { products: [{ isRepresentative: true, prices: { normalPrice: { value: 59000 } } }] },
+    })
+    const unknown = await seedCampaign({ detail: null })
+    const rows = await loadCampaignList('all')
+    const price = (id: number) => rows.find((r) => r.id === id)?.price
+    expect(price(gift)).toBe(49000)
+    expect(price(musinsa)).toBe(59000)
+    expect(price(unknown)).toBeNull()
+    expect(rows.every((r) => !('gift_price' in r) && !('products' in r))).toBe(true)
+  })
 })
 
 describe('loadCampaignDetail', () => {

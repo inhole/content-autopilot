@@ -5,6 +5,7 @@ import {
   type Campaign,
   type CampaignSource,
   type CampaignStatus,
+  campaignPrice,
   isCampaignSource,
 } from '../campaigns/types.ts'
 import { query } from '../db/pool.ts'
@@ -121,7 +122,10 @@ export type CampaignListRow = Pick<
   | 'review_deadline'
   | 'score'
   | 'updated_at'
->
+> & {
+  /** List price (정가) in won; null when unknown (see campaignPrice). */
+  price: number | null
+}
 
 /** The deadline of the current stage; an apply deadline is only an estimate. */
 export type NextDeadline = { at: Date; kind: 'apply' | 'review' }
@@ -162,13 +166,20 @@ export async function loadCampaignList(
     conds.push(`source = $${values.length}`)
   }
   const where = conds.length ? `where ${conds.join(' and ')}` : ''
-  const rows = await query<CampaignListRow>(
+  const raw = await query<
+    Omit<CampaignListRow, 'price'> & { gift_price: unknown; products: unknown }
+  >(
     `select id, source, title, brand, status, recruit_count, application_count, apply_deadline,
-            review_deadline, score, updated_at
+            review_deadline, score, updated_at,
+            detail->'price' as gift_price, detail->'products' as products
        from campaigns ${where}
       order by updated_at desc limit 300`,
     values,
   )
+  const rows: CampaignListRow[] = raw.map(({ gift_price, products, ...r }) => ({
+    ...r,
+    price: campaignPrice({ source: r.source, detail: { price: gift_price, products } }),
+  }))
   // Soonest deadline first; rows without one go last, newest update first among them (stable sort).
   return rows.sort((a, b) => {
     const da = nextDeadline(a)?.at.getTime() ?? Number.POSITIVE_INFINITY

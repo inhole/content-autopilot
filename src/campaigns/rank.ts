@@ -5,7 +5,13 @@ import { localDate, zonedToUtc } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { type CampaignProfile, loadCampaignProfile } from './profile.ts'
 import { type RankCandidate, type RankHistory, rankSystem, rankUser } from './prompts.ts'
-import { type Campaign, competition, musinsaFacts } from './types.ts'
+import {
+  type Campaign,
+  campaignPrice,
+  campaignPriceInfo,
+  competition,
+  musinsaFacts,
+} from './types.ts'
 
 /** The first collection holds ~475 rows; one prompt per 60 keeps each call small and reliable. */
 export const RANK_BATCH_SIZE = 60
@@ -24,7 +30,20 @@ const rankSchema = z.object({
 type RuleInput = Pick<
   Campaign,
   'title' | 'brand' | 'application_count' | 'recruit_count' | 'apply_deadline' | 'remaining_days'
->
+> &
+  Partial<Pick<Campaign, 'source' | 'detail'>>
+
+/**
+ * A gift campaign whose price fetch has not been tried yet (fillGiftPrices reads at most a capped
+ * number per run). Ranking it now would apply neither the price rule nor the price preference, and
+ * ranking is final, so it waits COLLECTED for a later run. A failed fetch (`priceTriedAt`) or a
+ * row without a product id is ranked with an unknown price.
+ */
+export function awaitingPrice(c: Pick<Campaign, 'source' | 'product_id' | 'detail'>): boolean {
+  if (c.source !== 'kakao-gift' || c.product_id == null) return false
+  const detail = (c.detail ?? {}) as Record<string, unknown>
+  return !('price' in detail) && !('priceTriedAt' in detail)
+}
 
 /** Why code alone rules a campaign out (before the LLM sees it), or null to let it through. */
 export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date): string | null {
@@ -37,6 +56,11 @@ export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date
     ? profile.excludeBrands.find((b) => b && brand.includes(b.toLowerCase()))
     : undefined
   if (badBrand) return `제외 브랜드: ${c.brand}`
+
+  const price = campaignPrice(c)
+  if (profile.minPriceWon !== undefined && price !== null && price < profile.minPriceWon) {
+    return `가격 낮음: ${price.toLocaleString('en-US')}원`
+  }
 
   const ratio = competition(c)
   if (profile.maxCompetition !== undefined && ratio !== null && ratio > profile.maxCompetition) {
@@ -101,6 +125,7 @@ async function countShortlistedToday(now: Date): Promise<Map<string, number>> {
 /** The facts of one campaign the rank prompt shows; Musinsa adds category, price and goods count. */
 export function toRankCandidate(c: Campaign): RankCandidate {
   const m = musinsaFacts(c)
+  const p = campaignPriceInfo(c)
   return {
     id: c.id,
     source: c.source,
@@ -109,14 +134,9 @@ export function toRankCandidate(c: Campaign): RankCandidate {
     application_count: c.application_count,
     recruit_count: c.recruit_count,
     remaining_days: c.remaining_days,
-    ...(m
-      ? {
-          category: m.category,
-          price: m.price,
-          sale_price: m.salePrice,
-          goods_count: m.goodsCount,
-        }
-      : {}),
+    price: p.price,
+    sale_price: p.salePrice,
+    ...(m ? { category: m.category, goods_count: m.goodsCount } : {}),
   }
 }
 
@@ -138,7 +158,8 @@ async function loadHistory(): Promise<RankHistory> {
 /**
  * Filters COLLECTED campaigns by rule, scores the rest with the LLM (in batches) and shortlists the
  * best ones up to today's remaining quota. Returns shortlisted ids in score order. Candidates the
- * model leaves out, or all of them when the quota is used up, stay COLLECTED for the next run.
+ * model leaves out, or all of them when the quota is used up, stay COLLECTED for the next run, and
+ * so do gift campaigns still awaiting their price (`awaitingPrice`).
  */
 export async function rankCollected(now = new Date()): Promise<number[]> {
   const profile = await loadCampaignProfile()
@@ -151,7 +172,7 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   for (const c of rows) {
     const skip = ruleSkipReason(c, profile, now)
     if (skip === null) {
-      candidates.push(c)
+      if (!awaitingPrice(c)) candidates.push(c)
       continue
     }
     await query(

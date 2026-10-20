@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { estimateApplyDeadline, fetchGiftTrialList, giftTrialUrl } from '../src/campaigns/gift.ts'
+import {
+  estimateApplyDeadline,
+  fetchGiftProductPrice,
+  fetchGiftTrialList,
+  giftTrialUrl,
+} from '../src/campaigns/gift.ts'
+import { campaignPrice, campaignPriceInfo } from '../src/campaigns/types.ts'
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`./fixtures/gift/${name}`, import.meta.url), 'utf8'))
@@ -214,5 +220,65 @@ describe('estimateApplyDeadline', () => {
     )
     expect(estimateApplyDeadline(null, new Date(), tz)).toBeNull()
     expect(estimateApplyDeadline(undefined, new Date(), tz)).toBeNull()
+  })
+})
+
+describe('fetchGiftProductPrice', () => {
+  const body = { price: { basicPrice: 49000, sellingPrice: 39200, discountRate: 20 }, name: 'x' }
+  it('reads basic and selling price from the public product API', async () => {
+    const impl = vi.fn(async (_url: string) => json(body))
+    const price = await fetchGiftProductPrice(14166987, { fetch: asFetch(impl), retryDelayMs: 0 })
+    expect(price).toEqual({ basic: 49000, selling: 39200 })
+    expect(String(impl.mock.calls[0]?.[0])).toBe(
+      'https://gift.kakao.com/a/product-detail/v3/products/14166987',
+    )
+  })
+  it('keeps a missing side as null', async () => {
+    const impl = vi.fn(async () => json({ price: { basicPrice: 14900 } }))
+    expect(await fetchGiftProductPrice(1, { fetch: asFetch(impl), retryDelayMs: 0 })).toEqual({
+      basic: 14900,
+      selling: null,
+    })
+  })
+  it('fails on 404, on a body without prices and on a changed shape', async () => {
+    const f = (r: () => Response) => asFetch(vi.fn(async () => r()))
+    await expect(
+      fetchGiftProductPrice(1, { fetch: f(() => json({}, 404)), retryDelayMs: 0 }),
+    ).rejects.toThrow()
+    await expect(
+      fetchGiftProductPrice(1, { fetch: f(() => json({ price: {} })), retryDelayMs: 0 }),
+    ).rejects.toThrow('no price')
+    await expect(
+      fetchGiftProductPrice(1, { fetch: f(() => json({ other: 1 })), retryDelayMs: 0 }),
+    ).rejects.toThrow()
+  })
+  it('retries a 500 once', async () => {
+    const impl = vi.fn().mockResolvedValueOnce(json({}, 500)).mockResolvedValueOnce(json(body))
+    expect(await fetchGiftProductPrice(1, { fetch: asFetch(impl), retryDelayMs: 0 })).toEqual({
+      basic: 49000,
+      selling: 39200,
+    })
+  })
+})
+
+describe('campaignPrice', () => {
+  it('reads gift detail.price and the Musinsa representative product', () => {
+    const gift = (price: unknown) => ({ source: 'kakao-gift', detail: { price } })
+    expect(campaignPrice(gift({ basic: 49000, selling: 1 }))).toBe(49000)
+    expect(campaignPriceInfo(gift({ basic: 49000, selling: 39200 }))).toEqual({
+      price: 49000,
+      salePrice: 39200,
+    })
+    expect(campaignPrice(gift({ basic: null, selling: 9900 }))).toBe(9900)
+    expect(campaignPrice({ source: 'kakao-gift', detail: null })).toBeNull()
+    expect(campaignPrice(gift('x'))).toBeNull()
+    expect(
+      campaignPrice({
+        source: 'musinsa',
+        detail: {
+          products: [{ isRepresentative: true, prices: { normalPrice: { value: 59000 } } }],
+        },
+      }),
+    ).toBe(59000)
   })
 })

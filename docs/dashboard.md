@@ -10,6 +10,7 @@
 |---|---|
 | `DASHBOARD_PASSWORD` | 설정하면 대시보드가 켜진다. 비어 있으면 시작하지 않고 로그만 남긴다. |
 | `PORT` | 수신 포트. Railway가 자동으로 주입하고, 없으면 8080이다. |
+| `PUBLIC_BASE_URL` | 선택. 대시보드의 공개 https 주소(경로 없이). 있으면 카카오톡 카드가 `/go/gift/<ID>`로 카카오톡 앱을 연다. |
 
 로그인은 HTTP Basic 인증이다. 사용자 이름은 아무 값이나 되고, 비밀번호가 `DASHBOARD_PASSWORD`와 같아야 한다. 긴 무작위 문자열을 쓴다 (예: `openssl rand -base64 24`).
 
@@ -35,7 +36,7 @@ HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 �
 - 빌드 폴더가 없으면 예전 서버 렌더링 페이지(아래 「페이지」)를 같은 경로에서 그대로 서빙한다. 그래서 빌드 없이도 워커가 동작한다. 빌드 여부는 요청마다 확인한다.
 - 빌드 폴더 위치는 기본 `<repo>/web/dist`이고, 환경 변수 `WEB_DIST_DIR`로 바꿀 수 있다.
 - Railway는 배포 때 빌드 스크립트(`npm run build`)를 실행해야 한다. Railpack이 `build` 스크립트를 자동으로 돌리는지는 배포해서 확인해야 한다 (미검증). 돌리지 않으면 Settings에서 Build Command를 `npm run build`로 지정한다.
-- 인증은 기존 Basic 인증 그대로다. `/healthz`만 인증 없이 열려 있고, `/api/*`와 정적 파일도 모두 인증이 필요하다. 경로에 `..`나 `%2e%2e`, 역슬래시, NUL이 있으면 400으로 막고 `web/dist` 밖의 파일은 읽지 않는다.
+- 인증은 기존 Basic 인증 그대로다. `/healthz`와 `/go/gift/<ID>`(아래)만 인증 없이 열려 있고, `/api/*`와 정적 파일도 모두 인증이 필요하다. 경로에 `..`나 `%2e%2e`, 역슬래시, NUL이 있으면 400으로 막고 `web/dist` 밖의 파일은 읽지 않는다.
 - CSP: React 앱 응답은 `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: <이미지 호스트>; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. 서버 렌더링 페이지는 기존 CSP(인라인 스타일·스크립트 허용)를 쓴다. API 응답은 `default-src 'none'; frame-ancestors 'none'`이다.
 
 ### 개발
@@ -52,7 +53,7 @@ HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 �
 | 경로 | 설명 |
 |---|---|
 | `/api/overview` | 현황 (Threads 검수 대기·발행 예정·24시간 발행·실패, 체험단 상태별·출처별 개수, 마지막 수집) |
-| `/api/campaigns?status=active\|all\|<STATUS>&source=kakao-gift\|musinsa` | 체험단 목록. 알 수 없는 값은 `active`와 전체 출처로 본다. 행마다 `next_deadline`(현재 단계의 마감, 선물하기 신청 마감은 `estimated: true`)과 `competition`(신청자/모집 인원, 모르면 null)을 더한다. |
+| `/api/campaigns?status=active\|all\|<STATUS>&source=kakao-gift\|musinsa` | 체험단 목록. 알 수 없는 값은 `active`와 전체 출처로 본다. 행마다 `price`(정가 원 단위, 모르면 null; 카카오톡은 수집 때 읽은 `detail.price.basic`, 무신사는 대표 상품 정가)와 `next_deadline`(현재 단계의 마감, 카카오톡 체험단 신청 마감은 `estimated: true`)과 `competition`(신청자/모집 인원, 모르면 null)을 더한다. |
 | `/api/campaigns/<id>` | 체험단 상세와 보낸 리마인더. 숫자가 아니거나 없는 id는 404 |
 | `/api/posts?limit=50` | 최근 Threads 글과 최신 반응 수치, `origin`(news / revived / digest). `limit`은 1~200 |
 | `/api/insights?days=30` | 최근 `days`일(7~90) 안에 발행한 글의 반응. `daily`는 글마다 가장 최근 스냅샷을 KST 발행일별로 합산(오래된 날부터, 글이 있는 날만), `top`은 조회수 상위 10개 |
@@ -60,10 +61,15 @@ HTTPS는 Railway가 처리한다. Basic 인증은 비밀번호가 평문으로 �
 ## 페이지 (서버 렌더링, 빌드가 없을 때)
 
 - `/` 현황: Threads 검수 대기, 발행 예정, 최근 24시간 발행, 실패와 체험단 단계별 개수(검수 대기, 신청함·결과 대기, 선정·리뷰 전, 리뷰 초안, 최근 30일 리뷰 완료)를 보여준다. 체험단 마지막 수집 시각과 그때 확인한 체험단 수(가장 최근 `last_seen_at`에서 10분 이내)도 함께 나온다. 「출처별」 카드는 출처마다 진행 중 개수(검수 대기, 신청함, 선정, 초안 검수의 합)와 전체 개수를 보여주고, 누르면 그 출처의 목록(`/campaigns?source=…`)으로 간다.
-- `/campaigns?status=active|all|<STATUS>&source=kakao-gift|musinsa` 체험단 목록. 상태 칩 위에 출처 칩(전체 / 선물하기 / 무신사)이 있어 출처로 거를 수 있다. 알 수 없는 `source` 값은 전체로 본다. 상태 필터와 출처 필터는 함께 걸린다. 제목(상세 링크), 출처, 브랜드, 상태, 경쟁률(`1,234:1`, 모르면 `-`), 마감 D-n, 점수를 보여준다. 신청 전·결과 대기 단계는 신청 마감, 선정·리뷰 초안 단계는 리뷰 마감을 쓴다. 선물하기 신청 마감은 남은 일수로 추정한 값이라 `추정`이라고 표시하고, 무신사는 정확한 값이라 표시하지 않는다. 마감이 가까운 순으로 정렬하고 마감이 없는 행은 뒤로 간다. 최대 300건.
-- `/campaigns/<id>` 체험단 상세: 썸네일, 제목, 출처, 브랜드, 상품 ID, 모집·신청 인원과 경쟁률, 무신사는 품목, 정가(할인가가 더 낮으면 `→ 할인가`), 상품 수, 발표일, 리뷰 기간, 남은 일수, 신청 마감(선물하기는 추정), 처음·마지막으로 본 시각, 점수와 이유, 제외·패스 사유, 신청·선정·결과·리뷰 완료 시각, 리뷰 마감, 보낸 리마인더, 메모, 리뷰 초안, 출처 링크(`선물하기에서 열기` / `무신사에서 열기`).
+- `/campaigns?status=active|all|<STATUS>&source=kakao-gift|musinsa` 체험단 목록. 상태 칩 위에 출처 칩(전체 / 카카오톡 / 무신사)이 있어 출처로 거를 수 있다. 알 수 없는 `source` 값은 전체로 본다. 상태 필터와 출처 필터는 함께 걸린다. 제목(상세 링크), 출처, 브랜드, 상태, 경쟁률(`1,234:1`, 모르면 `-`), 마감 D-n, 점수를 보여준다. 신청 전·결과 대기 단계는 신청 마감, 선정·리뷰 초안 단계는 리뷰 마감을 쓴다. 카카오톡 체험단 신청 마감은 남은 일수로 추정한 값이라 `추정`이라고 표시하고, 무신사는 정확한 값이라 표시하지 않는다. 마감이 가까운 순으로 정렬하고 마감이 없는 행은 뒤로 간다. 최대 300건.
+- `/campaigns/<id>` 체험단 상세: 썸네일, 제목, 출처, 브랜드, 상품 ID, 모집·신청 인원과 경쟁률, 무신사는 품목, 정가(카카오톡도 수집한 정가를 보여준다. 할인가가 더 낮으면 `→ 할인가`), 상품 수, 발표일, 리뷰 기간, 남은 일수, 신청 마감(카카오톡은 추정), 처음·마지막으로 본 시각, 점수와 이유, 제외·패스 사유, 신청·선정·결과·리뷰 완료 시각, 리뷰 마감, 보낸 리마인더, 메모, 리뷰 초안, 출처 링크(`카카오톡에서 열기` / `무신사에서 열기`).
 - `/posts` 최근 Threads 글 50개와 최신 반응 수치.
 - `/healthz` 인증 없이 `ok`를 돌려준다. 헬스체크용이다.
+- `/go/gift/<캠페인 ID>` (GET/HEAD) **인증 없이** 열리는 중계 페이지다. 선물하기 체험단은 카카오톡 앱 안의 브라우저에서 로그인된 상태로만 볼 수 있는데, 폰의 일반 브라우저나 Telegram 앱 브라우저는 카카오 로그인이 없고 Telegram 버튼은 http(s) 주소만 받는다. 그래서 Telegram 카드의 `📱 카카오톡에서 열기` 버튼이 이 https 페이지를 열고, 페이지가 `kakaotalk://inappbrowser?url=<인코딩된 https 주소>`로 넘긴다(자동 이동 + `카카오톡에서 열기` 큰 링크 + `웹 브라우저로 열기` 보조 링크, JavaScript 없음). 폰의 브라우저에는 대시보드 비밀번호가 없으므로 인증을 걸 수 없다.
+  - 받는 값은 소문자 16진수 24자(선물하기 캠페인 ID 형식)뿐이다. 그 밖의 값(`../`, 대문자, 길이가 다른 값, 하위 경로)은 404다. 쿼리 문자열은 무시한다.
+  - 이동 대상은 서버가 검증한 ID로 만든 `https://gift.kakao.com/giftbox/trial-campaign/<ID>` 하나뿐이다. 요청에 담긴 주소로 보내는 일(open redirect)은 없다.
+  - 응답에는 `Content-Security-Policy`(스크립트 불가), `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, `Cache-Control: no-store`가 붙는다. 무신사용 중계는 없다(무신사 카드는 `link.musinsa.com`을 직접 연다).
+  - 이 버튼은 `PUBLIC_BASE_URL`(https 주소, 경로 없이)과 `DASHBOARD_PASSWORD`가 모두 있을 때만 쓰인다. 대시보드가 꺼져 있으면(비밀번호 없음) 중계 페이지가 없으므로 버튼은 같은 이름(`📱 카카오톡에서 열기`)의 직접 gift.kakao.com 링크로 돌아간다.
 
 목록 페이지는 60초마다 자동으로 새로고침된다.
 

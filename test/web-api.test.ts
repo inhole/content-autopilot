@@ -30,6 +30,7 @@ const row = (over: Partial<CampaignListRow>): CampaignListRow => ({
   review_deadline: null,
   score: 80,
   updated_at: new Date('2026-10-17T00:00:00Z'),
+  price: 49000,
   ...over,
 })
 
@@ -53,7 +54,13 @@ const loaders: DashboardLoaders = {
     calls.campaigns.push([filter, source])
     return [
       row({}),
-      row({ id: 2, source: 'musinsa', recruit_count: null, application_count: null }),
+      row({
+        id: 2,
+        source: 'musinsa',
+        recruit_count: null,
+        application_count: null,
+        price: null,
+      }),
       row({ id: 3, status: 'SELECTED', apply_deadline: null, review_deadline: null }),
     ]
   },
@@ -204,6 +211,8 @@ describe('api', () => {
       estimated: true,
     })
     expect(gift.competition).toBe(25)
+    expect(gift.price).toBe(49000)
+    expect(musinsa.price).toBeNull()
     expect(gift.updated_at).toBe('2026-10-17T00:00:00.000Z')
     expect(musinsa.next_deadline.estimated).toBe(false)
     expect(musinsa.competition).toBeNull()

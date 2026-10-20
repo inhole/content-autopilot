@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
 import { makeGetJson, sleep } from './http.ts'
-import { type GiftTrialItem, giftTrialItemSchema } from './types.ts'
+import { type GiftPrice, type GiftTrialItem, giftTrialItemSchema } from './types.ts'
 
 const BASE = 'https://gift.kakao.com/a/content-builder'
 const USER_AGENT =
@@ -11,6 +11,42 @@ const RETRY_DELAY_MS = 2_000
 const PAGE_DELAY_MS = 400
 // Hard stop against a pagination loop that never reports its end (475 items = 19 pages today).
 const MAX_PAGES = 40
+
+/** Gift campaign ids are 24 lowercase hex chars (see test/fixtures/gift). */
+export const GIFT_CAMPAIGN_ID_RE = /^[0-9a-f]{24}$/
+
+const PRODUCT_BASE = 'https://gift.kakao.com/a/product-detail/v3/products'
+
+const productPriceSchema = z
+  .object({
+    price: z
+      .object({
+        basicPrice: z.number().nonnegative().nullish(),
+        sellingPrice: z.number().nonnegative().nullish(),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+
+/**
+ * Public product API of 선물하기 (verified 2026-10-19): `price.basicPrice` is the list price,
+ * `price.sellingPrice` the selling price. Throws when neither is a number.
+ */
+export async function fetchGiftProductPrice(
+  productId: number | string,
+  opts: { fetch?: typeof fetch; retryDelayMs?: number } = {},
+): Promise<GiftPrice> {
+  const getJson = makeGetJson({
+    fetch: opts.fetch ?? fetch,
+    retryDelayMs: opts.retryDelayMs ?? RETRY_DELAY_MS,
+    userAgent: USER_AGENT,
+  })
+  const { price } = productPriceSchema.parse(await getJson(`${PRODUCT_BASE}/${productId}`))
+  const basic = price.basicPrice ?? null
+  const selling = price.sellingPrice ?? null
+  if (basic === null && selling === null) throw new Error(`gift product ${productId}: no price`)
+  return { basic, selling }
+}
 
 /** The in-app detail route of a campaign; the owner opens it from the Telegram card. */
 export function giftTrialUrl(campaignId: string): string {

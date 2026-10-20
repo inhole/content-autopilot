@@ -15,7 +15,7 @@ describe('formatDraftControl', () => {
   it('shows the count and range', () => {
     const text = formatDraftControl({ id: 7, draft_text: '가'.repeat(150) }, { review })
     expect(text).toBe(
-      '📝 #7 리뷰 초안 · 150자 (100~500자)\n위 메시지를 길게 눌러 복사해 선물하기 상품 리뷰에 붙여 넣으세요.',
+      '📝 #7 리뷰 초안 · 150자 (100~500자)\n위 메시지를 길게 눌러 복사해 카카오톡 선물하기 상품 리뷰에 붙여 넣으세요.',
     )
   })
   it('warns when outside the range', () => {
@@ -87,7 +87,7 @@ describe('formatDraftControl per source', () => {
   it('points at the review place of the source', () => {
     const review = { minChars: 100, maxChars: 500, tone: 't', points: [] }
     expect(formatDraftControl({ id: 7, draft_text: '가'.repeat(150) }, { review })).toContain(
-      '선물하기 상품 리뷰',
+      '카카오톡 선물하기 상품 리뷰',
     )
     expect(
       formatDraftControl({ id: 7, draft_text: '가'.repeat(150), source: 'musinsa' }, { review }),

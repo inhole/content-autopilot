@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
+import { GIFT_CAMPAIGN_ID_RE, giftTrialUrl } from '../campaigns/gift.ts'
 import { config } from '../config.ts'
 import { type ApiLoaders, handleApi } from './api.ts'
 import {
@@ -55,6 +56,38 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'Cache-Control': 'no-store',
+}
+
+const HANDOFF_HEADERS = {
+  'Content-Security-Policy':
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'X-Robots-Tag': 'noindex',
+}
+
+const escAttr = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+
+/** Tiny static page that hands a gift campaign over to KakaoTalk's in-app browser. */
+export function renderGiftHandoff(campaignId: string): string {
+  // Built only from a validated id: the target is always the fixed gift.kakao.com route.
+  const web = giftTrialUrl(campaignId)
+  const app = `kakaotalk://inappbrowser?url=${encodeURIComponent(web)}`
+  return `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="refresh" content="0;url=${escAttr(app)}">
+<title>카카오톡에서 열기</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;padding:24px 16px;text-align:center;background:#fff;color:#222}
+a.primary{display:block;max-width:360px;margin:32px auto 16px;padding:18px;border-radius:12px;background:#fee500;color:#191919;font-size:20px;font-weight:700;text-decoration:none}
+a.secondary{display:inline-block;padding:10px;color:#555}
+p{color:#666;font-size:14px}
+</style></head><body>
+<a class="primary" href="${escAttr(app)}">카카오톡에서 열기</a>
+<a class="secondary" href="${escAttr(web)}">웹 브라우저로 열기</a>
+<p>카카오톡이 설치된 휴대폰에서만 열립니다.</p>
+</body></html>`
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest()
@@ -143,6 +176,16 @@ export function createRequestHandler(deps: DashboardDeps) {
 
     if (path === '/healthz') {
       send(req, res, 200, 'ok', {}, 'text/plain; charset=utf-8')
+      return
+    }
+    // Public hand-off to KakaoTalk (the phone's browser has no dashboard password). Strict id only.
+    if (path.startsWith('/go/')) {
+      const m = /^\/go\/gift\/([^/]+)$/.exec(path)
+      if (m?.[1] && GIFT_CAMPAIGN_ID_RE.test(m[1])) {
+        send(req, res, 200, renderGiftHandoff(m[1]), HANDOFF_HEADERS)
+      } else {
+        send(req, res, 404, 'Not Found', HANDOFF_HEADERS, 'text/plain; charset=utf-8')
+      }
       return
     }
     if (!isAuthorized(req.headers.authorization, deps.password)) {

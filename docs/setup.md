@@ -122,11 +122,11 @@
 |---|---|---|
 | `GIFT_COLLECT_CRON` | `0 9,15,21 * * *` | 공개 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `GIFT_TRIAL_PAGE_ID` | `33325` | 선물하기 체험단 탭의 페이지 번호. `gift.kakao.com/page/<번호>`다. 탭이 바뀌면 이 값을 고친다. |
-| `CAMPAIGN_DAILY_MAX` | `5` | 출처(선물하기, 무신사)마다 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
+| `CAMPAIGN_DAILY_MAX` | `5` | 출처(카카오톡, 무신사)마다 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
 | `MUSINSA_COLLECT_CRON` | `0 10,16,22 * * *` | 무신사 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 선별 규칙과 리뷰 문체, 광고 표기를 담은 프로필 파일 |
 
-선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
+선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 카카오톡 카드 버튼이 카카오톡 앱으로 바로 열리게 하려면 `PUBLIC_BASE_URL`(대시보드 공개 https 주소, 경로 없이)도 넣는다([dashboard.md](dashboard.md)). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
 
 ### 5-2. 프로필 `config/campaign-profile.json`
 
@@ -139,6 +139,7 @@
   "excludeKeywords": ["다이어트 보조제", "주류", "성인"],
   "excludeBrands": [],
   "maxCompetition": 200,
+  "minPriceWon": 30000,
   "review": {
     "tone": "담백한 1인칭, 과장 없이 실사용 위주",
     "minChars": 100,
@@ -155,6 +156,7 @@
 | `interests` | 관심 품목. 선별 LLM이 참고한다. |
 | `excludeKeywords` | 제목·브랜드에 있으면 코드가 LLM 전에 바로 건너뛴다. |
 | `excludeBrands` | 브랜드 이름에 포함되면 건너뛴다. 생략하면 빈 목록이다. |
+| `minPriceWon` | 정가(원)가 이보다 낮은 체험단은 건너뛴다(`가격 낮음: 14,900원`). 정가를 모르면 건너뛰지 않는다. 저장소 기본 파일은 `30000`이고, 생략하면 제한이 없다. 선물하기 정가는 수집 때 공개 상품 API에서 읽고, 무신사는 목록의 대표 상품 정가를 쓴다. |
 | `maxCompetition` | 모집 인원 한 명당 신청자 수가 이보다 많으면 건너뛴다. **생략하면 제한이 없다** (저장소 기본 파일에는 없다. 위 예시의 200은 예시 값이다). |
 | `review.tone` | 리뷰 말투 |
 | `review.minChars` / `maxChars` | 리뷰 글자 수 범위. 기본 100 / 500. `maxChars`는 광고 표기 줄을 포함한 전체 길이다. |
