@@ -64,7 +64,7 @@ describe('prompts', () => {
   })
 
   it('revive system keeps the voice rules and the no-new-facts rule', () => {
-    expect(REVIVE_SYSTEM).toContain('음슴체')
+    expect(REVIVE_SYSTEM).toContain('반말')
     expect(REVIVE_SYSTEM).toContain('새로운 사실')
     expect(REVIVE_SYSTEM).toContain('이번 주')
   })

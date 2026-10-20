@@ -110,7 +110,7 @@ describe('reviveDraft', () => {
 
     expect(await reviveDraft(id, now)).toBe(true)
     const system = chatJson.mock.calls[0]?.[0].system as string
-    expect(system).toContain('음슴체')
+    expect(system).toContain('반말')
     const r = await row(id)
     expect(r).toMatchObject({
       status: 'PENDING_REVIEW',
@@ -122,6 +122,7 @@ describe('reviveDraft', () => {
     expect(r?.revived_at).not.toBeNull()
     // generation.text equals text, so style learning does not see an owner edit.
     expect(r?.generation?.text).toBe(r?.text)
+    expect((r?.generation as { prompt_version?: number } | null)?.prompt_version).toBe(2)
     expect(r?.generation?.revived?.from_text).toBe('오늘 나왔음\n핵심은 이거임')
     expect(r?.generation?.revived?.changes).toEqual(['"오늘 나왔음" 삭제'])
     const parts = await getParts(id)

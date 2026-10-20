@@ -65,6 +65,7 @@ npm run cli -- threads:refresh       # 토큰 수동 갱신
 npm run cli -- insights              # 발행 글의 성과를 지금 수집하고 글별 최신 숫자 출력
 npm run cli -- report                # 주간 리포트 본문 출력 (/report와 같음)
 npm run cli -- replies               # 새 Threads 답글을 지금 확인하고 Telegram으로 알림
+npm run cli -- draft:preview <topicId...> [--chain]  # 지금 프롬프트로 초안을 만들어 본 글·답글과 글자 수를 출력 (읽기 전용: DB 쓰기·큐 없음. --chain은 THREAD_CHAIN_ENABLED와 관계없이 연결 글로)
 npm run cli -- revive                # 만료 초안을 판정하고 목록 출력 (Telegram으로 보내지 않음)
 npm run cli -- revive <postId>       # 그 만료 초안을 지금 재활용하고 새 본문 출력 (검수 메시지는 review로 따로 보낸다)
 npm run cli -- digest                # 주간 묶음 연결 글을 지금 만들고 출력 (검수 메시지는 review로 따로 보낸다)

@@ -32,7 +32,7 @@ describe('buildStylePrompt', () => {
       recentFirstLines: ['첫 줄 A'],
       recentLastLines: ['끝 1', '끝 2', '끝 3', '끝 4', '끝 5', '끝 6'],
     })
-    expect(out).toContain('비슷한 질문이나 문장으로 끝내지 마세요')
+    expect(out).toContain('비슷한 마무리는 피하세요')
     expect(out).toContain('- 끝 5')
     expect(out).not.toContain('- 끝 6')
     expect(out.indexOf('최근 마지막 줄')).toBeGreaterThan(out.indexOf('최근 첫 줄'))
