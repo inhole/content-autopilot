@@ -13,7 +13,7 @@ import {
   type PostActions,
 } from '../pipeline/post-actions.ts'
 import { type ApiLoaders, handleApi } from './api.ts'
-import type { AuthSessionResponse } from './api-types.ts'
+import type { AuthSessionResponse, OpsJobName, OpsRunResponse } from './api-types.ts'
 import {
   type ActiveSession,
   type AdminAction,
@@ -44,6 +44,7 @@ import {
   loadRecentPosts,
   loadRevivableList,
 } from './data.ts'
+import { loadOps, parseOpsJobName } from './ops.ts'
 import {
   matchPostActionPath,
   matchPostCollectionPath,
@@ -73,6 +74,8 @@ export type DashboardDeps = {
   actions: CampaignActions
   /** Threads operations (pipeline/post-actions.ts); tests pass fakes. */
   postActions: PostActions
+  /** Starts an operations job now; false when one is already queued/running or the queue dropped it. */
+  runOps: (name: OpsJobName) => Promise<boolean>
   /** Sends a text to the owner's Telegram chat; rejects when it cannot. */
   notify: (text: string) => Promise<void>
   now?: () => Date
@@ -88,6 +91,7 @@ const dbLoaders: DashboardLoaders = {
   insights: loadInsights,
   post: loadPostDetail,
   revivable: loadRevivableList,
+  ops: () => loadOps(),
 }
 
 const dbAuth: AdminAuth = {
@@ -378,6 +382,35 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
   }
 
+  /** POST /api/ops/<name>/run: queue a job by hand. */
+  async function handleOpsRun(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    name: OpsJobName,
+  ): Promise<void> {
+    const authorized = await authorizeWrite(req, res)
+    if (!authorized) return
+    const { session, ip } = authorized
+    const audit = { sessionId: session.id, action: `ops.${name}`, target: null, ip }
+    const body = await readJson(req, BODY_LIMIT).catch(async (err) => {
+      if (!(err instanceof BadBody)) throw err
+      return undefined
+    })
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      await auth.record({ ...audit, result: 'invalid' })
+      sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+      return
+    }
+    try {
+      const queued = await deps.runOps(name)
+      await auth.record({ ...audit, result: 'ok', detail: { queued } })
+      sendJson(req, res, queued ? 202 : 200, { ok: true, queued } satisfies OpsRunResponse)
+    } catch (err) {
+      await auth.record({ ...audit, result: 'error' }).catch(() => {})
+      throw err
+    }
+  }
+
   async function handleAuth(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -548,6 +581,25 @@ export function createRequestHandler(deps: DashboardDeps) {
       }
       return
     }
+    const opsRun = isApi ? /^\/api\/ops\/([^/]+)\/run$/.exec(path) : null
+    if (opsRun) {
+      const name = parseOpsJobName(opsRun[1] as string)
+      if (!name) {
+        sendJson(req, res, 404, { error: 'not found' })
+        return
+      }
+      if (req.method !== 'POST') {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
+        return
+      }
+      try {
+        await handleOpsRun(req, res, name)
+      } catch (err) {
+        console.error('dashboard ops run failed:', err)
+        sendJson(req, res, 500, { error: 'internal error' })
+      }
+      return
+    }
     const postRoute = isApi ? matchPostActionPath(path) : null
     const collectionRoute = isApi ? matchPostCollectionPath(path) : null
     if (postRoute || collectionRoute) {
@@ -676,6 +728,7 @@ async function notifyOwner(text: string): Promise<void> {
 export async function startDashboard(
   campaignDeps: CampaignActionDeps,
   postDeps: PostActionDeps,
+  runOps: DashboardDeps['runOps'],
 ): Promise<{ close(): Promise<void> } | null> {
   if (!dashboardEnabled()) {
     console.log('dashboard disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are needed to log in')
@@ -686,6 +739,7 @@ export async function startDashboard(
     auth: dbAuth,
     actions: createCampaignActions(campaignDeps),
     postActions: createPostActions(postDeps),
+    runOps,
     notify: notifyOwner,
   })
   const port = config.PORT ?? 8080

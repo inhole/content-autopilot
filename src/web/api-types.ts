@@ -262,3 +262,71 @@ export type AddTopicConflict = ApiError & { postId: number }
  * - POST /api/digest: build the weekly digest now (weekly-digest, like /digest)
  */
 export type QueuedResponse = { ok: true }
+
+/**
+ * Operations page (admin console stage 4, docs/dashboard.md): run a scheduled job now. Each name
+ * maps to one pg-boss queue: `threads-daily` → daily-pipeline (collect, rank, drafts),
+ * `gift-collect`, `musinsa-collect`, `campaign-maintenance` (expire cards, due reminders during
+ * 09-21 KST) and `collect-insights`.
+ */
+export type OpsJobName =
+  | 'threads-daily'
+  | 'gift-collect'
+  | 'musinsa-collect'
+  | 'campaign-maintenance'
+  | 'collect-insights'
+
+/** State of a pg-boss job as stored by pg-boss. */
+export type OpsJobState = 'created' | 'retry' | 'active' | 'completed' | 'cancelled' | 'failed'
+
+/** GET /api/ops: every job with its schedule and latest run, plus read-only settings. */
+export type OpsResponse = {
+  jobs: {
+    name: OpsJobName
+    /** pg-boss queue name. */
+    queue: string
+    /** Cron expression of the schedule (KST), null when it only runs on demand. */
+    cron: string | null
+    /** Latest job of the queue, scheduled or manual; null when it never ran. */
+    last: {
+      state: OpsJobState
+      created_at: string
+      started_at: string | null
+      completed_at: string | null
+      /** Short error text of a failed job (never a stack trace). */
+      error: string | null
+    } | null
+    /** A job is queued or running now (a new request would be dropped by the queue policy). */
+    busy: boolean
+  }[]
+  /** Settings that shape the pipelines (no secrets). */
+  settings: {
+    dailyPostCount: number
+    publishSlots: string[]
+    threadChainEnabled: boolean
+    threadsDryRun: boolean
+    campaignDailyMax: number
+    campaignRankMode: 'rule' | 'llm'
+    timeZone: string
+  }
+  /** config/campaign-profile.json as parsed (the owner's preferences; no address or phone). */
+  profile: {
+    about: string
+    interests: string[]
+    preferKeywords: string[]
+    excludeKeywords: string[]
+    excludeBrands: string[]
+    maxCompetition: number | null
+    minPriceWon: number | null
+    review: { tone: string; minChars: number; maxChars: number; points: string[] }
+    disclosure: string | null
+  } | null
+}
+
+/**
+ * POST /api/ops/<name>/run (body `{}`): queues the job now. Same session, same-origin and
+ * `X-CSRF-Token` rules as every write, audited as `ops.<name>`. 202 `{ ok: true, queued: true }`;
+ * 200 `{ ok: true, queued: false }` when one is already queued or running (nothing new is sent).
+ * 404 for an unknown name.
+ */
+export type OpsRunResponse = { ok: true; queued: boolean }

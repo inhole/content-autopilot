@@ -5,6 +5,8 @@ import type {
   CampaignActionName,
   CampaignActionRequests,
   CampaignDetailResponse,
+  OpsJobName,
+  OpsResponse,
   PostActionName,
   PostActionRequests,
   PostDetailResponse,
@@ -189,6 +191,37 @@ export function useDigest() {
 
 export const useInsights = (days: number) =>
   useQuery({ queryKey: ['insights', days], queryFn: () => api.insights(days), ...live })
+
+/** How often the operations page is re-read while a job is queued or running. */
+export const OPS_POLL_MS = 3_000
+/** Fast polling stops after this long, however busy the queue still looks. */
+export const OPS_POLL_MAX_MS = 5 * 60_000
+
+export const isOpsBusy = (data: OpsResponse | undefined) => !!data?.jobs.some((j) => j.busy)
+
+/** Jobs and settings; every 3 s while a job is busy (until `pollUntil`), else the usual refresh. */
+export const useOps = (pollUntil = 0) =>
+  useQuery({
+    queryKey: ['ops'],
+    queryFn: api.ops,
+    ...live,
+    refetchInterval: (query) =>
+      isOpsBusy(query.state.data) && Date.now() < pollUntil ? OPS_POLL_MS : REFRESH_MS,
+  })
+
+/** Runs one job now; refetches the jobs and whatever lists the job feeds. */
+export function useRunOps() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (name: OpsJobName) => api.runOps(name),
+    onSuccess: (_res, name) => {
+      const keys = ['ops', 'overview']
+      if (name === 'threads-daily') keys.push('posts')
+      else if (name !== 'collect-insights') keys.push('campaigns')
+      for (const key of keys) void client.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
 
 export const SESSION_KEY = ['session'] as const
 
