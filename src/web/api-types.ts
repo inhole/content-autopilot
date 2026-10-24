@@ -2,7 +2,7 @@
  * JSON contract of the dashboard API (`/api/*`, src/web/api.ts) shared with the React app in
  * `web/` (imported there with `import type`, so nothing here may have runtime code the app needs).
  * Dates travel as ISO 8601 strings. Data routes are GET-only and need a login session (the auth
- * routes at the end); without one they answer 401.
+ * routes and the campaign actions at the end); without one they answer 401.
  */
 import type {
   Campaign,
