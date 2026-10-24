@@ -26,11 +26,17 @@ const draftSchema = z.object({ text: z.string().min(1) })
 
 // ---------- pure helpers ----------
 
+/** Characters the disclosure line and its gap take out of review.maxChars. */
+export const disclosureReserve = (disclosure: string | undefined | null): number =>
+  disclosure ? chars(disclosure) + DISCLOSURE_GAP.length : 0
+/** The smallest body limit reviewLimits ever returns. */
+export const MIN_BODY_MAX = 10
+
 /** Body limits that leave room for the disclosure line within review.maxChars. */
 export function reviewLimits(profile: CampaignProfile): ReviewLimits {
   const { minChars, maxChars } = profile.review
-  const reserve = profile.disclosure ? chars(profile.disclosure) + DISCLOSURE_GAP.length : 0
-  const max = Math.max(10, maxChars - reserve)
+  const reserve = disclosureReserve(profile.disclosure)
+  const max = Math.max(MIN_BODY_MAX, maxChars - reserve)
   const min = Math.min(Math.max(1, minChars - reserve), max)
   return { min, max }
 }
