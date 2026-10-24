@@ -317,7 +317,11 @@ export type OpsResponse = {
     | (OpsProfileFields & {
         /** Where it was read from: `db` (saved from this page) or `file` (the bundled default). */
         source: 'db' | 'file'
-        /** Edit guard to send back with a save or reset; 0 while `source` is `file`. */
+        /**
+         * Edit guard to send back with a save or reset: the saved copy's revision, 0 when there is
+         * none. A saved copy that fails validation is reported as `file` with its own revision, so
+         * a save can still replace it.
+         */
         revision: number
       })
     | null
@@ -346,8 +350,8 @@ export type OpsProfileFields = {
  *   removed; an empty `disclosure` means none. Limits: `about` <= 500 chars, `tone` and
  *   `disclosure` <= 200, each list <= 50 items of <= 50 chars, `maxCompetition` > 0 or null,
  *   `minPriceWon` a positive integer or null, `minChars` >= 10, `maxChars` 50..4000,
- *   `minChars` < `maxChars`, and the disclosure line must leave room for `minChars` within
- *   `maxChars`.
+ *   `minChars` < `maxChars`, and the disclosure line (with its gap) must leave room for a body
+ *   of at least 10 chars within `maxChars` (`disclosureReserve` in review-draft.ts).
  * - POST /api/ops/profile/reset `{ revision }`: deletes the saved copy, so the file is in effect
  *   again.
  * 200 `OpsProfileResponse`; 409 `OpsProfileConflict` when the revision is not current (the app
