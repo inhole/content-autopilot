@@ -52,6 +52,7 @@ function campaign(over: Partial<Campaign> = {}): Campaign {
     memo: null,
     draft_text: null,
     regen_seq: 0,
+    draft_seq: 0,
     posted_at: null,
     created_at: new Date('2026-10-18T00:00:00Z'),
     updated_at: new Date('2026-10-18T00:00:00Z'),

@@ -24,6 +24,8 @@ export const REVIEW_HELP_LINES = [
   '- 초안 안내 메시지에 그 외 답장 → 피드백으로 보고 다시 작성',
 ]
 
+export const postedText = (id: number) => `🎉 #${id} 리뷰 완료로 기록했어요`
+
 const errText = (err: unknown) => (err as Error).message.slice(0, 180)
 
 // ---------- formatting ----------
@@ -177,7 +179,7 @@ export function registerReviewBot(bot: Bot, deps: ReviewBotDeps): void {
         }
         await ctx.editMessageReplyMarkup().catch(() => {})
         await ctx.answerCallbackQuery()
-        await ctx.reply(`🎉 #${id} 리뷰 완료로 기록했어요`)
+        await ctx.reply(postedText(id))
         return
       }
       await ctx.answerCallbackQuery({ text: '알 수 없는 버튼이에요' })

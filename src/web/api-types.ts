@@ -4,7 +4,12 @@
  * Dates travel as ISO 8601 strings. Data routes are GET-only and need a login session (the auth
  * routes at the end); without one they answer 401.
  */
-import type { Campaign, CampaignSource, CampaignStatus } from '../campaigns/types.ts'
+import type {
+  Campaign,
+  CampaignRejectReason,
+  CampaignSource,
+  CampaignStatus,
+} from '../campaigns/types.ts'
 import type { CampaignListRow, OverviewData, PostRow } from './data.ts'
 
 /** `Date` → ISO string, recursively; everything else as is. */
@@ -73,3 +78,40 @@ export type AuthSessionResponse =
 
 /** POST /api/auth/code: the code went to Telegram. 429 `{ error, retryAfter }` when rate limited. */
 export type AuthCodeResponse = { expiresAt: string }
+
+/**
+ * POST /api/campaigns/:id/<action>: campaign operations (docs/dashboard.md). Every request needs
+ * the session cookie, a same-origin JSON body and the `X-CSRF-Token` header. The body carries the
+ * `revision` (and `status`) of the campaign the page displayed, so an outdated view changes
+ * nothing: 409 `CampaignActionConflict`. 404 unknown campaign, 400 invalid body.
+ */
+export type CampaignActionRequests = {
+  /** ✅ 신청함 (PENDING_REVIEW) */
+  apply: { revision: number }
+  /** 🙅 패스 (PENDING_REVIEW) */
+  reject: { revision: number; reason: CampaignRejectReason }
+  /** 🎉 선정 / 😢 미선정 (APPLIED) */
+  result: { selected: boolean }
+  /** Review deadline: end of that KST day. `date` takes the formats of Telegram /due. */
+  deadline: { status: CampaignStatus; date: string }
+  /** The owner's notes; queues the review draft (SELECTED / DRAFT_REVIEW). */
+  memo: { status: CampaignStatus; revision: number; memo: string }
+  /** 🔁 다시 쓰기 with optional feedback (DRAFT_REVIEW) */
+  regenerate: { revision: number; feedback?: string }
+  /** Replaces the draft verbatim, like `수정:` (DRAFT_REVIEW) */
+  draft: { revision: number; text: string }
+  /** ✅ 리뷰 올림 (DRAFT_REVIEW) */
+  posted: { revision: number }
+}
+export type CampaignActionName = keyof CampaignActionRequests
+
+/** 200: the action applied; `detail` is the campaign as it is now (null if it vanished). */
+export type CampaignActionResponse = {
+  ok: true
+  /** False when the Telegram card could not be updated (logged; the action itself applied). */
+  telegramSynced: boolean
+  detail: CampaignDetailResponse | null
+}
+
+/** 409: the campaign changed since the page showed it, or was already handled. */
+export type CampaignActionConflict = ApiError & { stale: true }

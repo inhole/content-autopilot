@@ -173,6 +173,8 @@ export type Campaign = {
   memo: string | null
   draft_text: string | null
   regen_seq: number
+  /** The regen_seq the current draft was written for (migration 020); regen_seq > draft_seq = a draft is pending. */
+  draft_seq: number
   posted_at: Date | null
   created_at: Date
   updated_at: Date

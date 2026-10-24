@@ -76,8 +76,9 @@ export async function enqueueReviewDraft(
   boss: PgBoss,
   campaignId: number,
   feedback?: string,
+  revision?: number,
 ): Promise<boolean> {
-  const seq = await requestDraftRegeneration(campaignId)
+  const seq = await requestDraftRegeneration(campaignId, revision)
   if (seq === null) return false
   await boss.send(CQ.reviewDraft, { campaignId, feedback, seq } satisfies ReviewDraftData, {
     singletonKey: `campaign-${campaignId}`,

@@ -24,6 +24,7 @@ import {
 import {
   CAMPAIGN_REJECT_REASONS,
   type Campaign,
+  type CampaignRejectReason,
   type CampaignStatus,
   campaignPriceInfo,
   competition,
@@ -217,10 +218,26 @@ export function rejectReasonButtons(c: Pick<Campaign, 'id' | 'revision'>): Campa
   ]
 }
 
-const resultButtons = (id: number): CampaignButton[] => [
+export const resultButtons = (id: number): CampaignButton[] => [
   { text: '🎉 선정', callback: cb({ id }, 'sel', 0) },
   { text: '😢 미선정', callback: cb({ id }, 'unsel', 0) },
 ]
+
+/** The follow-up after a selection: the draft button. Shared by the bot and the web console. */
+export const draftStartButtons = (id: number): CampaignButton[] => [
+  {
+    text: '📝 리뷰 초안 쓰기',
+    callback: { ns: 'rev', action: 'draft', campaignId: id, revision: 0 },
+  },
+]
+
+// Messages sent after a transition; the web console sends the same ones (campaigns/actions.ts).
+export const passedText = (id: number, reason: CampaignRejectReason) =>
+  `🙅 #${id} 패스했어요 (${CAMPAIGN_REJECT_REASONS[reason]})`
+export const appliedText = (id: number) => `✅ #${id} 신청 기록 · 결과가 나오면 눌러주세요`
+export const selectedText = (id: number) =>
+  `🎉 #${id} 선정 축하해요! 리뷰 기한을 /due ${id} 10/30 처럼 알려주세요.`
+export const notSelectedText = (id: number) => `😢 #${id} 미선정으로 기록했어요. 다음 기회에!`
 
 const STATUS_LABEL: Partial<Record<CampaignStatus, string>> = {
   APPLIED: '신청함',
@@ -447,7 +464,7 @@ export function registerCampaignBot(bot: Bot): void {
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`🙅 #${id} 패스했어요 (${CAMPAIGN_REJECT_REASONS[press.arg]})`)
+          await ctx.reply(passedText(id, press.arg))
           return
         }
         case 'applied': {
@@ -457,7 +474,7 @@ export function registerCampaignBot(bot: Bot): void {
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`✅ #${id} 신청 기록 · 결과가 나오면 눌러주세요`, {
+          await ctx.reply(appliedText(id), {
             reply_markup: buttonsKeyboard(resultButtons(id)),
           })
           return
@@ -469,17 +486,9 @@ export function registerCampaignBot(bot: Bot): void {
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(
-            `🎉 #${id} 선정 축하해요! 리뷰 기한을 /due ${id} 10/30 처럼 알려주세요.`,
-            {
-              reply_markup: buttonsKeyboard([
-                {
-                  text: '📝 리뷰 초안 쓰기',
-                  callback: { ns: 'rev', action: 'draft', campaignId: id, revision: 0 },
-                },
-              ]),
-            },
-          )
+          await ctx.reply(selectedText(id), {
+            reply_markup: buttonsKeyboard(draftStartButtons(id)),
+          })
           return
         }
         case 'unsel': {
@@ -489,7 +498,7 @@ export function registerCampaignBot(bot: Bot): void {
           }
           await ctx.editMessageReplyMarkup().catch(() => {})
           await ctx.answerCallbackQuery()
-          await ctx.reply(`😢 #${id} 미선정으로 기록했어요. 다음 기회에!`)
+          await ctx.reply(notSelectedText(id))
           return
         }
       }

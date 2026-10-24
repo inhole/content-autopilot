@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
 import type { CampaignListRow } from '../src/web/data.ts'
 import { createDashboardServer, type DashboardLoaders } from '../src/web/server.ts'
+import { fakeActions } from './fake-actions.ts'
 import { fakeAuth, SESSION_HEADERS } from './fake-auth.ts'
 
 const A = SESSION_HEADERS
@@ -125,6 +126,7 @@ const notify = async () => {}
 const app = createDashboardServer({
   loaders,
   auth: fakeAuth().auth,
+  actions: fakeActions().actions,
   notify,
   now: () => NOW,
   webDist: buildDir,
@@ -132,6 +134,7 @@ const app = createDashboardServer({
 const legacy = createDashboardServer({
   loaders,
   auth: fakeAuth().auth,
+  actions: fakeActions().actions,
   notify,
   now: () => NOW,
   webDist: missingDist,

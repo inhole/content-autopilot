@@ -1,15 +1,18 @@
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createDashboardServer, readCookie } from '../src/web/server.ts'
+import { fakeActions } from './fake-actions.ts'
 import { CSRF, fakeAuth, SESSION_HEADERS, TOKEN } from './fake-auth.ts'
 
 const { auth, state } = fakeAuth()
+const { actions, state: actionState } = fakeActions()
 const sent: string[] = []
 let failNotify = false
 
 let base = ''
 const server = createDashboardServer({
   auth,
+  actions,
   notify: async (text) => {
     if (failNotify) throw new Error('telegram down')
     sent.push(text)
@@ -268,6 +271,169 @@ describe('logout', () => {
     expect(state.revokedAll).toBe(1)
     expect(sent[0]).toContain('모든 세션(2개)')
     expect(state.actions.at(-1)).toMatchObject({ action: 'logout_all', detail: { revoked: 2 } })
+  })
+})
+
+describe('campaign actions', () => {
+  const auth_ = { ...SESSION_HEADERS, 'x-csrf-token': CSRF }
+  const ok = (path: string, body: unknown, headers: Record<string, string> = auth_) =>
+    post(path, body, headers)
+  const BODIES: [string, unknown][] = [
+    ['apply', { revision: 2 }],
+    ['reject', { revision: 2, reason: 'brand' }],
+    ['result', { selected: true }],
+    ['deadline', { status: 'SELECTED', date: '10/30' }],
+    ['memo', { status: 'SELECTED', revision: 0, memo: '일주일 써봄' }],
+    ['regenerate', { revision: 3, feedback: '더 짧게' }],
+    ['draft', { revision: 3, text: '내가 고친 글' }],
+    ['posted', { revision: 3 }],
+  ]
+
+  beforeEach(() => {
+    actionState.calls.length = 0
+    actionState.next = undefined
+    actionState.fail = undefined
+  })
+
+  it.each(BODIES)('%s needs same-origin JSON, a session and the CSRF token', async (name, body) => {
+    const path = `/api/campaigns/12/${name}`
+    // No Origin header.
+    const noOrigin = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth_ },
+      body: JSON.stringify(body),
+    })
+    expect(noOrigin.status).toBe(403)
+    // Other origin.
+    expect((await ok(path, body, { ...auth_, origin: 'https://evil.example' })).status).toBe(403)
+    // No session.
+    expect((await ok(path, body, {})).status).toBe(401)
+    // Session without CSRF, and with a wrong one.
+    expect((await ok(path, body, SESSION_HEADERS)).status).toBe(403)
+    expect(
+      (await ok(path, body, { ...SESSION_HEADERS, 'x-csrf-token': 'x'.repeat(43) })).status,
+    ).toBe(403)
+    expect(actionState.calls).toEqual([])
+    expect(state.actions).toEqual([])
+  })
+
+  it('answers 405 to GET and other methods', async () => {
+    const get = await fetch(`${base}/api/campaigns/12/apply`, { headers: SESSION_HEADERS })
+    expect(get.status).toBe(405)
+    expect(get.headers.get('allow')).toBe('POST')
+    const del = await fetch(`${base}/api/campaigns/12/apply`, { method: 'DELETE' })
+    expect(del.status).toBe(405)
+  })
+
+  it('runs the action with the validated body and records the audit row', async () => {
+    const res = await ok('/api/campaigns/12/reject', { revision: 2, reason: 'brand' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, telegramSynced: true, detail: null })
+    expect(actionState.calls).toEqual([
+      { name: 'reject', id: 12, params: { revision: 2, reason: 'brand' } },
+    ])
+    expect(state.actions.at(-1)).toMatchObject({
+      sessionId: 1,
+      action: 'campaign.reject',
+      target: 'campaign:12',
+      result: 'ok',
+      ip: '203.0.113.7',
+      detail: { reason: 'brand', telegramSynced: true },
+    })
+  })
+
+  it('passes each body to the matching action', async () => {
+    for (const [name, body] of BODIES) {
+      expect((await ok(`/api/campaigns/12/${name}`, body)).status).toBe(200)
+    }
+    expect(actionState.calls.map((c) => c.name)).toEqual(BODIES.map(([n]) => n))
+    // /due formats: 10/30 becomes the end of that KST day.
+    const deadline = actionState.calls.find((c) => c.name === 'deadline')?.params as {
+      deadline: Date
+    }
+    expect(deadline.deadline.toISOString()).toBe('2026-10-30T14:59:00.000Z')
+    // Memos and drafts are never written to the audit log, only their length.
+    const audits = JSON.stringify(state.actions)
+    expect(audits).not.toContain('일주일 써봄')
+    expect(audits).not.toContain('내가 고친 글')
+    expect(state.actions.find((a) => a.action === 'campaign.memo')?.detail).toMatchObject({
+      chars: 6,
+    })
+  })
+
+  it('reports an unsynced Telegram card without failing', async () => {
+    actionState.next = { ok: true, telegramSynced: false }
+    const res = await ok('/api/campaigns/12/apply', { revision: 2 })
+    expect(res.status).toBe(200)
+    expect((await res.json()).telegramSynced).toBe(false)
+    expect(state.actions.at(-1)?.detail).toMatchObject({ telegramSynced: false })
+  })
+
+  it('409 with stale: true when the transition did not apply', async () => {
+    actionState.next = {
+      ok: false,
+      reason: 'stale',
+      message: '이미 처리됐거나 내용이 바뀌었어요. 새로 고침했어요',
+    }
+    const res = await ok('/api/campaigns/12/apply', { revision: 2 })
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({
+      error: '이미 처리됐거나 내용이 바뀌었어요. 새로 고침했어요',
+      stale: true,
+    })
+    expect(state.actions.at(-1)).toMatchObject({ action: 'campaign.apply', result: 'stale' })
+  })
+
+  it('404 for an unknown campaign and for a malformed id', async () => {
+    actionState.next = { ok: false, reason: 'not_found', message: 'not found' }
+    expect((await ok('/api/campaigns/999/apply', { revision: 0 })).status).toBe(404)
+    expect(state.actions.at(-1)).toMatchObject({ target: 'campaign:999', result: 'not_found' })
+    expect((await ok('/api/campaigns/abc/apply', { revision: 0 })).status).toBe(404)
+    expect(actionState.calls).toHaveLength(1)
+  })
+
+  it('400 for an invalid body, without running the action', async () => {
+    const bad: [string, unknown][] = [
+      ['apply', {}],
+      ['apply', { revision: -1 }],
+      ['apply', { revision: '2' }],
+      ['reject', { revision: 2, reason: 'nope' }],
+      ['result', { selected: 'yes' }],
+      ['memo', { status: 'SELECTED', revision: 0, memo: 'x'.repeat(2001) }],
+      ['deadline', { status: 'SELECTED', date: '' }],
+      ['deadline', { status: 'SELECTED', date: '2026-02-30' }],
+      ['deadline', { status: 'NOPE', date: '10/30' }],
+    ]
+    for (const [name, body] of bad) {
+      const res = await ok(`/api/campaigns/12/${name}`, body)
+      expect(res.status, `${name} ${JSON.stringify(body)}`).toBe(400)
+    }
+    expect((await ok('/api/campaigns/12/apply', '{not json')).status).toBe(400)
+    expect(actionState.calls).toEqual([])
+    expect(state.actions.every((a) => a.result === 'invalid')).toBe(true)
+    expect(state.actions).toHaveLength(bad.length + 1)
+  })
+
+  it('400 with the action message when the action rejects the content', async () => {
+    actionState.next = { ok: false, reason: 'invalid', message: '리뷰가 600자예요' }
+    const res = await ok('/api/campaigns/12/draft', { revision: 3, text: 'x' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: '리뷰가 600자예요' })
+  })
+
+  it('accepts a long Korean draft within the action body limit, refuses more', async () => {
+    const text = '가'.repeat(3000)
+    expect((await ok('/api/campaigns/12/draft', { revision: 3, text })).status).toBe(200)
+    const huge = await ok('/api/campaigns/12/draft', { revision: 3, text: 'x'.repeat(17000) })
+    expect(huge.status).toBe(400)
+  })
+
+  it('500 and an error audit row when the action throws', async () => {
+    actionState.fail = new Error('db down')
+    const res = await ok('/api/campaigns/12/apply', { revision: 2 })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: 'internal error' })
+    expect(state.actions.at(-1)).toMatchObject({ action: 'campaign.apply', result: 'error' })
   })
 })
 
