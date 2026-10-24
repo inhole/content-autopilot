@@ -10,7 +10,12 @@ import { publishPublication, publishVideoNow } from './publish.ts'
 import { renderVideo } from './render.ts'
 import { formatScript, writeScript } from './script.ts'
 import { createVideo, listVideos, loadPostScriptSource, loadVideo, restartVideo } from './store.ts'
-import { approvedVideoText, formatVideoReview, sendVideoReview } from './telegram.ts'
+import {
+  approvedVideoText,
+  formatVideoReview,
+  sendManualUpload,
+  sendVideoReview,
+} from './telegram.ts'
 import { configuredProviders, createTts, type TtsProviderName } from './tts.ts'
 import { narrationLength } from './types.ts'
 import { writeWav } from './wav.ts'
@@ -25,6 +30,7 @@ export const VIDEO_USAGE = `
   video:list                  list recent videos
   video:show <videoId>        print a video's review text and publications
   video:approve <videoId>     approve the video under review (next video slot)
+  video:manual <videoId>      send the manual-upload caption and button again (no VIDEO_PLATFORMS)
   video:publish-now <videoId> publish the video's scheduled publications now
   video:reset-dry <videoId>   after turning VIDEO_PUBLISH_DRY_RUN off: schedule dry-run publications again
   video:insights              collect video insights now and print the report section
@@ -134,7 +140,14 @@ export async function runVideoCommand(
     case 'video:approve': {
       const v = await loadVideo(num(args[0], 'videoId'))
       if (!v) throw new Error('video not found')
-      console.log(approvedVideoText(v.id, await approveVideo(v.id, { revision: v.revision })))
+      const approval = await approveVideo(v.id, { revision: v.revision })
+      console.log(approvedVideoText(v.id, approval))
+      if (!approval.at) await sendManualUpload(v.id)
+      return true
+    }
+    case 'video:manual': {
+      const sent = await sendManualUpload(num(args[0], 'videoId'))
+      console.log(sent ? 'sent' : 'not an APPROVED video without automatic publications')
       return true
     }
     case 'video:publish-now': {

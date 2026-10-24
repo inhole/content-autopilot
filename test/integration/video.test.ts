@@ -11,13 +11,20 @@ import { collectVideoInsights, loadVideoReportRows } from '../../src/video/insig
 import { InstagramApiError } from '../../src/video/instagram.ts'
 import { bestCandidate, pickVideo } from '../../src/video/pick.ts'
 import { runRender, runScript } from '../../src/video/pipeline.ts'
-import { duePublications, publishPublication, unalertedFailures } from '../../src/video/publish.ts'
+import {
+  duePublications,
+  publishPublication,
+  publishVideoNow,
+  unalertedFailures,
+} from '../../src/video/publish.ts'
 import type { RenderResult, renderVideo } from '../../src/video/render.ts'
 import type { Script } from '../../src/video/script.ts'
 import {
   applyEdit,
+  completePublishedVideos,
   createVideo,
   expireVideos,
+  failStage,
   loadVideo,
   recoverStuckStages,
   registerReview,
@@ -26,7 +33,7 @@ import {
   restartVideo,
   unsentReviews,
 } from '../../src/video/store.ts'
-import { retryPublication } from '../../src/video/telegram.ts'
+import { retryPublication, sendManualUpload } from '../../src/video/telegram.ts'
 import { SilentTts } from '../../src/video/tts.ts'
 import type { Platform } from '../../src/video/types.ts'
 import { FakeInstagram, FakeStorage, FakeYouTube } from '../fake-video.ts'
@@ -118,6 +125,13 @@ async function approved(platforms: Platform[]) {
     [r.id],
   )
   return { ...r, approval, pubs }
+}
+
+/** Approved and due now (publishVideoNow), so a claim takes it. */
+async function approvedDue(platforms: Platform[]) {
+  const a = await approved(platforms)
+  await publishVideoNow(a.id)
+  return a
 }
 
 const pub = async (id: number) => {
@@ -302,7 +316,7 @@ describe('approval', () => {
 
 describe('Reels publishing', () => {
   it('publishes and completes the video', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     const ig = new FakeInstagram()
     ig.finishAfterPolls = 1
     const out = await publishPublication(a.pubs[0]?.id ?? 0, { instagram: ig, ...noSleep })
@@ -315,7 +329,7 @@ describe('Reels publishing', () => {
   })
 
   it('treats a lost publish response as published and recovers the media id', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     const ig = new FakeInstagram()
     ig.loseResponse = true
     const out = await publishPublication(a.pubs[0]?.id ?? 0, { instagram: ig, ...noSleep })
@@ -324,7 +338,7 @@ describe('Reels publishing', () => {
   })
 
   it('does not count a slow container as a failure and reuses it next time', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     const id = a.pubs[0]?.id ?? 0
     const ig = new FakeInstagram()
     ig.neverFinish = true
@@ -340,7 +354,7 @@ describe('Reels publishing', () => {
   })
 
   it('fails at once on a rejected token', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     const id = a.pubs[0]?.id ?? 0
     const ig = new FakeInstagram()
     ig.createError = new InstagramApiError('expired', 400, '', 190)
@@ -352,7 +366,7 @@ describe('Reels publishing', () => {
   })
 
   it('retries ordinary errors and fails after three attempts', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     const id = a.pubs[0]?.id ?? 0
     const ig = new FakeInstagram()
     ig.createError = new Error('500')
@@ -365,7 +379,7 @@ describe('Reels publishing', () => {
   })
 
   it('writes nothing after losing the claim', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     const id = a.pubs[0]?.id ?? 0
     const ig = new FakeInstagram()
     const create = ig.createReelContainer.bind(ig)
@@ -381,8 +395,8 @@ describe('Reels publishing', () => {
 
 describe('Shorts publishing', () => {
   const shorts = async () => {
-    const a = await approved(['SHORTS'])
-    return { ...a, id: a.pubs[0]?.id ?? 0 }
+    const a = await approvedDue(['SHORTS'])
+    return { ...a, id: a.pubs[0]?.id ?? 0, videoId: a.id }
   }
 
   it('uploads with the publication tag and stores the Shorts link', async () => {
@@ -436,6 +450,11 @@ describe('Shorts publishing', () => {
     const at = await retryPublication(s.id)
     expect(at).not.toBeNull()
     expect(await pub(s.id)).toMatchObject({ status: 'SCHEDULED', upload_url: null, attempts: 0 })
+    // Not before the new slot.
+    expect((await publishPublication(s.id, { youtube: yt, storage: s.storage })).kind).toBe(
+      'skipped',
+    )
+    await publishVideoNow(s.videoId)
     expect((await publishPublication(s.id, { youtube: yt, storage: s.storage })).kind).toBe(
       'published',
     )
@@ -565,7 +584,7 @@ describe('sweeps and maintenance', () => {
   })
 
   it('schedules dry-run publications again after the switch', async () => {
-    const a = await approved(['REELS'])
+    const a = await approvedDue(['REELS'])
     await publishPublication(a.pubs[0]?.id ?? 0, { instagram: new FakeInstagram(), ...noSleep })
     await query("update video_publications set platform_media_id = 'dry-ig-1' where id = $1", [
       a.pubs[0]?.id,
@@ -613,5 +632,69 @@ describe('pick', () => {
       kind: 'skipped',
       reason: expect.stringMatching(/한도/),
     })
+  })
+})
+
+describe('recovery paths', () => {
+  it('claims a publication only between its slot and the overdue limit', async () => {
+    const a = await approved(['REELS'])
+    const id = a.pubs[0]?.id ?? 0
+    const ig = new FakeInstagram()
+    // A job enqueued before a reschedule must not publish ahead of the slot.
+    expect(await publishPublication(id, { instagram: ig, ...noSleep })).toEqual({ kind: 'skipped' })
+    await query(
+      "update video_publications set scheduled_at = now() - interval '7 hours' where id = $1",
+      [id],
+    )
+    // Nor hours late: the overdue sweep moves it instead.
+    expect(await publishPublication(id, { instagram: ig, ...noSleep })).toEqual({ kind: 'skipped' })
+    expect(ig.created).toEqual([])
+  })
+
+  it('fails only the stage request that failed', async () => {
+    const postId = await seedPublishedPost()
+    const id = ((await createVideo(postId)) as { created: number }).created
+    expect(await failStage(id, 'SCRIPTING', 2, 'old request')).toBe(false)
+    expect(await runScript(id, 1, { write: writer() })).toBe(true)
+    const v = await loadVideo(id)
+    const revision = v?.revision ?? 0
+    expect(await failStage(id, 'RENDERING', revision - 1, 'stale render')).toBe(false)
+    expect((await loadVideo(id))?.status).toBe('RENDERING')
+    expect(await failStage(id, 'RENDERING', revision, 'too long')).toBe(true)
+    expect((await loadVideo(id))?.status).toBe('FAILED')
+  })
+
+  it('completes a video whose publications all went out', async () => {
+    const a = await approved(['REELS', 'SHORTS'])
+    await query(
+      `update video_publications set status = 'PUBLISHED', published_at = now()
+       where video_id = $1`,
+      [a.id],
+    )
+    // The worker stopped before completeIfAllPublished.
+    expect((await loadVideo(a.id))?.status).toBe('APPROVED')
+    expect(await completePublishedVideos()).toEqual([a.id])
+    expect((await loadVideo(a.id))?.status).toBe('PUBLISHED')
+    expect(await completePublishedVideos()).toEqual([])
+  })
+
+  it('sends the manual upload again only for an approved video without publications', async () => {
+    const manual = await approved([])
+    expect(await sendManualUpload(manual.id)).toBe(true)
+    const auto = await approved(['REELS'])
+    expect(await sendManualUpload(auto.id)).toBe(false)
+    const reviewing = await videoUnderReview()
+    expect(await sendManualUpload(reviewing.id)).toBe(false)
+  })
+
+  it('refuses to reschedule a dry-run video whose file was cleaned up', async () => {
+    const a = await approvedDue(['REELS'])
+    await publishPublication(a.pubs[0]?.id ?? 0, { instagram: new FakeInstagram(), ...noSleep })
+    await query("update video_publications set platform_media_id = 'dry-ig-1' where id = $1", [
+      a.pubs[0]?.id,
+    ])
+    await query('update videos set video_url = null where id = $1', [a.id])
+    await expect(resetDryRun(a.id)).rejects.toThrow(/정리/)
+    expect((await pub(a.pubs[0]?.id ?? 0)).status).toBe('PUBLISHED')
   })
 })

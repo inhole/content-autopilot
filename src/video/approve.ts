@@ -125,6 +125,15 @@ export async function resetDryRun(
   for (let attempt = 1; ; attempt++) {
     try {
       return await transaction(async (q) => {
+        // Locked so cleanup cannot retire the file meanwhile. Dry-run videos older than the
+        // cleanup window have no file left to publish.
+        const [video] = await q<{ video_url: string | null }>(
+          'select video_url from videos where id = $1 for update',
+          [videoId],
+        )
+        if (!video?.video_url) {
+          throw new Error(`영상 #${videoId} 파일이 이미 정리돼서 다시 예약할 수 없어요`)
+        }
         const at = await nextVideoSlot(
           q,
           pubs.map((p) => p.platform),

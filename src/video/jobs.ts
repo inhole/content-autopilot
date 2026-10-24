@@ -20,6 +20,7 @@ import {
   unverifiedShorts,
 } from './publish.ts'
 import {
+  completePublishedVideos,
   expireVideos,
   failStage,
   isUnsentReview,
@@ -80,15 +81,18 @@ async function finalStage<T>(
   retryLimit: number,
   videoId: number,
   stage: 'SCRIPTING' | 'RENDERING',
+  /** The failing request's ownership token; null when it never got that far (nothing to fail). */
+  owner: () => number | null,
   label: string,
   fn: () => Promise<T>,
 ): Promise<T> {
   try {
     return await fn()
   } catch (err) {
-    if (isFinalAttempt(job.retryCount, retryLimit)) {
+    const token = owner()
+    if (isFinalAttempt(job.retryCount, retryLimit) && token !== null) {
       try {
-        if (await failStage(videoId, stage, (err as Error).message)) {
+        if (await failStage(videoId, stage, token, (err as Error).message)) {
           await notifyVideo(formatFinalFailure(label, err))
         }
       } catch (notifyErr) {
@@ -134,6 +138,8 @@ export async function createVideoQueues(boss: PgBoss): Promise<void> {
 
 /** The sweep: due publications, overdue ones moved on, Shorts processing checks, failure alerts. */
 export async function runPublishDue(boss: PgBoss, now = new Date()): Promise<void> {
+  const completed = await completePublishedVideos()
+  if (completed.length) console.log('[video-publish-due] completed videos', completed)
   const { due, overdue } = await duePublications(now)
   for (const id of overdue) {
     const at = await reschedulePublication(id, 'SCHEDULED', { now })
@@ -194,6 +200,7 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
       SCRIPT_RETRY_LIMIT,
       videoId,
       'SCRIPTING',
+      () => seq,
       `영상 원고 (#${videoId})`,
       async () => {
         if (await runScript(videoId, seq)) await enqueueVideoRender(boss, videoId)
@@ -204,14 +211,20 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
   await boss.work<VideoData>(VQ.render, async ([job]) => {
     if (!job) return
     const { videoId } = job.data
+    let revision: number | null = null
     await finalStage(
       job,
       RENDER_RETRY_LIMIT,
       videoId,
       'RENDERING',
+      () => revision,
       `영상 렌더 (#${videoId})`,
       async () => {
-        const outcome = await runRender(videoId)
+        const outcome = await runRender(videoId, {
+          onJob: (r) => {
+            revision = r
+          },
+        })
         if (outcome.kind === 'rendered' || outcome.kind === 'unchanged') {
           await enqueueVideoReview(boss, videoId)
         } else if (outcome.kind === 'failed') {

@@ -293,16 +293,23 @@ export async function skipRender(
   return rows.length > 0
 }
 
-/** Ends a script or render stage that cannot succeed; a video that already left the stage is untouched. */
+/**
+ * Ends a script or render stage that cannot succeed. `owner` is the stage's ownership token (the
+ * script's regen_seq, the render's revision): a video that left the stage, or a newer request of
+ * the same stage, is untouched.
+ */
 export async function failStage(
   videoId: number,
   stage: 'SCRIPTING' | 'RENDERING',
+  owner: number,
   error: string,
 ): Promise<boolean> {
   const rows = await query(
     `update videos set status = 'FAILED', last_error = $3, updated_at = now()
-     where id = $1 and status = $2 returning id`,
-    [videoId, stage, error.slice(0, 1000)],
+     where id = $1 and status = $2
+       and (case when $2 = 'SCRIPTING' then regen_seq else revision end) = $4
+     returning id`,
+    [videoId, stage, error.slice(0, 1000), owner],
   )
   return rows.length > 0
 }
@@ -437,6 +444,25 @@ export async function completeIfAllPublished(videoId: number): Promise<boolean> 
     [videoId],
   )
   return rows.length > 0
+}
+
+/**
+ * Completes APPROVED videos whose publications all went out but whose own completion was lost
+ * (the worker stopped between the two updates). Run with every publish-due sweep.
+ */
+export async function completePublishedVideos(): Promise<number[]> {
+  const rows = await query<{ id: number }>(
+    `update videos v set status = 'PUBLISHED', updated_at = now(),
+       published_at = coalesce(
+         (select max(p.published_at) from video_publications p where p.video_id = v.id), now())
+     where v.status = 'APPROVED'
+       and exists (select 1 from video_publications p where p.video_id = v.id)
+       and not exists (
+         select 1 from video_publications p where p.video_id = v.id and p.status <> 'PUBLISHED'
+       )
+     returning v.id`,
+  )
+  return rows.map((r) => r.id)
 }
 
 // Maintenance

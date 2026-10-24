@@ -53,10 +53,13 @@ export async function runRender(
     storage?: VideoStorage
     render?: typeof renderVideo
     bgm?: Bgm
+    /** Told the revision being rendered, so a final job failure can fail exactly that one. */
+    onJob?: (revision: number) => void
   } = {},
 ): Promise<RenderOutcome> {
   const job = await loadRenderJob(videoId)
   if (!job) return { kind: 'stale' }
+  deps.onJob?.(job.revision)
   const tts = deps.tts ?? createTts()
   const bgm = deps.bgm !== undefined ? deps.bgm : await loadBgm()
   const input = {
@@ -74,7 +77,7 @@ export async function runRender(
     result = await (deps.render ?? renderVideo)(input, tts, { bgmPath: bgm?.path ?? null })
   } catch (err) {
     if (err instanceof RenderLimitError) {
-      await failStage(videoId, 'RENDERING', err.message)
+      await failStage(videoId, 'RENDERING', job.revision, err.message)
       return { kind: 'failed', error: err.message }
     }
     throw err

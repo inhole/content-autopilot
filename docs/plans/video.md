@@ -82,7 +82,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
 ### 3-5. 단계마다 소유권을 확인해서 오래된 결과가 덮어쓰지 못하게 한다
 
 - **원고:** 재생성 요청은 `regen_seq+1`과 피드백(`regen_feedback`)을 같은 UPDATE로 남기고 `SCRIPTING`으로 바꾼다. 원고 작업은 `status='SCRIPTING' and regen_seq = seq`일 때만 결과를 쓴다. 그래서 오래된 요청이나 재투입된 중복 작업은 아무것도 바꾸지 못한다. 피드백이 DB에 있으니 enqueue 전에 죽어도 maintenance가 같은 요청을 다시 넣을 수 있다.
-- **렌더:** 렌더 작업은 시작할 때 `(revision, 장면, 렌더 입력 해시)`를 읽고, 끝나면 `status='RENDERING' and revision = 읽은 값`일 때만 `video_url`, `render_hash`, `PENDING_REVIEW`를 쓴다. 조건이 안 맞으면(그사이 수정·재생성) 방금 올린 파일을 지우고 끝낸다.
+- **렌더:** 렌더 작업은 시작할 때 `(revision, 장면, 렌더 입력 해시)`를 읽고, 끝나면 `status='RENDERING' and revision = 읽은 값`일 때만 `video_url`, `render_hash`, `PENDING_REVIEW`를 쓴다. 조건이 안 맞으면(그사이 수정·재생성) 방금 올린 파일을 지우고 끝낸다. 실패로 끝낼 때(`FAILED`)도 같은 소유 토큰(원고는 `regen_seq`, 렌더는 `revision`)을 조건으로 건다. 그래서 오래된 작업의 실패가 새 요청을 `FAILED`로 만들지 못한다.
 - **렌더 입력 해시**에는 장면, 출처 표시, 브랜드, TTS 공급자·음성·모델, 화면 템플릿 버전(글꼴 포함), 배경음악 파일 이름·크기가 들어간다. 해시가 같으면 렌더를 건너뛴다. 저장 파일 이름은 렌더 실행마다 새로 만드는 id와 완성 mp4 SHA-256 앞부분이다. 실행마다 키가 달라서, 반영되지 못한 렌더가 지우는 파일은 자기 파일뿐이다.
 - **장면 수정:** `수정N:`/`화면N:`은 `scenes` 교체, `revision+1`, `RENDERING` 전환을 UPDATE 한 번으로 한다. 그래서 수정 전에 시작한 렌더는 revision이 달라져 반영되지 못한다.
 - **검수 불변식:** `PENDING_REVIEW`인 영상은 항상 현재 장면으로 만든 파일을 가리킨다. 장면을 바꾸는 모든 경로가 상태를 `RENDERING`이나 `SCRIPTING`으로 옮기기 때문이다. 제목·캡션 교체는 렌더 결과에 영향이 없어 `PENDING_REVIEW`를 유지하고 `revision`만 올린다.
@@ -104,13 +104,13 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
 - 영상 행을 잠그고(`for update`, 위 버튼 조건 포함) → `video_url`이 있는지 확인 → 슬롯을 고르고 → 플랫폼마다 발행 행을 만들고 → `APPROVED`로 바꾸는 것을 한 트랜잭션에서 한다. 슬롯 충돌(유니크 위반)이면 트랜잭션 전체를 다시 한다.
 - 발행 행에는 승인 시점의 대상 계정(`account_user_id`)을 적는다. 발행할 때 현재 계정과 다르면 보내지 않고 `FAILED`로 알린다.
 - 승인 뒤에는 원고·영상이 얼어 있다. 원고를 바꾸는 모든 UPDATE는 `status='PENDING_REVIEW'`를 조건으로 하므로 승인된 영상은 바뀌지 않는다. 다시 시도는 발행 행에만 있다.
-- `VIDEO_PLATFORMS`가 비어 있으면(V1) 발행 행 없이 `APPROVED`로 두고, 캡션 복사용 메시지와 `📤 직접 올림` 버튼을 보낸다. 누르면 `PUBLISHED`가 되고 `published_at`이 찍힌다(정리 기준 시각).
-- `videos.status`: `APPROVED`는 “승인했고 발행 대기”, `PUBLISHED`는 “모든 발행 행이 PUBLISHED이거나 직접 올림”이다.
+- `VIDEO_PLATFORMS`가 비어 있으면(V1) 발행 행 없이 `APPROVED`로 두고, 캡션 복사용 메시지와 `📤 직접 올림` 버튼을 보낸다. 누르면 `PUBLISHED`가 되고 `published_at`이 찍힌다(정리 기준 시각). 승인이 커밋된 뒤 이 메시지 전송이 실패해도 `/video <글 번호>`나 `video:manual <id>`로 다시 보낼 수 있다.
+- `videos.status`: `APPROVED`는 “승인했고 발행 대기”, `PUBLISHED`는 “모든 발행 행이 PUBLISHED이거나 직접 올림”이다. 마지막 발행 행과 영상의 완료 처리 사이에 워커가 멈춰도 `video-publish-due`가 돌 때마다 바로잡는다(`completePublishedVideos`).
 
 ### 3-8. 슬롯과 한도
 
 - 영상 발행 시각은 `VIDEO_PUBLISH_SLOT` **하나**(기본 `19:00`)다. 날마다 슬롯이 하나라서 플랫폼마다 `unique (platform, scheduled_at)`이면 하루 1편이 보장된다. 실패한 행의 `🔁 다시 시도`는 그 행을 다음 빈 슬롯으로 다시 예약한다(오늘 슬롯이 아직 비어 있고 지나지 않았으면 오늘).
-- 워커가 오래 멈췄다가 살아나도 밀린 영상이 한꺼번에 나가지 않게, 슬롯이 6시간 넘게 지난 `SCHEDULED` 행은 발행하지 않고 다음 빈 슬롯으로 옮긴 뒤 알린다. 멈춘 `PUBLISHING` 행은 이미 외부에 요청이 갔을 수 있으니 그대로 이어서 한다.
+- 워커가 오래 멈췄다가 살아나도 밀린 영상이 한꺼번에 나가지 않게, 슬롯이 6시간 넘게 지난 `SCHEDULED` 행은 발행하지 않고 다음 빈 슬롯으로 옮긴 뒤 알린다. 멈춘 `PUBLISHING` 행은 이미 외부에 요청이 갔을 수 있으니 그대로 이어서 한다. 발행 작업은 claim할 때 예약 시각을 다시 확인한다(슬롯이 지났고 6시간 안일 때만). 그래서 장애 전에 큐에 들어간 작업이나 다른 슬롯으로 옮겨진 행의 오래된 작업은 아무것도 하지 않는다. `video:publish-now`는 예약 시각을 지금 직전으로 당긴다.
 - 자동 선택(`video-pick`)은 최근 7일에 만든 영상(폐기 포함)이 `VIDEO_WEEKLY_MAX`(기본 3)개 이상이면 건너뛴다. `/video <번호>`는 사람이 고른 것이라 한도를 보지 않는다.
 
 ### 3-9. 발행은 플랫폼별 행, 글과 같은 claim 모델
@@ -251,7 +251,7 @@ src/video/
   jobs.ts         큐 정의와 작업
 ```
 
-CLI: `video:tts-sample`, `video:script <postId>`(읽기 전용), `video:render <postId>`(DB에 쓰지 않고 mp4만), `video:make <postId>`, `video:list`, `video:show <id>`, `video:approve <id>`, `video:publish-now <id>`, `video:reset-dry <id>`, `video:insights`, `instagram:check`, `youtube:auth`, `youtube:check`.
+CLI: `video:tts-sample`, `video:script <postId>`(읽기 전용), `video:render <postId>`(DB에 쓰지 않고 mp4만), `video:make <postId>`, `video:list`, `video:show <id>`, `video:approve <id>`, `video:manual <id>`, `video:publish-now <id>`, `video:reset-dry <id>`, `video:insights`, `instagram:check`, `youtube:auth`, `youtube:check`.
 
 ## 8. 테스트
 

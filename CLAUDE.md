@@ -34,7 +34,7 @@ Useful CLI commands:
 
 Campaign CLI: `gift:list` and `musinsa:list` (read-only, print the list), `campaign:collect` (gift: collect, rank, send cards), `musinsa:collect` (same for Musinsa), `campaign:rank`, `campaign:show <id>`, `campaign:card <id>`, `campaign:remind`, `review:draft <id> [feedback]`.
 
-Video CLI (`docs/operations.md` 숏폼 영상): `video:tts-sample`, `video:script <postId>` and `video:render <postId>` (read-only previews), `video:make <postId>`, `video:list`, `video:show`, `video:approve`, `video:publish-now`, `video:reset-dry`, `video:insights`, `instagram:check`, `youtube:auth`, `youtube:check`. The commands live in `src/video/cli.ts`; `src/cli.ts` only dispatches.
+Video CLI (`docs/operations.md` 숏폼 영상): `video:tts-sample`, `video:script <postId>` and `video:render <postId>` (read-only previews), `video:make <postId>`, `video:list`, `video:show`, `video:approve`, `video:manual`, `video:publish-now`, `video:reset-dry`, `video:insights`, `instagram:check`, `youtube:auth`, `youtube:check`. The commands live in `src/video/cli.ts`; `src/cli.ts` only dispatches.
 
 Aside CLI (`docs/aside.md`): `aside:list` and `aside:run <name> [key=value ...]` run a script from `aside/scripts/<name>.js` through `aside repl` in the owner's logged-in Aside Browser and print its JSON result. A script's leading `//` comment is its description and `// args: a, b?` declares its args (undeclared or missing required ones are rejected); the body runs as an async function with `args` in scope (`wrapScript` in `src/aside/client.ts`). The bundled scripts (`tabs`, `snapshot`, `links`, `fetch`) only read. The worker never uses Aside.
 

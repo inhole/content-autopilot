@@ -134,15 +134,19 @@ export async function publishPublication(
   publicationId: number,
   deps: Deps = {},
 ): Promise<PublicationOutcome> {
+  // The schedule is checked here, not trusted from the enqueue: a SCHEDULED row is taken only when
+  // due and not overdue, so a job queued before an outage or a reschedule does not publish early
+  // or hours late (the overdue sweep moves it to the next slot instead).
   const [row] = await query<PubRow>(
     `update video_publications set status = 'PUBLISHING', attempts = attempts + 1,
        claim_seq = claim_seq + 1, updated_at = now()
      where id = $1
-       and (status = 'SCHEDULED'
+       and ((status = 'SCHEDULED' and scheduled_at <= now()
+             and scheduled_at > now() - make_interval(hours => $3))
             or (status = 'PUBLISHING' and updated_at < now() - make_interval(mins => $2)))
      returning id, video_id, platform, attempts, claim_seq, container_id, container_created_at,
        upload_url, account_user_id, scheduled_at`,
-    [publicationId, STALE_PUBLISHING_MINUTES],
+    [publicationId, STALE_PUBLISHING_MINUTES, OVERDUE_HOURS],
   )
   if (!row) return { kind: 'skipped' }
   const token = row.claim_seq
@@ -469,8 +473,9 @@ export async function markAlerted(publicationId: number): Promise<void> {
 
 /** Moves a publication's slot to now so the next sweep sends it (CLI `video:publish-now`). */
 export async function publishVideoNow(videoId: number): Promise<number> {
+  // Just before now (claims only take due rows), offset per row for the unique slot index.
   const rows = await query(
-    `update video_publications set scheduled_at = now() + make_interval(secs => id * 0.001),
+    `update video_publications set scheduled_at = now() - make_interval(secs => id * 0.001),
        updated_at = now()
      where video_id = $1 and status = 'SCHEDULED' returning id`,
     [videoId],

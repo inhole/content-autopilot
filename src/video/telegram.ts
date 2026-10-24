@@ -209,12 +209,23 @@ export async function notifyPublicationFailure(f: {
   )
 }
 
-/** Manual upload: the caption to copy, with the `📤 직접 올림` button. */
-async function sendManualUpload(v: VideoRow): Promise<void> {
+/**
+ * Manual upload: the caption to copy, with the `📤 직접 올림` button. Only for an APPROVED video
+ * without automatic publications. Sent after approval and again by `/video <postId>` or
+ * `video:manual`, since a send lost after the approval committed has no other way back.
+ */
+export async function sendManualUpload(videoId: number): Promise<boolean> {
+  const v = await loadVideo(videoId)
+  if (v?.status !== 'APPROVED') return false
+  const pubs = await query('select 1 from video_publications where video_id = $1 limit 1', [
+    videoId,
+  ])
+  if (pubs.length > 0) return false
   await send(
     `📋 영상 #${v.id} 캡션 (복사해서 쓰세요)\n\n${fullCaption(v)}`,
     new InlineKeyboard().text('📤 직접 올림', encodeManualDone(v.id)),
   )
+  return true
 }
 
 /**
@@ -288,6 +299,9 @@ export async function startVideoForPost(postId: number, deps: VideoBotDeps): Pro
     await deps.onScript(created.exists, seq)
     return `🎬 영상 #${created.exists}를 처음부터 다시 만드는 중…`
   }
+  if (await sendManualUpload(created.exists)) {
+    return `📋 영상 #${created.exists} 직접 올리기 안내를 다시 보냈어요`
+  }
   const v = await loadVideo(created.exists)
   return `#${postId} 글은 이미 영상 #${created.exists}가 있어요 (${v?.status ?? '?'})`
 }
@@ -358,10 +372,7 @@ export function registerVideoBot(bot: Bot, deps: VideoBotDeps): void {
         await ctx.editMessageReplyMarkup().catch(() => {})
         await ctx.answerCallbackQuery()
         await ctx.reply(approvedVideoText(press.videoId, approval))
-        if (!approval.at) {
-          const v = await loadVideo(press.videoId)
-          if (v) await sendManualUpload(v)
-        }
+        if (!approval.at) await sendManualUpload(press.videoId)
       } else if (press.action === 'rej') {
         if (!(await rejectVideo(press.videoId, guard))) return await stale()
         await ctx.editMessageReplyMarkup().catch(() => {})
