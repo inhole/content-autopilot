@@ -292,7 +292,7 @@ export async function skipRender(
   return rows.length > 0
 }
 
-/** Ends a script or render stage that cannot succeed. Only a stage still at `seqOrRevision`. */
+/** Ends a script or render stage that cannot succeed; a video that already left the stage is untouched. */
 export async function failStage(
   videoId: number,
   stage: 'SCRIPTING' | 'RENDERING',
