@@ -5,6 +5,8 @@ import type {
   CampaignDetailResponse,
   CampaignRow,
   InsightsResponse,
+  OpsResponse,
+  OpsRunResponse,
   OverviewResponse,
   PostDetailResponse,
   PostListResponse,
@@ -685,4 +687,117 @@ export const sessionFixture: AuthSessionResponse = {
   authenticated: true,
   csrf: 'mock-csrf',
   expiresAt: days(30),
+}
+
+const opsJobs = (): OpsResponse['jobs'] => [
+  {
+    name: 'threads-daily',
+    queue: 'daily-pipeline',
+    cron: '0 7 * * *',
+    last: {
+      state: 'completed',
+      created_at: hours(-20),
+      started_at: hours(-20),
+      completed_at: hours(-19.9),
+      error: null,
+    },
+    busy: false,
+  },
+  {
+    name: 'gift-collect',
+    queue: 'gift-collect',
+    cron: '0 9,15,21 * * *',
+    last: {
+      state: 'failed',
+      created_at: hours(-3),
+      started_at: hours(-3),
+      completed_at: hours(-3),
+      error: 'gift list page 1: 503 Service Unavailable',
+    },
+    busy: false,
+  },
+  {
+    name: 'musinsa-collect',
+    queue: 'musinsa-collect',
+    cron: '0 10,16,22 * * *',
+    last: {
+      state: 'active',
+      created_at: hours(-0.02),
+      started_at: hours(-0.02),
+      completed_at: null,
+      error: null,
+    },
+    busy: true,
+  },
+  {
+    name: 'campaign-maintenance',
+    queue: 'campaign-maintenance',
+    cron: '0 * * * *',
+    last: null,
+    busy: false,
+  },
+  {
+    name: 'collect-insights',
+    queue: 'collect-insights',
+    cron: '0 5 * * *',
+    last: {
+      state: 'completed',
+      created_at: hours(-8),
+      started_at: hours(-8),
+      completed_at: hours(-8),
+      error: null,
+    },
+    busy: false,
+  },
+]
+
+let mockOpsState = opsJobs()
+
+export const resetMockOps = () => {
+  mockOpsState = opsJobs()
+}
+
+export const mockOps = (): OpsResponse => ({
+  jobs: mockOpsState,
+  settings: {
+    dailyPostCount: 3,
+    publishSlots: ['09:00', '13:00', '19:00'],
+    threadChainEnabled: true,
+    threadsDryRun: false,
+    campaignDailyMax: 5,
+    campaignRankMode: 'rule',
+    timeZone: 'Asia/Seoul',
+  },
+  profile: {
+    about: '개발자이고 키보드·주변기기와 생활용품에 관심이 많아요.',
+    interests: ['키보드', '주변기기', '주방용품'],
+    preferKeywords: ['기계식', '무선'],
+    excludeKeywords: ['성인', '다이어트'],
+    excludeBrands: ['예시브랜드'],
+    maxCompetition: 500,
+    minPriceWon: 15000,
+    review: {
+      tone: '담백하고 솔직한 반말',
+      minChars: 300,
+      maxChars: 800,
+      points: ['쓴 기간', '좋았던 점', '아쉬운 점'],
+    },
+    disclosure: '[체험단으로 제품을 제공받아 작성한 후기예요]',
+  },
+})
+
+/** Queues a job like the server: a busy job answers `queued: false` and changes nothing. */
+export function mockRunOps(name: string): OpsRunResponse | 'not_found' {
+  const job = mockOpsState.find((j) => j.name === name)
+  if (!job) return 'not_found'
+  if (job.busy) return { ok: true, queued: false }
+  job.busy = true
+  job.last = {
+    state: 'created',
+    created_at: new Date().toISOString(),
+    started_at: null,
+    completed_at: null,
+    error: null,
+  }
+  return { ok: true, queued: true }
 }

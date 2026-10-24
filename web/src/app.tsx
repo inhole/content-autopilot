@@ -13,6 +13,7 @@ import { CampaignDetailPage, CampaignSheet } from '@/pages/campaign-detail.tsx'
 import { CampaignsPage } from '@/pages/campaigns.tsx'
 import { ExpiredPage } from '@/pages/expired.tsx'
 import { LoginPage } from '@/pages/login.tsx'
+import { OpsPage } from '@/pages/ops.tsx'
 import { OverviewPage } from '@/pages/overview.tsx'
 import { PostDetailPage, PostSheet } from '@/pages/post-detail.tsx'
 import { PostsPage } from '@/pages/posts.tsx'
@@ -72,6 +73,7 @@ export function AppRoutes() {
             <Route path="posts" element={<PostsPage />} />
             <Route path="posts/:id" element={<PostDetailPage />} />
             <Route path="expired" element={<ExpiredPage />} />
+            <Route path="ops" element={<OpsPage />} />
             <Route
               path="insights"
               element={
