@@ -1,5 +1,7 @@
 // Types only: nothing from src/ is bundled (verbatimModuleSyntax + `import type`).
 import type {
+  AuthCodeResponse,
+  AuthSessionResponse,
   CampaignDetailResponse,
   CampaignListResponse,
   InsightsResponse,
@@ -8,6 +10,8 @@ import type {
 } from '../../../src/web/api-types.ts'
 
 export type {
+  AuthCodeResponse,
+  AuthSessionResponse,
   CampaignDetailResponse,
   CampaignListResponse,
   InsightsResponse,

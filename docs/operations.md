@@ -143,7 +143,7 @@ select name, state, retry_count, output, created_on from pgboss.job order by cre
 - **Telegram polling은 한 곳에서만 한다.** 로컬에서 `npm start`를 켜 둔 채로 Railway 워커가 뜨면 두 워커가 polling을 놓고 충돌한다 (`409 Conflict`). 중복 발행은 일어나지 않지만 버튼 응답이 불안정해진다. 로컬에서는 CLI만 쓴다. Railway의 cloud 워커를 둘 이상 띄우지 않는다.
 - 워커는 시작할 때 migration을 자동으로 적용한다.
 - 환경변수를 바꾸면 Railway가 자동으로 재배포한다.
-- 웹 대시보드는 `DASHBOARD_PASSWORD`를 넣고 Networking에서 도메인을 만들면 켜진다. 자세한 내용은 [dashboard.md](dashboard.md)에 있다.
+- 웹 대시보드는 `TELEGRAM_BOT_TOKEN`과 `TELEGRAM_CHAT_ID`가 있으면 켜지고, Networking에서 도메인을 만들면 열린다. 로그인은 Telegram으로 받는 1회용 코드다. 자세한 내용은 [dashboard.md](dashboard.md)에 있다.
 
 ### CI 통과 후에만 배포 (Wait for CI)
 GitHub Actions(`.github/workflows/ci.yml`)는 main에 push하거나 PR을 올리면 실행된다.
@@ -211,7 +211,7 @@ CLI는 Telegram을 polling하지 않고 보내기만 한다. 워커가 실행 �
 
 1. `npm run cli -- gift:list`로 목록이 나오는지 본다(수백 건, `invalid 0` 근처).
 2. `npm run cli -- campaign:collect`로 한 번 돌려 카드가 오는지 본다. 사진이 보이고, 경쟁률과 `D-n (추정)`이 맞는지 본다. 선별은 기본으로 코드 규칙 점수라 LLM을 부르지 않는다(`CAMPAIGN_RANK_MODE=llm`이면 60건씩 LLM이 호출된다).
-3. Railway 변수에 `PUBLIC_BASE_URL`(대시보드 공개 주소, 예: `https://content-autopilot-production-8b81.up.railway.app`)을 넣고 `DASHBOARD_PASSWORD`도 켜 둔다. 둘 중 하나라도 없으면 버튼이 같은 이름(`📱 카카오톡에서 열기`)의 직접 gift.kakao.com 링크로 돌아간다. 카드의 `📱 카카오톡에서 열기`를 폰 Telegram에서 눌러 카카오톡 앱의 해당 체험단으로 열리는지 본다. 브라우저로 열리면 카톡에서 직접 찾아야 한다.
+3. Railway 변수에 `PUBLIC_BASE_URL`(대시보드 공개 주소, 예: `https://content-autopilot-production-8b81.up.railway.app`)을 넣고 대시보드를 켜 둔다(Telegram 설정이 있으면 켜진다). 둘 중 하나라도 없으면 버튼이 같은 이름(`📱 카카오톡에서 열기`)의 직접 gift.kakao.com 링크로 돌아간다. 카드의 `📱 카카오톡에서 열기`를 폰 Telegram에서 눌러 카카오톡 앱의 해당 체험단으로 열리는지 본다. 브라우저로 열리면 카톡에서 직접 찾아야 한다.
 4. 카드 몇 개를 `✅`/`🙅`로 처리하고 `/camps`, `/due`가 맞게 보이는지 본다.
 5. 무신사는 `npm run cli -- musinsa:list` → `musinsa:collect`로 같은 것을 확인한다(수백 건, `invalid 0`). 카드의 경쟁률, 정가, 발표일·리뷰 기간이 맞는지, `📱 무신사 앱에서 열기`가 폰에서는 무신사 앱, PC 브라우저에서는 웹으로 해당 체험단(`preuser/events/<번호>`)으로 열리는지 본다.
 6. 선별 품질이 별로면 `config/campaign-profile.json`의 `preferKeywords`(규칙 점수 +2), `interests`, `excludeKeywords`, `excludeBrands`, `maxCompetition`, `minPriceWon`(기본 30000원, 정가가 이보다 낮으면 제외)을 고친다. 카드와 `campaign:show <id>`의 선별 이유(`경쟁률 53:1 · 정가 115,000원 · 관심 키보드`)로 점수가 왜 나왔는지 본다. 원하지 않는 품목(예: 키즈)이 자꾸 오면 `excludeKeywords`에 넣는다. 프로필은 프로세스당 한 번 읽으므로 워커를 재시작한다.

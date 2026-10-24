@@ -70,9 +70,9 @@ export const schema = z.object({
   ASIDE_BIN: z.string().optional(),
   ASIDE_ACCOUNT: z.string().optional(),
 
-  // Read-only web dashboard (docs/dashboard.md). Off unless a password is set. Railway injects PORT.
+  // Web dashboard (docs/dashboard.md). Runs when Telegram is configured, since login codes are sent
+  // there. Railway injects PORT.
   PORT: z.coerce.number().int().min(1).max(65535).optional(),
-  DASHBOARD_PASSWORD: z.string().optional(),
   // Public https origin of the dashboard server (no path). Gift cards then open KakaoTalk through
   // `${PUBLIC_BASE_URL}/go/gift/<id>`; the dashboard must be enabled for that route to exist.
   PUBLIC_BASE_URL: z
@@ -88,6 +88,11 @@ export type Config = z.infer<typeof schema>
 export const config: Config = schema.parse(
   Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== '')),
 )
+
+/** The dashboard runs only where its login codes can reach the owner's Telegram chat. */
+export function dashboardEnabled(): boolean {
+  return Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID)
+}
 
 export function requireValue<K extends keyof Config>(key: K): NonNullable<Config[K]> {
   const value = config[key]

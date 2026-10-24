@@ -24,6 +24,8 @@ globalThis.ResizeObserver ??= class {
 Element.prototype.scrollIntoView ??= () => {}
 Element.prototype.hasPointerCapture ??= () => false
 Element.prototype.releasePointerCapture ??= () => {}
+// input-otp looks for password-manager badges with elementFromPoint, which jsdom lacks.
+document.elementFromPoint ??= () => null
 
 afterEach(() => {
   cleanup()

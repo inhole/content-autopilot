@@ -129,7 +129,7 @@
 | `MUSINSA_COLLECT_CRON` | `0 10,16,22 * * *` | 무신사 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 선별 규칙과 리뷰 문체, 광고 표기를 담은 프로필 파일 |
 
-선별은 기본으로 LLM 없이 돌고(`CAMPAIGN_RANK_MODE=llm`일 때만 `LLM_RANK_MODEL`), 리뷰 초안은 `LLM_MODEL`을 쓴다(2절). 카카오톡 카드 버튼이 카카오톡 앱으로 바로 열리게 하려면 `PUBLIC_BASE_URL`(대시보드 공개 https 주소, 경로 없이)도 넣는다([dashboard.md](dashboard.md)). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
+선별은 기본으로 LLM 없이 돌고(`CAMPAIGN_RANK_MODE=llm`일 때만 `LLM_RANK_MODEL`), 리뷰 초안은 `LLM_MODEL`을 쓴다(2절). 카카오톡 카드 버튼이 카카오톡 앱으로 바로 열리게 하려면 `PUBLIC_BASE_URL`(대시보드 공개 https 주소, 경로 없이)도 넣는다([dashboard.md](dashboard.md)). 웹 대시보드는 Telegram 설정이 있으면 켜지고, Telegram으로 받는 1회용 코드로 로그인한다([dashboard.md](dashboard.md)).
 
 ### 5-2. 프로필 `config/campaign-profile.json`
 

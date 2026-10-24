@@ -1,5 +1,5 @@
 import type { Bot } from 'grammy'
-import { config } from '../config.ts'
+import { config, dashboardEnabled } from '../config.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
 import { type CampaignCallback, parseCampaignCallback } from './callbacks.ts'
 import { GIFT_CAMPAIGN_ID_RE } from './gift.ts'
@@ -186,7 +186,7 @@ const cb = (
 
 /** Base of the public KakaoTalk hand-off route; null when it cannot work (no dashboard or no public URL). */
 export function handoffBaseUrl(): string | null {
-  return config.DASHBOARD_PASSWORD && config.PUBLIC_BASE_URL ? config.PUBLIC_BASE_URL : null
+  return dashboardEnabled() && config.PUBLIC_BASE_URL ? config.PUBLIC_BASE_URL : null
 }
 
 export function campaignCardButtons(

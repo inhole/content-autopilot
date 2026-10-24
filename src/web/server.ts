@@ -1,36 +1,58 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
 import { GIFT_CAMPAIGN_ID_RE, giftTrialUrl } from '../campaigns/gift.ts'
-import { config } from '../config.ts'
+import { telegramApi } from '../campaigns/tg.ts'
+import { config, dashboardEnabled } from '../config.ts'
 import { type ApiLoaders, handleApi } from './api.ts'
+import type { AuthSessionResponse } from './api-types.ts'
+import {
+  type ActiveSession,
+  type AdminAction,
+  CODE_MAX_ATTEMPTS,
+  CODE_REQUESTS_PER_HOUR,
+  CODE_TTL_MINUTES,
+  type CodeRequestResult,
+  csrfFor,
+  csrfMatches,
+  expireLoginCodes,
+  type LoginResult,
+  loadSession,
+  loginWithCode,
+  recordAdminAction,
+  requestLoginCode,
+  revokeAllSessions,
+  revokeSession,
+  SESSION_COOKIE,
+  SESSION_TTL_DAYS,
+} from './auth.ts'
 import {
   loadCampaignDetail,
   loadCampaignList,
   loadInsights,
   loadOverview,
   loadRecentPosts,
-  parseCampaignFilter,
-  parseCampaignSource,
 } from './data.ts'
-import { IMAGE_HOSTS } from './html.ts'
-import {
-  renderCampaignDetail,
-  renderCampaignList,
-  renderError,
-  renderNotFound,
-  renderOverview,
-  renderPosts,
-} from './pages.ts'
 import { defaultDistDir, hasBuild, lookupStatic } from './static.ts'
 
 export type DashboardLoaders = ApiLoaders
 
+/** Login and session storage (auth.ts); tests pass fakes. */
+export type AdminAuth = {
+  requestCode(ip: string | null): Promise<CodeRequestResult>
+  expireCodes(): Promise<void>
+  login(code: string, client: { ip: string | null; userAgent: string | null }): Promise<LoginResult>
+  loadSession(token: string): Promise<ActiveSession | null>
+  revokeSession(id: number): Promise<void>
+  revokeAll(): Promise<number>
+  record(action: AdminAction): Promise<void>
+}
+
 export type DashboardDeps = {
-  password: string
   loaders: DashboardLoaders
-  tz?: string
+  auth: AdminAuth
+  /** Sends a text to the owner's Telegram chat; rejects when it cannot. */
+  notify: (text: string) => Promise<void>
   now?: () => Date
-  /** Directory of the built React app; null disables it (legacy pages only). Default: web/dist. */
+  /** Directory of the built React app; null disables it. Default: web/dist. */
   webDist?: string | null
 }
 
@@ -42,16 +64,32 @@ const dbLoaders: DashboardLoaders = {
   insights: loadInsights,
 }
 
+const dbAuth: AdminAuth = {
+  requestCode: requestLoginCode,
+  expireCodes: () => expireLoginCodes(),
+  login: loginWithCode,
+  loadSession,
+  revokeSession,
+  revokeAll: revokeAllSessions,
+  record: recordAdminAction,
+}
+
+/** Hosts campaign thumbnails may be loaded from: the CSP `img-src` allowlist. */
+export const IMAGE_HOSTS = [
+  'st.kakaocdn.net',
+  't1.daumcdn.net',
+  'img1.kakaocdn.net',
+  'gift-s.kakaocdn.net',
+  'image.msscdn.net',
+] as const
 const IMG_HOSTS = IMAGE_HOSTS.map((h) => `https://${h}`).join(' ')
 
-/** CSP of the server-rendered pages (inline styles and scripts). */
-export const LEGACY_CSP = `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
 /** CSP of the React app: same-origin scripts only. */
 export const APP_CSP = `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
 const API_CSP = "default-src 'none'; frame-ancestors 'none'"
 
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': LEGACY_CSP,
+  'Content-Security-Policy': API_CSP,
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
@@ -90,21 +128,78 @@ p{color:#666;font-size:14px}
 </body></html>`
 }
 
-const sha256 = (s: string) => createHash('sha256').update(s).digest()
-
-/** Constant-time password check: both sides are hashed first so the buffers have equal length. */
-export function passwordMatches(given: string, expected: string): boolean {
-  return timingSafeEqual(sha256(given), sha256(expected))
+/** Value of one cookie, or undefined. */
+export function readCookie(header: string | undefined, name: string): string | undefined {
+  for (const part of header?.split(';') ?? []) {
+    const eq = part.indexOf('=')
+    if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim()
+  }
+  return undefined
 }
 
-/** True when the Authorization header carries HTTP Basic credentials with the right password. */
-export function isAuthorized(header: string | undefined, password: string): boolean {
-  if (!header?.startsWith('Basic ')) return false
-  const decoded = Buffer.from(header.slice(6).trim(), 'base64').toString('utf8')
-  const colon = decoded.indexOf(':')
-  if (colon < 0) return false
-  return passwordMatches(decoded.slice(colon + 1), password)
+// randomBytes(32) in base64url: anything else is not worth a DB lookup.
+const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
+
+const sessionCookie = (token: string) =>
+  `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL_DAYS * 86400}`
+const CLEAR_COOKIE = `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+
+/** Client IP for logs and alerts: the first X-Forwarded-For hop (Railway's proxy), else the socket. */
+export function clientIp(req: http.IncomingMessage): string | null {
+  const fwd = req.headers['x-forwarded-for']
+  const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim()
+  return (first || req.socket.remoteAddress) ?? null
 }
+
+/**
+ * A state-changing request must come from the dashboard itself: a JSON body (cross-site forms
+ * cannot send one without a CORS preflight, which is never answered), an Origin of this host,
+ * and, when the browser sends it, Sec-Fetch-Site same-origin.
+ */
+export function isSameOriginWrite(req: http.IncomingMessage): boolean {
+  if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) return false
+  const site = req.headers['sec-fetch-site']
+  if (site !== undefined && site !== 'same-origin') return false
+  const origin = req.headers.origin
+  if (!origin) return false
+  let host: string
+  try {
+    host = new URL(origin).host
+  } catch {
+    return false
+  }
+  const fwd = req.headers['x-forwarded-host']
+  const hosts = [req.headers.host, Array.isArray(fwd) ? fwd[0] : fwd]
+  if (config.PUBLIC_BASE_URL) hosts.push(new URL(config.PUBLIC_BASE_URL).host)
+  return hosts.includes(host)
+}
+
+const BODY_LIMIT = 4096
+
+class BadBody extends Error {}
+
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length
+    if (size > BODY_LIMIT) throw new BadBody('body too large')
+    chunks.push(chunk as Buffer)
+  }
+  if (size === 0) return {}
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    throw new BadBody('invalid json')
+  }
+}
+
+const kst = (d: Date) =>
+  new Intl.DateTimeFormat('ko-KR', {
+    timeZone: config.TZ_NAME,
+    dateStyle: 'short',
+    timeStyle: 'medium',
+  }).format(d)
 
 function sendJson(
   req: http.IncomingMessage,
@@ -113,14 +208,7 @@ function sendJson(
   body: unknown,
   extra: Record<string, string> = {},
 ): void {
-  send(
-    req,
-    res,
-    status,
-    JSON.stringify(body),
-    { 'Content-Security-Policy': API_CSP, ...extra },
-    'application/json; charset=utf-8',
-  )
+  send(req, res, status, JSON.stringify(body), extra, 'application/json; charset=utf-8')
 }
 
 function send(
@@ -129,7 +217,7 @@ function send(
   status: number,
   body: string | Buffer,
   extra: Record<string, string> = {},
-  type = 'text/html; charset=utf-8',
+  type = 'text/plain; charset=utf-8',
 ): void {
   res.writeHead(status, {
     ...SECURITY_HEADERS,
@@ -140,10 +228,157 @@ function send(
   res.end(req.method === 'HEAD' ? undefined : body)
 }
 
+const AUTH_ROUTES: Record<string, 'GET' | 'POST'> = {
+  '/api/auth/session': 'GET',
+  '/api/auth/code': 'POST',
+  '/api/auth/login': 'POST',
+  '/api/auth/logout': 'POST',
+  '/api/auth/logout-all': 'POST',
+}
+
 export function createRequestHandler(deps: DashboardDeps) {
-  const tz = deps.tz ?? config.TZ_NAME
   const nowFn = deps.now ?? (() => new Date())
   const distDir = deps.webDist === undefined ? defaultDistDir() : deps.webDist
+  const { auth } = deps
+
+  // Alerts are best effort: a Telegram outage must not turn a login into an error.
+  const alert = (text: string) =>
+    deps.notify(text).catch((err: unknown) => {
+      console.error('dashboard alert failed:', (err as Error).message)
+    })
+
+  /** The session of the request's cookie, with its token (for the CSRF check). */
+  async function sessionOf(
+    req: http.IncomingMessage,
+  ): Promise<{ token: string; session: ActiveSession } | null> {
+    const token = readCookie(req.headers.cookie, SESSION_COOKIE)
+    if (!token || !TOKEN_RE.test(token)) return null
+    const session = await auth.loadSession(token)
+    return session ? { token, session } : null
+  }
+
+  async function handleAuth(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    path: string,
+  ): Promise<void> {
+    const ip = clientIp(req)
+    if (path === '/api/auth/session') {
+      const current = await sessionOf(req)
+      const body: AuthSessionResponse = current
+        ? {
+            authenticated: true,
+            csrf: csrfFor(current.token),
+            expiresAt: current.session.expiresAt.toISOString(),
+          }
+        : { authenticated: false }
+      sendJson(req, res, 200, body)
+      return
+    }
+    if (!isSameOriginWrite(req)) {
+      sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
+      return
+    }
+
+    if (path === '/api/auth/code') {
+      const r = await auth.requestCode(ip)
+      if (!r.ok) {
+        await auth.record({ sessionId: null, action: 'code_request', result: r.reason, ip })
+        if (r.reason === 'hourly_limit' && r.firstLimitHit) {
+          await alert(
+            `⚠️ 관리자 콘솔 로그인 코드 요청이 한 시간 한도(${CODE_REQUESTS_PER_HOUR}회)를 넘었어요\nIP: ${ip ?? '-'}`,
+          )
+        }
+        const message =
+          r.reason === 'too_soon'
+            ? `${r.retryAfterS}초 뒤에 다시 요청해 주세요`
+            : '요청이 너무 많아요. 잠시 뒤에 다시 해 주세요'
+        sendJson(
+          req,
+          res,
+          429,
+          { error: message, retryAfter: r.retryAfterS },
+          {
+            'Retry-After': String(r.retryAfterS),
+          },
+        )
+        return
+      }
+      try {
+        await deps.notify(
+          `🔐 관리자 콘솔 로그인 코드: ${r.code}\n${CODE_TTL_MINUTES}분 동안 한 번만 쓸 수 있어요\nIP: ${ip ?? '-'}\n직접 요청하지 않았다면 무시하세요`,
+        )
+      } catch (err) {
+        console.error('login code send failed:', (err as Error).message)
+        await auth.expireCodes()
+        await auth.record({ sessionId: null, action: 'code_request', result: 'send_failed', ip })
+        sendJson(req, res, 502, { error: 'Telegram으로 코드를 보내지 못했어요' })
+        return
+      }
+      await auth.record({ sessionId: null, action: 'code_request', result: 'ok', ip })
+      sendJson(req, res, 200, { expiresAt: r.expiresAt.toISOString() })
+      return
+    }
+
+    if (path === '/api/auth/login') {
+      const body = await readJson(req)
+      const code = (body as { code?: unknown } | null)?.code
+      if (typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+        sendJson(req, res, 400, { error: '6자리 숫자 코드를 넣어 주세요' })
+        return
+      }
+      const userAgent = req.headers['user-agent'] ?? null
+      const r = await auth.login(code, { ip, userAgent })
+      if (!r.ok) {
+        await auth.record({ sessionId: null, action: 'login', result: r.reason, ip })
+        if (r.reason === 'locked') {
+          await alert(
+            `⚠️ 관리자 콘솔 로그인 코드를 ${CODE_MAX_ATTEMPTS}번 틀려서 그 코드를 막았어요\nIP: ${ip ?? '-'}`,
+          )
+          sendJson(req, res, 429, { error: '시도 횟수를 넘었어요. 새 코드를 받아 주세요' })
+        } else if (r.reason === 'no_code') {
+          sendJson(req, res, 400, { error: '유효한 코드가 없어요. 코드를 다시 받아 주세요' })
+        } else if (r.reason === 'wrong') {
+          sendJson(req, res, 401, {
+            error: `코드가 맞지 않아요 (남은 시도 ${r.attemptsLeft}번)`,
+          })
+        }
+        return
+      }
+      await auth.record({ sessionId: r.session.id, action: 'login', result: 'ok', ip })
+      await alert(`🔐 관리자 콘솔 로그인\n${kst(nowFn())}\nIP: ${ip ?? '-'}`)
+      const out: AuthSessionResponse = {
+        authenticated: true,
+        csrf: r.session.csrf,
+        expiresAt: r.session.expiresAt.toISOString(),
+      }
+      sendJson(req, res, 200, out, { 'Set-Cookie': sessionCookie(r.session.token) })
+      return
+    }
+
+    // logout, logout-all: a session and its CSRF token are required.
+    const current = await sessionOf(req)
+    if (!current) {
+      sendJson(req, res, 401, { error: '로그인이 필요해요' }, { 'Set-Cookie': CLEAR_COOKIE })
+      return
+    }
+    const csrf = req.headers['x-csrf-token']
+    if (!csrfMatches(current.token, Array.isArray(csrf) ? csrf[0] : csrf)) {
+      sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
+      return
+    }
+    const sessionId = current.session.id
+    if (path === '/api/auth/logout') {
+      await auth.revokeSession(sessionId)
+      await auth.record({ sessionId, action: 'logout', result: 'ok', ip })
+      sendJson(req, res, 200, { ok: true }, { 'Set-Cookie': CLEAR_COOKIE })
+      return
+    }
+    const revoked = await auth.revokeAll()
+    await auth.record({ sessionId, action: 'logout_all', result: 'ok', ip, detail: { revoked } })
+    await alert(`🔐 관리자 콘솔의 모든 세션(${revoked}개)을 끊었어요\nIP: ${ip ?? '-'}`)
+    sendJson(req, res, 200, { ok: true, revoked }, { 'Set-Cookie': CLEAR_COOKIE })
+  }
 
   return async function handleRequest(
     req: http.IncomingMessage,
@@ -153,57 +388,60 @@ export function createRequestHandler(deps: DashboardDeps) {
     try {
       url = new URL(req.url ?? '/', 'http://dashboard.local')
     } catch {
-      send(req, res, 400, 'Bad Request', {}, 'text/plain; charset=utf-8')
+      send(req, res, 400, 'Bad Request')
       return
     }
     const path = url.pathname
-    const isApi = path === '/api' || path.startsWith('/api/')
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      if (isApi) {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'GET, HEAD' })
-      } else {
-        send(
-          req,
-          res,
-          405,
-          'Method Not Allowed',
-          { Allow: 'GET, HEAD' },
-          'text/plain; charset=utf-8',
-        )
+    const isRead = req.method === 'GET' || req.method === 'HEAD'
+
+    if (path.startsWith('/api/auth/') && AUTH_ROUTES[path]) {
+      const method = AUTH_ROUTES[path]
+      if (method === 'GET' ? !isRead : req.method !== 'POST') {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: method })
+        return
       }
+      try {
+        await handleAuth(req, res, path)
+      } catch (err) {
+        if (err instanceof BadBody) {
+          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+          return
+        }
+        console.error('dashboard auth request failed:', err)
+        sendJson(req, res, 500, { error: 'internal error' })
+      }
+      return
+    }
+
+    const isApi = path === '/api' || path.startsWith('/api/')
+    if (!isRead) {
+      if (isApi) sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'GET, HEAD' })
+      else send(req, res, 405, 'Method Not Allowed', { Allow: 'GET, HEAD' })
       return
     }
 
     if (path === '/healthz') {
-      send(req, res, 200, 'ok', {}, 'text/plain; charset=utf-8')
+      send(req, res, 200, 'ok')
       return
     }
-    // Public hand-off to KakaoTalk (the phone's browser has no dashboard password). Strict id only.
+    // Public hand-off to KakaoTalk (the phone's browser has no dashboard session). Strict id only.
     if (path.startsWith('/go/')) {
       const m = /^\/go\/gift\/([^/]+)$/.exec(path)
       if (m?.[1] && GIFT_CAMPAIGN_ID_RE.test(m[1])) {
-        send(req, res, 200, renderGiftHandoff(m[1]), HANDOFF_HEADERS)
+        send(req, res, 200, renderGiftHandoff(m[1]), HANDOFF_HEADERS, 'text/html; charset=utf-8')
       } else {
-        send(req, res, 404, 'Not Found', HANDOFF_HEADERS, 'text/plain; charset=utf-8')
+        send(req, res, 404, 'Not Found', HANDOFF_HEADERS)
       }
       return
     }
-    if (!isAuthorized(req.headers.authorization, deps.password)) {
-      send(
-        req,
-        res,
-        401,
-        'Unauthorized',
-        { 'WWW-Authenticate': 'Basic realm="content-autopilot"' },
-        'text/plain; charset=utf-8',
-      )
-      return
-    }
 
-    const ctx = { now: nowFn(), tz }
     if (isApi) {
       try {
-        const result = await handleApi(path, url.searchParams, deps.loaders, ctx.now)
+        if (!(await sessionOf(req))) {
+          sendJson(req, res, 401, { error: '로그인이 필요해요' })
+          return
+        }
+        const result = await handleApi(path, url.searchParams, deps.loaders, nowFn())
         sendJson(req, res, result.status, result.body)
       } catch (err) {
         console.error('dashboard api request failed:', err)
@@ -211,52 +449,33 @@ export function createRequestHandler(deps: DashboardDeps) {
       }
       return
     }
+
+    // The app shell and its assets hold no data, so they load without a session: the app shows
+    // the login screen until /api/auth/session says otherwise.
     try {
-      if (distDir && (await hasBuild(distDir))) {
-        const file = await lookupStatic(distDir, path)
-        if (file === 'bad') send(req, res, 400, 'Bad Request', {}, 'text/plain; charset=utf-8')
-        else if (!file) send(req, res, 404, 'Not Found', {}, 'text/plain; charset=utf-8')
-        else {
-          send(
-            req,
-            res,
-            200,
-            file.body,
-            {
-              'Content-Security-Policy': APP_CSP,
-              'Cache-Control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-store',
-            },
-            file.type,
-          )
-        }
+      if (!distDir || !(await hasBuild(distDir))) {
+        send(req, res, 503, 'Dashboard build missing: run npm run build:web')
         return
       }
-      if (path === '/') {
-        send(req, res, 200, renderOverview(await deps.loaders.overview(), ctx))
-        return
+      const file = await lookupStatic(distDir, path)
+      if (file === 'bad') send(req, res, 400, 'Bad Request')
+      else if (!file) send(req, res, 404, 'Not Found')
+      else {
+        send(
+          req,
+          res,
+          200,
+          file.body,
+          {
+            'Content-Security-Policy': APP_CSP,
+            'Cache-Control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+          },
+          file.type,
+        )
       }
-      if (path === '/campaigns') {
-        const filter = parseCampaignFilter(url.searchParams.get('status'))
-        const source = parseCampaignSource(url.searchParams.get('source'))
-        const rows = await deps.loaders.campaigns(filter, source)
-        send(req, res, 200, renderCampaignList(rows, filter, ctx, source))
-        return
-      }
-      const detail = /^\/campaigns\/(\d{1,15})$/.exec(path)
-      if (detail) {
-        const data = await deps.loaders.campaign(Number(detail[1]))
-        if (!data) send(req, res, 404, renderNotFound())
-        else send(req, res, 200, renderCampaignDetail(data, ctx))
-        return
-      }
-      if (path === '/posts') {
-        send(req, res, 200, renderPosts(await deps.loaders.posts(50), ctx))
-        return
-      }
-      send(req, res, 404, renderNotFound())
     } catch (err) {
       console.error('dashboard request failed:', err)
-      send(req, res, 500, renderError())
+      send(req, res, 500, 'Internal Server Error')
     }
   }
 }
@@ -266,20 +485,27 @@ export function createDashboardServer(deps: DashboardDeps): http.Server {
   return http.createServer((req, res) => {
     handler(req, res).catch((err) => {
       console.error('dashboard handler crashed:', err)
-      if (!res.headersSent) send(req, res, 500, 'Internal Server Error', {}, 'text/plain')
+      if (!res.headersSent) send(req, res, 500, 'Internal Server Error')
       else res.end()
     })
   })
 }
 
-/** Starts the read-only dashboard, or returns null (and says why) when no password is set. */
+/** Sends to the owner's chat; unlike the campaign sender it never falls back to logging. */
+async function notifyOwner(text: string): Promise<void> {
+  const api = telegramApi()
+  const chatId = config.TELEGRAM_CHAT_ID
+  if (!api || !chatId) throw new Error('Telegram is not configured')
+  await api.sendMessage(chatId, text, { link_preview_options: { is_disabled: true } })
+}
+
+/** Starts the dashboard, or returns null (and says why) when Telegram login is not possible. */
 export async function startDashboard(): Promise<{ close(): Promise<void> } | null> {
-  const password = config.DASHBOARD_PASSWORD
-  if (!password) {
-    console.log('dashboard disabled: DASHBOARD_PASSWORD is not set')
+  if (!dashboardEnabled()) {
+    console.log('dashboard disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are needed to log in')
     return null
   }
-  const server = createDashboardServer({ password, loaders: dbLoaders })
+  const server = createDashboardServer({ loaders: dbLoaders, auth: dbAuth, notify: notifyOwner })
   const port = config.PORT ?? 8080
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)

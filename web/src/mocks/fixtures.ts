@@ -1,4 +1,5 @@
 import type {
+  AuthSessionResponse,
   CampaignDetailResponse,
   CampaignRow,
   InsightsResponse,
@@ -274,4 +275,10 @@ export const insightsFixture = (nDays: number): InsightsResponse => {
       },
     ],
   }
+}
+
+export const sessionFixture: AuthSessionResponse = {
+  authenticated: true,
+  csrf: 'mock-csrf',
+  expiresAt: days(30),
 }

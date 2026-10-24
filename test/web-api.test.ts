@@ -7,9 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
 import type { CampaignListRow } from '../src/web/data.ts'
 import { createDashboardServer, type DashboardLoaders } from '../src/web/server.ts'
+import { fakeAuth, SESSION_HEADERS } from './fake-auth.ts'
 
-const PASSWORD = 's3cret'
-const A = { Authorization: `Basic ${Buffer.from(`me:${PASSWORD}`).toString('base64')}` }
+const A = SESSION_HEADERS
 const NOW = new Date('2026-10-18T03:00:00Z')
 
 const calls: { campaigns: unknown[]; posts: number[]; insights: unknown[] } = {
@@ -121,15 +121,18 @@ writeFileSync(path.join(tmp, 'web', 'secret.txt'), 'secret')
 
 let appBase = ''
 let legacyBase = ''
+const notify = async () => {}
 const app = createDashboardServer({
-  password: PASSWORD,
   loaders,
+  auth: fakeAuth().auth,
+  notify,
   now: () => NOW,
   webDist: buildDir,
 })
 const legacy = createDashboardServer({
-  password: PASSWORD,
   loaders,
+  auth: fakeAuth().auth,
+  notify,
   now: () => NOW,
   webDist: missingDist,
 })
@@ -158,7 +161,7 @@ function raw(port: number, target: string): Promise<{ status: number; body: stri
   return new Promise((resolve, reject) => {
     const s = net.connect(port, '127.0.0.1', () =>
       s.write(
-        `GET ${target} HTTP/1.1\r\nHost: x\r\nAuthorization: ${A.Authorization}\r\nConnection: close\r\n\r\n`,
+        `GET ${target} HTTP/1.1\r\nHost: x\r\nCookie: ${A.Cookie}\r\nConnection: close\r\n\r\n`,
       ),
     )
     let data = ''
@@ -176,15 +179,22 @@ function raw(port: number, target: string): Promise<{ status: number; body: stri
 }
 
 describe('api', () => {
-  it('requires auth on every /api route', async () => {
+  it('requires a live session on every /api route', async () => {
+    const stale = { Cookie: `ca_session=${'b'.repeat(43)}` }
+    const malformed = { Cookie: 'ca_session=short' }
     for (const p of [
       '/api/overview',
       '/api/campaigns',
       '/api/campaigns/7',
       '/api/posts',
       '/api/insights',
+      '/api/nope',
     ]) {
-      expect((await get(p, appBase, {})).status).toBe(401)
+      for (const headers of [{}, stale, malformed]) {
+        const res = await get(p, appBase, headers)
+        expect(res.status, p).toBe(401)
+        expect(await res.json()).toEqual({ error: '로그인이 필요해요' })
+      }
     }
   })
   it('json headers', async () => {
@@ -297,9 +307,10 @@ describe('react build serving', () => {
     expect((await get('/font.woff2')).headers.get('content-type')).toBe('font/woff2')
     expect((await get('/favicon.svg')).headers.get('cache-control')).toBe('no-store')
   })
-  it('static files need auth, except /healthz', async () => {
-    expect((await get('/assets/app-abc123.js', appBase, {})).status).toBe(401)
-    expect((await get('/', appBase, {})).status).toBe(401)
+  it('serves the app shell without a session (it holds no data)', async () => {
+    expect((await get('/assets/app-abc123.js', appBase, {})).status).toBe(200)
+    expect((await get('/', appBase, {})).status).toBe(200)
+    expect((await get('/login', appBase, {})).status).toBe(200)
     expect((await get('/healthz', appBase, {})).status).toBe(200)
   })
   it('falls back to index.html for client routes, with the app CSP', async () => {
@@ -342,15 +353,12 @@ describe('react build serving', () => {
   })
 })
 
-describe('legacy fallback without a build', () => {
-  it('serves the server-rendered pages with the legacy CSP', async () => {
-    const res = await get('/', legacyBase)
-    expect(res.status).toBe(200)
-    expect(await res.text()).toContain('현황')
-    const csp = res.headers.get('content-security-policy') ?? ''
-    expect(csp).toContain("script-src 'unsafe-inline'")
-    expect(csp).toContain("style-src 'unsafe-inline'")
-    expect((await get('/posts', legacyBase)).status).toBe(200)
-    expect((await get('/nope', legacyBase)).status).toBe(404)
+describe('without a build', () => {
+  it('answers 503 for app routes', async () => {
+    for (const p of ['/', '/posts', '/nope']) {
+      const res = await get(p, legacyBase)
+      expect(res.status).toBe(503)
+      expect(await res.text()).toContain('build:web')
+    }
   })
 })
