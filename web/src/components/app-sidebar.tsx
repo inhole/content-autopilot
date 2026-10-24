@@ -1,5 +1,6 @@
 import {
   ActivityIcon,
+  ArchiveRestoreIcon,
   BarChart3Icon,
   GiftIcon,
   LayoutDashboardIcon,
@@ -35,6 +36,12 @@ export const NAV = [
     label: 'Threads 글',
     icon: MessageSquareTextIcon,
     match: (p: string) => p.startsWith('/posts'),
+  },
+  {
+    to: '/expired',
+    label: '만료 초안',
+    icon: ArchiveRestoreIcon,
+    match: (p: string) => p.startsWith('/expired'),
   },
   {
     to: '/insights',

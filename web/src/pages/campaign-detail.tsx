@@ -102,7 +102,7 @@ export function musinsaFacts(c: Pick<Campaign, 'source' | 'detail'>) {
   }
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-[6.5rem_1fr] gap-3 py-2 text-sm">
       <dt className="text-muted-foreground">{label}</dt>
@@ -112,7 +112,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** A definition list whose rows are divided by Separators. */
-function FieldList({ children }: { children: ReactNode }) {
+export function FieldList({ children }: { children: ReactNode }) {
   const rows = Children.toArray(children).filter(Boolean)
   return (
     <dl className="flex flex-col">
@@ -127,7 +127,7 @@ function FieldList({ children }: { children: ReactNode }) {
   )
 }
 
-function Section({
+export function Section({
   title,
   description,
   children,
@@ -324,7 +324,7 @@ export function CampaignDetailView({
   )
 }
 
-function DetailSkeleton() {
+export function DetailSkeleton() {
   return (
     <div className="flex flex-col gap-4" role="status" aria-label="불러오는 중">
       <div className="flex gap-4">
@@ -340,7 +340,7 @@ function DetailSkeleton() {
   )
 }
 
-const parseId = (raw: string | undefined) => {
+export const parseId = (raw: string | undefined) => {
   const n = Number(raw)
   return Number.isInteger(n) && n > 0 ? n : null
 }
