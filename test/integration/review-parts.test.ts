@@ -22,7 +22,9 @@ const texts = async (postId: number) => (await loadParts(postId)).map((p) => [p.
 describe('applyReviewEdit', () => {
   it('edits a follow-up and bumps the revision', async () => {
     const id = await seedReview(['a', 'b'])
-    expect(await applyReviewEdit(id, MSG, { kind: 'edit', idx: 3, text: 'B' })).toEqual({
+    expect(
+      await applyReviewEdit(id, { replyTo: MSG }, { kind: 'edit', idx: 3, text: 'B' }),
+    ).toEqual({
       ok: true,
     })
     expect(await texts(id)).toEqual([
@@ -34,7 +36,7 @@ describe('applyReviewEdit', () => {
 
   it('edits the main text with 수정1', async () => {
     const id = await seedReview(['a'])
-    await applyReviewEdit(id, MSG, { kind: 'edit', idx: 1, text: 'new main' })
+    await applyReviewEdit(id, { replyTo: MSG }, { kind: 'edit', idx: 1, text: 'new main' })
     const [row] = await query<{ text: string }>('select text from posts where id = $1', [id])
     expect(row?.text).toBe('new main')
     expect(await texts(id)).toEqual([[2, 'a']])
@@ -42,17 +44,21 @@ describe('applyReviewEdit', () => {
 
   it('renumbers after a delete', async () => {
     const id = await seedReview(['a', 'b'])
-    expect(await applyReviewEdit(id, MSG, { kind: 'delete', idx: 2 })).toEqual({ ok: true })
+    expect(await applyReviewEdit(id, { replyTo: MSG }, { kind: 'delete', idx: 2 })).toEqual({
+      ok: true,
+    })
     expect(await texts(id)).toEqual([[2, 'b']])
     expect((await getPost(id)).revision).toBe(2)
   })
 
   it('changes nothing with a stale message or revision', async () => {
     const id = await seedReview(['a'])
-    const stale = await applyReviewEdit(id, MSG + 1, { kind: 'delete', idx: 2 })
+    const stale = await applyReviewEdit(id, { replyTo: MSG + 1 }, { kind: 'delete', idx: 2 })
     expect(stale).toMatchObject({ ok: false, reason: 'stale' })
     await query('update posts set revision = revision + 1 where id = $1', [id])
-    expect(await applyReviewEdit(id, MSG, { kind: 'edit', idx: 2, text: 'x' })).toMatchObject({
+    expect(
+      await applyReviewEdit(id, { replyTo: MSG }, { kind: 'edit', idx: 2, text: 'x' }),
+    ).toMatchObject({
       ok: false,
       reason: 'stale',
     })
@@ -63,7 +69,7 @@ describe('applyReviewEdit', () => {
   it('refuses a post that is no longer pending', async () => {
     const id = await seedReview(['a'])
     await query("update posts set status = 'SCHEDULED' where id = $1", [id])
-    expect(await applyReviewEdit(id, MSG, { kind: 'delete', idx: 2 })).toMatchObject({
+    expect(await applyReviewEdit(id, { replyTo: MSG }, { kind: 'delete', idx: 2 })).toMatchObject({
       ok: false,
       reason: 'stale',
     })
@@ -80,7 +86,10 @@ describe('applyReviewEdit', () => {
       { kind: 'edit', idx: 3, text: 'x'.repeat(lastFollowupLimit(config.THREAD_CTA_TEXT) + 1) },
     ] as const
     for (const op of bad) {
-      expect(await applyReviewEdit(id, MSG, op)).toMatchObject({ ok: false, reason: 'invalid' })
+      expect(await applyReviewEdit(id, { replyTo: MSG }, op)).toMatchObject({
+        ok: false,
+        reason: 'invalid',
+      })
     }
     expect(await texts(id)).toEqual([
       [2, 'a'],
@@ -95,7 +104,9 @@ describe('applyReviewEdit', () => {
       // With a CTA the 500-char part no longer fits as the last reply.
       config.THREAD_CTA_TEXT = '팔로우'
       const withCta = await seedReview(['y'.repeat(500), 'z'])
-      expect(await applyReviewEdit(withCta, MSG, { kind: 'delete', idx: 3 })).toMatchObject({
+      expect(
+        await applyReviewEdit(withCta, { replyTo: MSG }, { kind: 'delete', idx: 3 }),
+      ).toMatchObject({
         ok: false,
         reason: 'invalid',
       })
@@ -103,7 +114,9 @@ describe('applyReviewEdit', () => {
 
       config.THREAD_CTA_TEXT = undefined
       const noCta = await seedReview(['y'.repeat(500), 'z'])
-      expect(await applyReviewEdit(noCta, MSG, { kind: 'delete', idx: 3 })).toEqual({ ok: true })
+      expect(await applyReviewEdit(noCta, { replyTo: MSG }, { kind: 'delete', idx: 3 })).toEqual({
+        ok: true,
+      })
     } finally {
       config.THREAD_CTA_TEXT = original
     }
@@ -128,7 +141,7 @@ describe('applyReviewEdit with per-part links (digest chains)', () => {
 
   it('keeps every link when a part is edited', async () => {
     const id = await seedDigestReview()
-    await applyReviewEdit(id, MSG, { kind: 'edit', idx: 2, text: 'B' })
+    await applyReviewEdit(id, { replyTo: MSG }, { kind: 'edit', idx: 2, text: 'B' })
     expect(await links(id)).toEqual([
       [2, 'B', 'https://b.example'],
       [3, 'c', 'https://c.example'],
@@ -137,7 +150,7 @@ describe('applyReviewEdit with per-part links (digest chains)', () => {
 
   it('moves the remaining link with its part on delete', async () => {
     const id = await seedDigestReview()
-    await applyReviewEdit(id, MSG, { kind: 'delete', idx: 2 })
+    await applyReviewEdit(id, { replyTo: MSG }, { kind: 'delete', idx: 2 })
     expect(await links(id)).toEqual([[2, 'c', 'https://c.example']])
   })
 })

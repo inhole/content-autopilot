@@ -3,9 +3,7 @@ import { REVIEW_HELP_LINES } from '../campaigns/review-telegram.ts'
 import { CAMPAIGN_BOT_COMMANDS, CAMPAIGN_HELP_LINES } from '../campaigns/telegram.ts'
 import { config } from '../config.ts'
 import { query, transaction } from '../db/pool.ts'
-import { urlHash } from '../lib/url.ts'
-import { fetchArticle } from '../pipeline/article.ts'
-import { addManualTopic } from '../pipeline/collect.ts'
+import { addTopicFromUrl } from '../pipeline/add-topic.ts'
 import { DIGEST_BOT_COMMANDS, DIGEST_HELP_LINES } from '../pipeline/digest-jobs.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
 import {
@@ -152,6 +150,8 @@ export type Reviewer = {
    * the failed parts back in the queue (retryFailedParts).
    */
   notifyChainFailure(postId: number, error: string): Promise<void>
+  /** The `✅ 승인` confirmation with the ⏪ 예약 취소 / 🚀 지금 발행 buttons bound to slot `at`. */
+  notifyApproved(postId: number, at: Date): Promise<void>
 }
 
 export function formatChainFailure(postId: number, error: string): string {
@@ -167,6 +167,19 @@ const fmtTime = (d: Date) =>
     hour: '2-digit',
     minute: '2-digit',
   })
+
+// Confirmation texts shared by the bot and the web console, so both sides send identical messages.
+export const approvedText = (postId: number, at: Date) =>
+  `✅ #${postId} 승인 · ${fmtTime(at)} 발행 예정`
+export const rejectedText = (postId: number, reason: RejectReason) =>
+  `🗑 #${postId} 폐기 (${REJECT_REASONS[reason]})`
+export const unscheduledText = (postId: number) =>
+  `⏪ #${postId} 예약 취소 · 검수 대기로 되돌렸어요`
+export const publishNowText = (postId: number) =>
+  `🚀 #${postId} 5분 안에 발행돼요 (다음 발행 확인 주기)`
+export const chainRetryText = (postId: number, count: number) =>
+  `🔁 #${postId} 답글 ${count}개를 5분 안에 다시 발행해요`
+export const regenText = (postId: number) => `🔁 #${postId} 재생성 중…`
 
 export type ReviewReply =
   | { kind: 'edit'; idx: number; text: string }
@@ -245,23 +258,34 @@ export type ReviewEditResult =
 const STALE_MESSAGE = '이미 처리됐거나 최신 초안이 아니라서 수정하지 못했어요.'
 
 /**
- * Applies an edit/delete from a reply to the review message `replyTo`. The post row is locked
+ * What an edit is bound to: the Telegram review message it was a reply to, or (web console) the
+ * revision the page displayed.
+ */
+export type ReviewEditGuard = { replyTo: number } | { revision: number }
+
+/**
+ * Applies an edit/delete bound to `guard` (a reply to a review message, or the revision the web
+ * page displayed; both only count while the post is PENDING_REVIEW). The post row is locked
  * with the review guards first, so the parts that get validated and rewritten are the ones the
  * revision bump covers. Validation failures change nothing. On `ok` the caller re-sends the review.
  */
 export async function applyReviewEdit(
   postId: number,
-  replyTo: number,
+  guard: ReviewEditGuard,
   op: ReviewEdit,
 ): Promise<ReviewEditResult> {
   const invalid = (message: string): ReviewEditResult => ({ ok: false, reason: 'invalid', message })
   return transaction(async (q) => {
     const [post] = await q<{ text: string }>(
-      `select text from posts
-       where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $2
-         and review_revision = revision
-       for update`,
-      [postId, replyTo],
+      'replyTo' in guard
+        ? `select text from posts
+           where id = $1 and status = 'PENDING_REVIEW' and review_message_id = $2
+             and review_revision = revision
+           for update`
+        : `select text from posts
+           where id = $1 and status = 'PENDING_REVIEW' and revision = $2
+           for update`,
+      [postId, 'replyTo' in guard ? guard.replyTo : guard.revision],
     )
     if (!post) return { ok: false, reason: 'stale', message: STALE_MESSAGE }
     const loaded = await loadParts(postId, q)
@@ -393,6 +417,9 @@ export function createReviewer(opts: {
       async notifyChainFailure(postId, error) {
         console.log(`[notify] ${formatChainFailure(postId, error)}`)
       },
+      async notifyApproved(postId, at) {
+        console.log(`[notify] ${approvedText(postId, at)}`)
+      },
     }
   }
 
@@ -439,21 +466,12 @@ export function createReviewer(opts: {
       return
     }
     const { url, note } = parsed
-    const [covered] = await query<{ id: number; status: string }>(
-      `select p.id, p.status from posts p join topics t on t.id = p.topic_id
-       where t.url_hash = $1 order by p.id desc limit 1`,
-      [urlHash(url)],
-    )
-    if (covered) {
-      await ctx.reply(`이미 다룬 기사예요 (#${covered.id}, ${covered.status})`)
+    const added = await addTopicFromUrl(url, note)
+    if ('covered' in added) {
+      await ctx.reply(`이미 다룬 기사예요 (#${added.covered.postId}, ${added.covered.status})`)
       return
     }
-    // A failed fetch must not block adding the topic; generation fetches the body again anyway.
-    const title = await fetchArticle(url)
-      .then((a) => a?.title?.trim() || url)
-      .catch(() => url)
-    const topicId = await addManualTopic(title, url, note)
-    await opts.onAddTopic(topicId)
+    await opts.onAddTopic(added.topicId)
     await ctx.reply(`📥 주제 추가 · 초안 생성 중…${note ? `\n의견: ${note}` : ''}`)
   })
 
@@ -464,7 +482,7 @@ export function createReviewer(opts: {
         const reset = await retryFailedParts(chainPostId)
         await ctx.editMessageReplyMarkup().catch(() => {})
         await ctx.answerCallbackQuery(reset ? {} : { text: '다시 시도할 답글이 없어요' })
-        if (reset) await ctx.reply(`🔁 #${chainPostId} 답글 ${reset}개를 5분 안에 다시 발행해요`)
+        if (reset) await ctx.reply(chainRetryText(chainPostId, reset))
       } catch (err) {
         await ctx
           .answerCallbackQuery({ text: (err as Error).message.slice(0, 180) })
@@ -487,10 +505,10 @@ export function createReviewer(opts: {
         }
         await ctx.answerCallbackQuery()
         if (sched.action === 'unsched') {
-          await ctx.reply(`⏪ #${sched.postId} 예약 취소 · 검수 대기로 되돌렸어요`)
+          await ctx.reply(unscheduledText(sched.postId))
           await reviewer.sendForReview(sched.postId)
         } else {
-          await ctx.reply(`🚀 #${sched.postId} 5분 안에 발행돼요 (다음 발행 확인 주기)`)
+          await ctx.reply(publishNowText(sched.postId))
         }
       } catch (err) {
         await ctx
@@ -531,9 +549,7 @@ export function createReviewer(opts: {
         // The revision guard closes the gap between this check and the approval.
         const at = await approvePost(postId, { revision: post.revision })
         await ctx.editMessageReplyMarkup()
-        await ctx.reply(`✅ #${postId} 승인 · ${fmtTime(at)} 발행 예정`, {
-          reply_markup: scheduleKeyboard(postId, at),
-        })
+        await reviewer.notifyApproved(postId, at)
       } else if (action === 'reject') {
         // Ask for a reason first; the revision/message checks above guard the next press too.
         await ctx.editMessageReplyMarkup({ reply_markup: reasonKeyboard(postId) })
@@ -542,10 +558,10 @@ export function createReviewer(opts: {
       } else if (action === 'rr' && reason) {
         await rejectPost(postId, reason)
         await ctx.editMessageReplyMarkup()
-        await ctx.reply(`🗑 #${postId} 폐기 (${REJECT_REASONS[reason]})`)
+        await ctx.reply(rejectedText(postId, reason))
       } else if (action === 'regen') {
         await ctx.editMessageReplyMarkup()
-        await ctx.reply(`🔁 #${postId} 재생성 중…`)
+        await ctx.reply(regenText(postId))
         await opts.onRegenerate(post.topic_id)
       }
       await ctx.answerCallbackQuery()
@@ -584,7 +600,7 @@ export function createReviewer(opts: {
       return
     }
     // Conditioned on status and message id so it cannot race with an approval or a newer draft.
-    const result = await applyReviewEdit(post.id, replyTo, parsed)
+    const result = await applyReviewEdit(post.id, { replyTo }, parsed)
     if (!result.ok) {
       await ctx.reply(result.message)
       return
@@ -670,6 +686,14 @@ export function createReviewer(opts: {
       await bot.api.sendMessage(chatId, text, {
         reply_markup: new InlineKeyboard().text('🔁 답글 다시 시도', encodeChainRetry(postId)),
       })
+    },
+    async notifyApproved(postId, at) {
+      const text = approvedText(postId, at)
+      if (!chatId) {
+        console.log(`[notify] ${text}`)
+        return
+      }
+      await bot.api.sendMessage(chatId, text, { reply_markup: scheduleKeyboard(postId, at) })
     },
     start() {
       // A polling failure must not take the whole worker (and its jobs) down: retry instead.

@@ -9,6 +9,8 @@ import {
   campaignDetailFixture,
   campaignRowsFixture,
   insightsFixture,
+  mockPostDetail,
+  mockRevivable,
   overviewFixture,
   postsFixture,
   sessionFixture,
@@ -308,5 +310,32 @@ describe('routing with the API', () => {
     renderApp('/campaigns/101')
     expect(await screen.findByRole('heading', { level: 1, name: /#101/ })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('opens a post as a sheet over the list, as a page on direct navigation, and lists 만료 초안', async () => {
+    const detail = mockPostDetail(51)
+    stubFetch(
+      vi.fn(async (url: string) => {
+        const u = String(url)
+        if (u.startsWith('/api/posts/51')) return new Response(JSON.stringify(detail))
+        if (u.startsWith('/api/revivable')) return new Response(JSON.stringify(mockRevivable()))
+        return new Response(JSON.stringify(postsFixture))
+      }),
+    )
+    const user = userEvent.setup()
+    const first = renderApp('/posts')
+    await user.click((await screen.findAllByRole('link', { name: /Cloudflare/ }))[0] as HTMLElement)
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByRole('button', { name: '승인' })).toBeInTheDocument()
+    first.unmount()
+
+    const second = renderApp('/posts/51')
+    expect(await screen.findByRole('heading', { level: 1, name: /#51/ })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    second.unmount()
+
+    renderApp('/expired')
+    expect(await screen.findByText(/#61/)).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: '만료 초안' }).length).toBeGreaterThan(0)
   })
 })

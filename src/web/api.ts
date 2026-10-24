@@ -7,12 +7,14 @@ import {
   type InsightsData,
   nextDeadline,
   type OverviewData,
+  type PostDetailData,
   type PostOrigin,
   type PostRow,
   parseCampaignFilter,
   parseCampaignSource,
   parseInsightsDays,
   parsePostLimit,
+  type RevivableData,
 } from './data.ts'
 
 /** Data access of the JSON API; the server wires the DB loaders, tests pass fakes. */
@@ -22,6 +24,8 @@ export type ApiLoaders = {
   campaign(id: number): Promise<CampaignDetailData | null>
   posts(limit: number): Promise<(PostRow & { origin: PostOrigin })[]>
   insights(days: number, now: Date): Promise<InsightsData>
+  post(id: number): Promise<PostDetailData | null>
+  revivable(): Promise<RevivableData>
 }
 
 export type ApiResult = { status: number; body: unknown }
@@ -76,6 +80,16 @@ export async function handleApi(
     const data = await loaders.campaign(Number(idText))
     return data ? { status: 200, body: data } : apiError(404, 'not found')
   }
+
+  const postDetail = /^\/api\/posts\/([^/]+)$/.exec(path)
+  if (postDetail) {
+    const idText = postDetail[1] as string
+    if (!/^\d{1,15}$/.test(idText)) return apiError(404, 'not found')
+    const data = await loaders.post(Number(idText))
+    return data ? { status: 200, body: data } : apiError(404, 'not found')
+  }
+
+  if (path === '/api/revivable') return { status: 200, body: await loaders.revivable() }
 
   if (path === '/api/posts') {
     const rows = await loaders.posts(parsePostLimit(params.get('limit')))
