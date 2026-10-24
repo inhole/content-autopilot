@@ -65,9 +65,27 @@ await registerReviveJobs(boss, reviewer, sendWithKeyboard)
 await registerDigestJobs(boss)
 reviewer.start()
 // Null when Telegram is not configured (login codes go there).
-const dashboard = await startDashboard({
-  enqueueDraft: (id, feedback, revision) => enqueueReviewDraft(boss, id, feedback, revision),
-})
+const dashboard = await startDashboard(
+  {
+    enqueueDraft: (id, feedback, revision) => enqueueReviewDraft(boss, id, feedback, revision),
+  },
+  {
+    enqueueRegeneration: (topicId, feedback) => enqueueRegeneration(boss, topicId, feedback),
+    enqueueGenerate: async (topicId) => {
+      await enqueueGenerate(boss, { topicId })
+    },
+    enqueueRevive: async (postId) => {
+      await enqueueRevive(boss, postId)
+    },
+    enqueueReviveCheck: async () => {
+      await enqueueReviveCheck(boss)
+    },
+    enqueueDigest: async () => {
+      await enqueueDigest(boss)
+    },
+    reviewer,
+  },
+)
 
 console.log(
   `[worker] started · collect "${config.COLLECT_CRON}" ${config.TZ_NAME} · slots ${config.PUBLISH_SLOTS.join(', ')}` +
