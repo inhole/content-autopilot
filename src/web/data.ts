@@ -8,7 +8,11 @@ import {
   campaignPrice,
   isCampaignSource,
 } from '../campaigns/types.ts'
+import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
+import { lastFollowupLimit, loadParts, type PartStatus } from '../pipeline/parts.ts'
+import { loadRevivable } from '../pipeline/revive.ts'
+import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
 /** Read-only queries for the dashboard. Nothing here writes to the database. */
 
@@ -303,4 +307,171 @@ export async function loadRecentPosts(limit = 50): Promise<(PostRow & { origin: 
       limit $1`,
     [limit],
   )
+}
+
+export type PostDetailData = {
+  post: {
+    id: number
+    status: string
+    origin: PostOrigin
+    text: string
+    angle: string | null
+    source_url: string | null
+    caveats: string[]
+    revision: number
+    regen_seq: number
+    scheduled_at: Date | null
+    published_at: Date | null
+    created_at: Date
+    updated_at: Date
+    reject_reason: string | null
+    attempts: number
+    last_error: string | null
+    topic: {
+      id: number
+      title: string
+      url: string | null
+      note: string | null
+      score: number | null
+    }
+    revive: {
+      verdict: 'evergreen' | 'stale' | null
+      reason: string | null
+      checked_at: Date | null
+      revived_at: Date | null
+      from_text: string | null
+    }
+    digest_post_id: number | null
+  }
+  parts: {
+    idx: number
+    text: string
+    status: PartStatus
+    attempts: number
+    last_error: string | null
+    link_url: string | null
+  }[]
+  limits: { text: number; lastFollowup: number; cta: string | null }
+}
+
+type PostDetailRow = {
+  id: number
+  status: string
+  origin: PostOrigin
+  text: string
+  angle: string | null
+  source_url: string | null
+  caveats: unknown
+  revision: number
+  regen_seq: number
+  scheduled_at: Date | null
+  published_at: Date | null
+  created_at: Date
+  updated_at: Date
+  reject_reason: string | null
+  attempts: number
+  last_error: string | null
+  topic_id: number
+  title: string
+  topic_url: string | null
+  note: string | null
+  score: number | null
+  revive_verdict: 'evergreen' | 'stale' | null
+  revive_reason: string | null
+  revive_checked_at: Date | null
+  revived_at: Date | null
+  from_text: string | null
+  digest_post_id: number | null
+}
+
+/** One post with its topic, follow-up parts and the limits the editor checks (GET /api/posts/:id). */
+export async function loadPostDetail(id: number): Promise<PostDetailData | null> {
+  const [r] = await query<PostDetailRow>(
+    `select p.id, p.status, p.origin, p.text, p.angle, p.source_url,
+            p.generation->'caveats' as caveats, p.revision, p.regen_seq, p.scheduled_at,
+            p.published_at, p.created_at, p.updated_at, p.reject_reason, p.attempts, p.last_error,
+            t.id as topic_id, t.title, t.url as topic_url, t.note, t.score,
+            p.revive_verdict, p.revive_reason, p.revive_checked_at, p.revived_at,
+            p.generation->'revived'->>'from_text' as from_text, p.digest_post_id
+     from posts p join topics t on t.id = p.topic_id
+     where p.id = $1 and p.platform = 'THREADS'`,
+    [id],
+  )
+  if (!r) return null
+  const parts = await loadParts(id)
+  const caveats = Array.isArray(r.caveats)
+    ? r.caveats.filter((c): c is string => typeof c === 'string')
+    : []
+  return {
+    post: {
+      id: r.id,
+      status: r.status,
+      origin: r.origin,
+      text: r.text,
+      angle: r.angle,
+      source_url: r.source_url,
+      caveats,
+      revision: r.revision,
+      regen_seq: r.regen_seq,
+      scheduled_at: r.scheduled_at,
+      published_at: r.published_at,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      reject_reason: r.reject_reason,
+      attempts: r.attempts,
+      last_error: r.last_error,
+      topic: { id: r.topic_id, title: r.title, url: r.topic_url, note: r.note, score: r.score },
+      revive: {
+        verdict: r.revive_verdict,
+        reason: r.revive_reason,
+        checked_at: r.revive_checked_at,
+        revived_at: r.revived_at,
+        from_text: r.from_text,
+      },
+      digest_post_id: r.digest_post_id,
+    },
+    parts: parts.map((p) => ({
+      idx: p.idx,
+      text: p.text,
+      status: p.status,
+      attempts: p.attempts,
+      last_error: p.last_error,
+      link_url: p.link_url,
+    })),
+    limits: {
+      text: THREADS_TEXT_LIMIT,
+      lastFollowup: lastFollowupLimit(config.THREAD_CTA_TEXT),
+      cta: config.THREAD_CTA_TEXT ?? null,
+    },
+  }
+}
+
+export type RevivableData = {
+  rows: {
+    id: number
+    title: string
+    text: string
+    source_url: string | null
+    created_at: Date
+    verdict: 'evergreen' | 'stale' | null
+    reason: string | null
+    checked_at: Date | null
+  }[]
+}
+
+/** Expired drafts that could be revived (GET /api/revivable). */
+export async function loadRevivableList(): Promise<RevivableData> {
+  const rows = await loadRevivable()
+  return {
+    rows: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      text: r.text,
+      source_url: r.sourceUrl,
+      created_at: r.createdAt,
+      verdict: r.verdict,
+      reason: r.reason,
+      checked_at: r.checkedAt,
+    })),
+  }
 }

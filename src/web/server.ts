@@ -7,6 +7,11 @@ import {
 import { GIFT_CAMPAIGN_ID_RE, giftTrialUrl } from '../campaigns/gift.ts'
 import { telegramApi } from '../campaigns/tg.ts'
 import { config, dashboardEnabled } from '../config.ts'
+import {
+  createPostActions,
+  type PostActionDeps,
+  type PostActions,
+} from '../pipeline/post-actions.ts'
 import { type ApiLoaders, handleApi } from './api.ts'
 import type { AuthSessionResponse } from './api-types.ts'
 import {
@@ -35,8 +40,17 @@ import {
   loadCampaignList,
   loadInsights,
   loadOverview,
+  loadPostDetail,
   loadRecentPosts,
+  loadRevivableList,
 } from './data.ts'
+import {
+  matchPostActionPath,
+  matchPostCollectionPath,
+  type PostActionResult,
+  runPostAction,
+  runPostCollectionAction,
+} from './post-actions.ts'
 import { defaultDistDir, hasBuild, lookupStatic } from './static.ts'
 
 export type DashboardLoaders = ApiLoaders
@@ -57,6 +71,8 @@ export type DashboardDeps = {
   auth: AdminAuth
   /** Campaign operations (campaigns/actions.ts); tests pass fakes. */
   actions: CampaignActions
+  /** Threads operations (pipeline/post-actions.ts); tests pass fakes. */
+  postActions: PostActions
   /** Sends a text to the owner's Telegram chat; rejects when it cannot. */
   notify: (text: string) => Promise<void>
   now?: () => Date
@@ -70,6 +86,8 @@ const dbLoaders: DashboardLoaders = {
   campaign: loadCampaignDetail,
   posts: loadRecentPosts,
   insights: loadInsights,
+  post: loadPostDetail,
+  revivable: loadRevivableList,
 }
 
 const dbAuth: AdminAuth = {
@@ -330,6 +348,36 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
   }
 
+  /** Shared body of every Threads write: authorize, read the body, run, audit. */
+  async function handlePostWrite(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    target: { action: string; target: string | null },
+    run: (body: unknown) => Promise<PostActionResult>,
+  ): Promise<void> {
+    const authorized = await authorizeWrite(req, res)
+    if (!authorized) return
+    const { session, ip } = authorized
+    const audit = { sessionId: session.id, action: target.action, target: target.target, ip }
+    let body: unknown
+    try {
+      body = await readJson(req, ACTION_BODY_LIMIT)
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err
+      await auth.record({ ...audit, result: 'invalid' })
+      sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+      return
+    }
+    try {
+      const r = await run(body)
+      await auth.record({ ...audit, result: r.result, detail: r.detail ?? null })
+      sendJson(req, res, r.status, r.body)
+    } catch (err) {
+      await auth.record({ ...audit, result: 'error' }).catch(() => {})
+      throw err
+    }
+  }
+
   async function handleAuth(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -500,6 +548,45 @@ export function createRequestHandler(deps: DashboardDeps) {
       }
       return
     }
+    const postRoute = isApi ? matchPostActionPath(path) : null
+    const collectionRoute = isApi ? matchPostCollectionPath(path) : null
+    if (postRoute || collectionRoute) {
+      if (req.method !== 'POST') {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
+        return
+      }
+      try {
+        if (postRoute) {
+          await handlePostWrite(
+            req,
+            res,
+            {
+              action: `post.${postRoute.action}`,
+              target: postRoute.id === null ? null : `post:${postRoute.id}`,
+            },
+            (body) =>
+              runPostAction(
+                { actions: deps.postActions, loadDetail: deps.loaders.post },
+                postRoute.action,
+                postRoute.id,
+                body,
+              ),
+          )
+        } else if (collectionRoute) {
+          await handlePostWrite(req, res, { action: collectionRoute, target: null }, (body) =>
+            runPostCollectionAction(deps.postActions, collectionRoute, body),
+          )
+        }
+      } catch (err) {
+        if (err instanceof BadBody) {
+          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+          return
+        }
+        console.error('dashboard post action failed:', err)
+        sendJson(req, res, 500, { error: 'internal error' })
+      }
+      return
+    }
     if (!isRead) {
       if (isApi) sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'GET, HEAD' })
       else send(req, res, 405, 'Method Not Allowed', { Allow: 'GET, HEAD' })
@@ -588,6 +675,7 @@ async function notifyOwner(text: string): Promise<void> {
 /** Starts the dashboard, or returns null (and says why) when Telegram login is not possible. */
 export async function startDashboard(
   campaignDeps: CampaignActionDeps,
+  postDeps: PostActionDeps,
 ): Promise<{ close(): Promise<void> } | null> {
   if (!dashboardEnabled()) {
     console.log('dashboard disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are needed to log in')
@@ -597,6 +685,7 @@ export async function startDashboard(
     loaders: dbLoaders,
     auth: dbAuth,
     actions: createCampaignActions(campaignDeps),
+    postActions: createPostActions(postDeps),
     notify: notifyOwner,
   })
   const port = config.PORT ?? 8080
