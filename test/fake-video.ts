@@ -48,7 +48,7 @@ export class FakeInstagram implements InstagramApi {
   async publish(containerId: string) {
     this.publishCalls.push(containerId)
     const c = this.containers.get(containerId)
-    if (!c || c.status !== 'FINISHED') throw new Error('not finished')
+    if (c?.status !== 'FINISHED') throw new Error('not finished')
     c.status = 'PUBLISHED'
     const id = `m${containerId}`
     this.media.unshift({ id, caption: c.caption, timestamp: new Date(), productType: 'REELS' })

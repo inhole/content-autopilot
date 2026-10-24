@@ -200,7 +200,9 @@ describe('storage', () => {
       expect(await s.upload(src, 'v1/a.mp4')).toBe(
         'https://p.supabase.co/storage/v1/object/public/videos/v1/a.mp4',
       )
-      expect((calls[0]?.init.headers as Record<string, string>)['x-upsert']).toBe('false')
+      expect((calls[0]?.init.headers as Record<string, string> | undefined)?.['x-upsert']).toBe(
+        'false',
+      )
       await s.remove('v1/a.mp4')
       expect(calls[1]?.init.method).toBe('DELETE')
       expect(JSON.parse(String(calls[1]?.init.body))).toEqual({ prefixes: ['v1/a.mp4'] })
