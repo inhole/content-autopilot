@@ -214,7 +214,7 @@ CLI는 Telegram을 polling하지 않고 보내기만 한다. 워커가 실행 �
 3. Railway 변수에 `PUBLIC_BASE_URL`(대시보드 공개 주소, 예: `https://content-autopilot-production-8b81.up.railway.app`)을 넣고 대시보드를 켜 둔다(Telegram 설정이 있으면 켜진다). 둘 중 하나라도 없으면 버튼이 같은 이름(`📱 카카오톡에서 열기`)의 직접 gift.kakao.com 링크로 돌아간다. 카드의 `📱 카카오톡에서 열기`를 폰 Telegram에서 눌러 카카오톡 앱의 해당 체험단으로 열리는지 본다. 브라우저로 열리면 카톡에서 직접 찾아야 한다.
 4. 카드 몇 개를 `✅`/`🙅`로 처리하고 `/camps`, `/due`가 맞게 보이는지 본다.
 5. 무신사는 `npm run cli -- musinsa:list` → `musinsa:collect`로 같은 것을 확인한다(수백 건, `invalid 0`). 카드의 경쟁률, 정가, 발표일·리뷰 기간이 맞는지, `📱 무신사 앱에서 열기`가 폰에서는 무신사 앱, PC 브라우저에서는 웹으로 해당 체험단(`preuser/events/<번호>`)으로 열리는지 본다.
-6. 선별 품질이 별로면 `config/campaign-profile.json`의 `preferKeywords`(규칙 점수 +2), `interests`, `excludeKeywords`, `excludeBrands`, `maxCompetition`, `minPriceWon`(기본 30000원, 정가가 이보다 낮으면 제외)을 고친다. 카드와 `campaign:show <id>`의 선별 이유(`경쟁률 53:1 · 정가 115,000원 · 관심 키보드`)로 점수가 왜 나왔는지 본다. 원하지 않는 품목(예: 키즈)이 자꾸 오면 `excludeKeywords`에 넣는다. 프로필은 프로세스당 한 번 읽으므로 워커를 재시작한다.
+6. 선별 품질이 별로면 `config/campaign-profile.json`의 `preferKeywords`(규칙 점수 +2), `interests`, `excludeKeywords`, `excludeBrands`, `maxCompetition`, `minPriceWon`(기본 30000원, 정가가 이보다 낮으면 제외)을 고친다. 카드와 `campaign:show <id>`의 선별 이유(`경쟁률 53:1 · 정가 115,000원 · 관심 키보드`)로 점수가 왜 나왔는지 본다. 원하지 않는 품목(예: 키즈)이 자꾸 오면 `excludeKeywords`에 넣는다. 대시보드 `운영` 페이지의 프로필 `편집`으로 고치면 다음 수집부터 바로 반영된다. 파일을 고치는 경우에는 파일을 프로세스당 한 번 읽으므로 워커를 재시작해야 하고, 페이지에서 저장한 사본이 있으면 파일보다 사본이 우선한다.
 
 ### 체험단 문제 해결
 

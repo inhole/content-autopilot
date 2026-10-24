@@ -5,6 +5,8 @@ import type {
   CampaignDetailResponse,
   CampaignRow,
   InsightsResponse,
+  OpsProfileFields,
+  OpsProfileRequests,
   OpsResponse,
   OpsRunResponse,
   OverviewResponse,
@@ -755,6 +757,30 @@ let mockOpsState = opsJobs()
 
 export const resetMockOps = () => {
   mockOpsState = opsJobs()
+  mockProfileState = { ...fileProfile(), source: 'file', revision: 0 }
+}
+
+const fileProfile = (): OpsProfileFields => ({
+  about: '개발자이고 키보드·주변기기와 생활용품에 관심이 많아요.',
+  interests: ['키보드', '주변기기', '주방용품'],
+  preferKeywords: ['기계식', '무선'],
+  excludeKeywords: ['성인', '다이어트'],
+  excludeBrands: ['예시브랜드'],
+  maxCompetition: 500,
+  minPriceWon: 15000,
+  review: {
+    tone: '담백하고 솔직한 반말',
+    minChars: 300,
+    maxChars: 800,
+    points: ['쓴 기간', '좋았던 점', '아쉬운 점'],
+  },
+  disclosure: '[체험단으로 제품을 제공받아 작성한 후기예요]',
+})
+
+let mockProfileState: NonNullable<OpsResponse['profile']> = {
+  ...fileProfile(),
+  source: 'file',
+  revision: 0,
 }
 
 export const mockOps = (): OpsResponse => ({
@@ -768,22 +794,7 @@ export const mockOps = (): OpsResponse => ({
     campaignRankMode: 'rule',
     timeZone: 'Asia/Seoul',
   },
-  profile: {
-    about: '개발자이고 키보드·주변기기와 생활용품에 관심이 많아요.',
-    interests: ['키보드', '주변기기', '주방용품'],
-    preferKeywords: ['기계식', '무선'],
-    excludeKeywords: ['성인', '다이어트'],
-    excludeBrands: ['예시브랜드'],
-    maxCompetition: 500,
-    minPriceWon: 15000,
-    review: {
-      tone: '담백하고 솔직한 반말',
-      minChars: 300,
-      maxChars: 800,
-      points: ['쓴 기간', '좋았던 점', '아쉬운 점'],
-    },
-    disclosure: '[체험단으로 제품을 제공받아 작성한 후기예요]',
-  },
+  profile: mockProfileState,
 })
 
 /** Queues a job like the server: a busy job answers `queued: false` and changes nothing. */
@@ -800,4 +811,37 @@ export function mockRunOps(name: string): OpsRunResponse | 'not_found' {
     error: null,
   }
   return { ok: true, queued: true }
+}
+
+const clean = (list: string[]) => [...new Set(list.map((i) => i.trim()).filter(Boolean))]
+
+/** Saves like the server: stale revision -> 'stale', bad numbers -> 400 body, else bumps revision. */
+export function mockSaveProfile(req: OpsProfileRequests['save']) {
+  if (req.revision !== mockProfileState.revision) return 'stale' as const
+  const p = req.profile
+  const fields: string[] = []
+  if (p.about.length > 500) fields.push('about')
+  if (p.review.maxChars < 50 || p.review.maxChars > 4000) fields.push('review.maxChars')
+  if (p.review.minChars < 10 || p.review.minChars >= p.review.maxChars)
+    fields.push('review.minChars')
+  if (fields.length > 0) return { error: '입력값을 확인해 주세요', fields }
+  mockProfileState = {
+    ...p,
+    interests: clean(p.interests),
+    preferKeywords: clean(p.preferKeywords),
+    excludeKeywords: clean(p.excludeKeywords),
+    excludeBrands: clean(p.excludeBrands),
+    review: { ...p.review, points: clean(p.review.points) },
+    disclosure: p.disclosure?.trim() || null,
+    source: 'db',
+    revision: mockProfileState.revision + 1,
+  }
+  return { ok: true as const, profile: mockProfileState }
+}
+
+export function mockResetProfile(req: OpsProfileRequests['reset']) {
+  if (req.revision !== mockProfileState.revision) return 'stale' as const
+  // Like the server: the revision keeps growing across a reset.
+  mockProfileState = { ...fileProfile(), source: 'file', revision: req.revision + 1 }
+  return { ok: true as const, profile: mockProfileState }
 }
