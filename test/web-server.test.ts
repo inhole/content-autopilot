@@ -422,8 +422,11 @@ describe('campaign actions', () => {
   })
 
   it('accepts a long Korean draft within the action body limit, refuses more', async () => {
-    const text = '가'.repeat(3000)
+    // 4000 Korean characters (the profile's largest review.maxChars) is 12KB of UTF-8.
+    const text = '가'.repeat(4000)
     expect((await ok('/api/campaigns/12/draft', { revision: 3, text })).status).toBe(200)
+    const tooLong = await ok('/api/campaigns/12/draft', { revision: 3, text: '가'.repeat(4001) })
+    expect(tooLong.status).toBe(400)
     const huge = await ok('/api/campaigns/12/draft', { revision: 3, text: 'x'.repeat(17000) })
     expect(huge.status).toBe(400)
   })

@@ -135,9 +135,11 @@ export function createCampaignActions(deps: CampaignActionDeps): CampaignActions
       const seen = await current(id, [status], revision)
       if ('out' in seen) return seen.out
       if (!memo.trim()) return invalid('메모가 비어 있어요. 써본 느낌을 몇 줄 적어주세요.')
-      if (!(await saveMemo(id, memo))) return stale()
+      // Both steps are bound to the displayed status and revision: a draft written or edited in
+      // the meantime makes this request stale instead of regenerating over it.
+      if (!(await saveMemo(id, memo, { status, revision }))) return stale()
       // The job sends the draft and the control message to Telegram when it is written.
-      if (!(await deps.enqueueDraft(id))) return stale()
+      if (!(await deps.enqueueDraft(id, undefined, revision))) return stale()
       return { ok: true, telegramSynced: true }
     },
 

@@ -169,12 +169,23 @@ export async function startIntake(id: number, messageId: number): Promise<boolea
   return rows.length > 0
 }
 
-export async function saveMemo(id: number, memo: string): Promise<boolean> {
+/**
+ * Saves the owner's memo. With `seen` (the web console) it applies only while the campaign still
+ * has the status and revision the page displayed, so a stale page cannot overwrite newer work.
+ */
+export async function saveMemo(
+  id: number,
+  memo: string,
+  seen?: { status: 'SELECTED' | 'DRAFT_REVIEW'; revision: number },
+): Promise<boolean> {
   const text = memo.trim()
   if (!text) return false
   const rows = await query(
-    `update campaigns set memo = $2, updated_at = now() where id = $1 and ${ACTIVE} returning id`,
-    [id, text],
+    `update campaigns set memo = $2, updated_at = now()
+     where id = $1 and ${ACTIVE}
+       and ($3::text is null or status = $3) and ($4::int is null or revision = $4)
+     returning id`,
+    [id, text, seen?.status ?? null, seen?.revision ?? null],
   )
   return rows.length > 0
 }

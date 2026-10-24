@@ -19,6 +19,7 @@ vi.mock('../../src/campaigns/tg.ts', async (orig) => ({
 
 import { createCampaignActions } from '../../src/campaigns/actions.ts'
 import { parseCampaignProfile } from '../../src/campaigns/profile.ts'
+import { saveMemo } from '../../src/campaigns/review-draft.ts'
 import { query } from '../../src/db/pool.ts'
 import { getCampaign, seedCampaign } from './campaign-helpers-draft.ts'
 
@@ -155,7 +156,7 @@ describe('memo and regenerate', () => {
       await actions.memo(id, { status: 'SELECTED', revision: 0, memo: ' 일주일 써봄 ' }),
     ).toEqual({ ok: true, telegramSynced: true })
     expect((await getCampaign(id)).memo).toBe('일주일 써봄')
-    expect(enqueued).toEqual([{ id, feedback: undefined, revision: undefined }])
+    expect(enqueued).toEqual([{ id, feedback: undefined, revision: 0 }])
   })
   it('refuses a memo from an outdated view (status or revision moved on)', async () => {
     const drafted = await seedCampaign({ status: 'DRAFT_REVIEW', revision: 3, memo: '원래 메모' })
@@ -167,6 +168,17 @@ describe('memo and regenerate', () => {
     ).toMatchObject(STALE)
     expect((await getCampaign(drafted)).memo).toBe('원래 메모')
     expect(enqueued).toEqual([])
+  })
+  it('the memo write itself is bound to the displayed status and revision', async () => {
+    // A draft written between the page's read and the write bumps the revision: nothing changes.
+    const id = await seedCampaign({ status: 'DRAFT_REVIEW', revision: 5, memo: '원래 메모' })
+    expect(await saveMemo(id, '새 메모', { status: 'DRAFT_REVIEW', revision: 4 })).toBe(false)
+    expect(await saveMemo(id, '새 메모', { status: 'SELECTED', revision: 5 })).toBe(false)
+    expect((await getCampaign(id)).memo).toBe('원래 메모')
+    expect(await saveMemo(id, '새 메모', { status: 'DRAFT_REVIEW', revision: 5 })).toBe(true)
+    // The bot path (no view) keeps its old behaviour.
+    expect(await saveMemo(id, '봇 메모')).toBe(true)
+    expect((await getCampaign(id)).memo).toBe('봇 메모')
   })
   it('an empty memo is invalid, a wrong stage is stale', async () => {
     const id = await seedCampaign({ status: 'SELECTED' })

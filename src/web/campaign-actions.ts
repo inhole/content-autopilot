@@ -30,7 +30,8 @@ const SCHEMAS = {
   deadline: z.object({ status, date: z.string().trim().min(1).max(40) }),
   memo: z.object({ status, revision, memo: z.string().max(2000) }),
   regenerate: z.object({ revision, feedback: z.string().max(1000).optional() }),
-  draft: z.object({ revision, text: z.string().max(3000) }),
+  // The profile allows review.maxChars up to 4000; replaceDraftGuarded checks the configured one.
+  draft: z.object({ revision, text: z.string().max(4000) }),
   posted: z.object({ revision }),
 } satisfies Record<CampaignActionName, z.ZodType>
 
