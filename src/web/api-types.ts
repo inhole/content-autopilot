@@ -115,3 +115,150 @@ export type CampaignActionResponse = {
 
 /** 409: the campaign changed since the page showed it, or was already handled. */
 export type CampaignActionConflict = ApiError & { stale: true }
+
+/** posts.status */
+export type PostStatus =
+  | 'PENDING_REVIEW'
+  | 'APPROVED'
+  | 'SCHEDULED'
+  | 'PUBLISHING'
+  | 'PUBLISHED'
+  | 'FAILED'
+  | 'REJECTED'
+  | 'EXPIRED'
+
+/** Codes of the 🗑 폐기 reasons (REJECT_REASONS in src/pipeline/style.ts). */
+export type PostRejectReason = 'fact' | 'boring' | 'topic' | 'dup' | 'other'
+
+/** GET /api/posts/:id (404 `{ error }` when unknown). Everything the post panel shows and sends back. */
+export type PostDetailResponse = {
+  post: {
+    id: number
+    status: PostStatus
+    origin: 'news' | 'revived' | 'digest'
+    /** Part 1 (the main post). */
+    text: string
+    angle: string | null
+    source_url: string | null
+    /** generation.caveats ("확인 필요"). */
+    caveats: string[]
+    /** Bumped by every text change; actions on a draft send back the one displayed. */
+    revision: number
+    /** Bumped when a regeneration is requested (posts.regen_seq). */
+    regen_seq: number
+    scheduled_at: string | null
+    published_at: string | null
+    created_at: string
+    updated_at: string
+    reject_reason: PostRejectReason | null
+    attempts: number
+    last_error: string | null
+    topic: {
+      id: number
+      title: string
+      url: string | null
+      note: string | null
+      score: number | null
+    }
+    /** Expired-draft judgement and revival (migration 016); null fields when never judged. */
+    revive: {
+      verdict: 'evergreen' | 'stale' | null
+      reason: string | null
+      checked_at: string | null
+      revived_at: string | null
+      /** The text before the revival rewrite (generation.revived.from_text). */
+      from_text: string | null
+    }
+    /** Digest this expired draft was folded into. */
+    digest_post_id: number | null
+  }
+  /** Follow-up replies (post_parts, idx 2..3), in order. Empty for a single post. */
+  parts: {
+    idx: number
+    text: string
+    status: 'PENDING' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED'
+    attempts: number
+    last_error: string | null
+    link_url: string | null
+  }[]
+  /** Character limits the editor checks before sending (the server checks again). */
+  limits: {
+    /** THREADS_TEXT_LIMIT (500): main post and every follow-up but the last. */
+    text: number
+    /** The last follow-up keeps room for the CTA (lastFollowupLimit). */
+    lastFollowup: number
+    cta: string | null
+  }
+}
+
+/**
+ * GET /api/revivable: EXPIRED news drafts of the last 30 days that were neither revived nor
+ * digested (loadRevivable), newest first, with the stored verdict (null until judged).
+ */
+export type RevivableResponse = {
+  rows: {
+    id: number
+    title: string
+    text: string
+    source_url: string | null
+    created_at: string
+    verdict: 'evergreen' | 'stale' | null
+    reason: string | null
+    checked_at: string | null
+  }[]
+}
+
+/**
+ * POST /api/posts/:id/<action>: Threads operations (docs/dashboard.md). Same session, same-origin
+ * and `X-CSRF-Token` rules as the campaign actions. Draft actions carry the `revision` the page
+ * displayed; schedule actions carry the `scheduled_at` it displayed (ISO string), like the
+ * Telegram buttons bound to that slot. An outdated view changes nothing: 409 `PostActionConflict`.
+ */
+export type PostActionRequests = {
+  /** ✅ 승인 (PENDING_REVIEW): takes the next free publish slot. */
+  approve: { revision: number }
+  /** 🗑 폐기 with a reason (PENDING_REVIEW). */
+  reject: { revision: number; reason: PostRejectReason }
+  /** 🔁 재생성, with optional feedback (PENDING_REVIEW). Queued; the page polls for the result. */
+  regenerate: { revision: number; feedback?: string }
+  /** Replaces part `idx` verbatim, like `수정<idx>:` (1 = main post). PENDING_REVIEW. */
+  edit: { revision: number; idx: number; text: string }
+  /** Deletes follow-up `idx` (2..3), like `삭제<idx>`; later parts are renumbered. PENDING_REVIEW. */
+  deletePart: { revision: number; idx: number }
+  /** ⏪ 예약 취소 (SCHEDULED at `scheduledAt`): back to review. */
+  unschedule: { scheduledAt: string }
+  /** 🚀 지금 발행 (SCHEDULED at `scheduledAt`): the slot moves to now; the 5-min sweep publishes. */
+  publishNow: { scheduledAt: string }
+  /** 🔁 답글 다시 시도 (PUBLISHED with FAILED parts). */
+  retryParts: Record<string, never>
+  /** ♻️ 살리기 (EXPIRED, not revived, not digested). Queued; the result goes to review. */
+  revive: Record<string, never>
+}
+export type PostActionName = keyof PostActionRequests
+
+/** 200: the action applied (or was queued); `detail` is the post as it is now. */
+export type PostActionResponse = {
+  ok: true
+  /** False when Telegram could not be updated (logged; the action itself applied). */
+  telegramSynced: boolean
+  detail: PostDetailResponse | null
+}
+
+/** 409: the post changed since the page showed it, or was already handled. */
+export type PostActionConflict = ApiError & { stale: true }
+
+/**
+ * POST /api/posts/add `{ url, note? }`: a manual topic and its draft, like Telegram `/add`.
+ * 200 `{ topicId }` when queued; 409 `{ error, postId }` when the URL was already covered.
+ */
+export type AddTopicRequest = { url: string; note?: string }
+export type AddTopicResponse = { ok: true; topicId: number }
+export type AddTopicConflict = ApiError & { postId: number }
+
+/**
+ * Queued Threads jobs (body `{}`), answered 202 `{ ok: true }` once queued; their results go to
+ * Telegram and appear in the lists on the next refetch:
+ * - POST /api/revivable/check: judge the expired drafts (revive-check, like /revive)
+ * - POST /api/digest: build the weekly digest now (weekly-digest, like /digest)
+ */
+export type QueuedResponse = { ok: true }
