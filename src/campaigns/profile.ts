@@ -5,13 +5,15 @@ import { config } from '../config.ts'
 
 /**
  * The owner's campaign preferences (config/campaign-profile.json). Rule fields (excludeKeywords,
- * excludeBrands, maxCompetition) are applied in code before the LLM sees a campaign; the rest is
- * prompt context. No address or phone number: Kakao already has them.
+ * excludeBrands, maxCompetition, minPriceWon) are applied in code before scoring; interests and
+ * preferKeywords also feed the rule score. No address or phone number: Kakao already has them.
  */
 export const campaignProfileSchema = z.object({
   /** Who the owner is, in a sentence or two; context for ranking and review drafts. */
   about: z.string(),
   interests: z.array(z.string()),
+  /** Words in a title, brand or Musinsa category that earn the rule score's preference points. */
+  preferKeywords: z.array(z.string()).default([]),
   excludeKeywords: z.array(z.string()),
   excludeBrands: z.array(z.string()).default([]),
   /** Skip campaigns with more applicants per slot than this. Unset: no limit. */
