@@ -12,6 +12,25 @@ const sent: string[] = []
 const opsRuns: string[] = []
 let opsQueued = true
 let failNotify = false
+const profileCalls: string[] = []
+let profileStale = false
+let profileThrows = false
+const profileResponse = {
+  ok: true as const,
+  profile: {
+    about: 'a',
+    interests: [],
+    preferKeywords: [],
+    excludeKeywords: [],
+    excludeBrands: [],
+    maxCompetition: null,
+    minPriceWon: null,
+    review: { tone: 't', minChars: 100, maxChars: 500, points: [] },
+    disclosure: null,
+    source: 'db' as const,
+    revision: 4,
+  },
+}
 
 let base = ''
 const server = createDashboardServer({
@@ -21,6 +40,18 @@ const server = createDashboardServer({
   runOps: async (name) => {
     opsRuns.push(name)
     return opsQueued
+  },
+  profileEdit: {
+    save: async (profile, revision) => {
+      profileCalls.push(`save:${revision}:${profile.about}`)
+      if (profileThrows) throw new Error('db down')
+      return profileStale ? null : profileResponse
+    },
+    reset: async (revision) => {
+      profileCalls.push(`reset:${revision}`)
+      if (profileThrows) throw new Error('db down')
+      return profileStale ? null : profileResponse
+    },
   },
   notify: async (text) => {
     if (failNotify) throw new Error('telegram down')
@@ -721,6 +752,135 @@ describe('ops run', () => {
     }
     expect(opsRuns).toEqual([])
     expect(state.actions.at(-1)).toMatchObject({ action: 'ops.gift-collect', result: 'invalid' })
+  })
+})
+
+describe('ops profile', () => {
+  const auth_ = { ...SESSION_HEADERS, 'x-csrf-token': CSRF }
+  const fields = {
+    about: '  secret-about-text  ',
+    interests: [' a ', 'a', ''],
+    preferKeywords: [],
+    excludeKeywords: [],
+    excludeBrands: [],
+    maxCompetition: null,
+    minPriceWon: null,
+    review: { tone: 't', minChars: 100, maxChars: 500, points: [] },
+    disclosure: null,
+  }
+
+  beforeEach(() => {
+    profileCalls.length = 0
+    profileStale = false
+    profileThrows = false
+  })
+
+  it.each(['/api/ops/profile', '/api/ops/profile/reset'])(
+    '%s needs same-origin JSON, a session and the CSRF token',
+    async (path) => {
+      const body = { revision: 0, profile: fields }
+      const noOrigin = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...auth_ },
+        body: JSON.stringify(body),
+      })
+      expect(noOrigin.status).toBe(403)
+      expect((await post(path, body, {})).status).toBe(401)
+      expect((await post(path, body, SESSION_HEADERS)).status).toBe(403)
+      expect(profileCalls).toEqual([])
+      expect(state.actions).toEqual([])
+    },
+  )
+
+  it('405 for GET', async () => {
+    for (const path of ['/api/ops/profile', '/api/ops/profile/reset']) {
+      const get = await fetch(`${base}${path}`, { headers: SESSION_HEADERS })
+      expect(get.status).toBe(405)
+      expect(get.headers.get('allow')).toBe('POST')
+    }
+  })
+
+  it('save: 200 with the normalized profile and an audit row without profile text', async () => {
+    const res = await post('/api/ops/profile', { revision: 3, profile: fields }, auth_)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(profileResponse)
+    expect(profileCalls).toEqual(['save:3:secret-about-text'])
+    const row = state.actions.at(-1)
+    expect(row).toMatchObject({ action: 'ops.profile', result: 'ok', detail: { revision: 3 } })
+    expect(JSON.stringify(row)).not.toContain('secret-about-text')
+  })
+
+  it('save: 400 with dotted field paths, nothing saved', async () => {
+    const bad = {
+      ...fields,
+      interests: ['x', 'y', 'z', 'w'.repeat(51)],
+      review: { ...fields.review, minChars: 600 },
+    }
+    const res = await post('/api/ops/profile', { revision: 0, profile: bad }, auth_)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('입력값을 확인해 주세요')
+    expect(body.fields).toEqual(expect.arrayContaining(['interests.3', 'review.minChars']))
+    expect(profileCalls).toEqual([])
+    expect(state.actions.at(-1)).toMatchObject({ action: 'ops.profile', result: 'invalid' })
+  })
+
+  it.each([
+    [{ profile: fields }],
+    [{ revision: -1, profile: fields }],
+    [{ revision: 1.5, profile: fields }],
+    [{ revision: '1', profile: fields }],
+    ['[]'],
+    ['{bad'],
+  ])('400 for a bad request %j', async (body) => {
+    for (const path of ['/api/ops/profile', '/api/ops/profile/reset']) {
+      expect((await post(path, body, auth_)).status).toBe(400)
+    }
+    expect(profileCalls).toEqual([])
+  })
+
+  it('save: 400 when the profile is missing', async () => {
+    const res = await post('/api/ops/profile', { revision: 0 }, auth_)
+    expect(res.status).toBe(400)
+    expect(profileCalls).toEqual([])
+  })
+
+  it('409 stale for save and reset', async () => {
+    profileStale = true
+    const save = await post('/api/ops/profile', { revision: 2, profile: fields }, auth_)
+    expect(save.status).toBe(409)
+    expect(await save.json()).toEqual({
+      error: '다른 곳에서 먼저 바뀌었어요. 새로 불러올게요',
+      stale: true,
+    })
+    expect(state.actions.at(-1)).toMatchObject({ action: 'ops.profile', result: 'stale' })
+    const reset = await post('/api/ops/profile/reset', { revision: 2 }, auth_)
+    expect(reset.status).toBe(409)
+    expect(state.actions.at(-1)).toMatchObject({
+      action: 'ops.profile.reset',
+      result: 'stale',
+      detail: { revision: 2 },
+    })
+  })
+
+  it('reset: 200 and audit', async () => {
+    const res = await post('/api/ops/profile/reset', { revision: 4 }, auth_)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(profileResponse)
+    expect(profileCalls).toEqual(['reset:4'])
+    expect(state.actions.at(-1)).toMatchObject({
+      action: 'ops.profile.reset',
+      result: 'ok',
+      detail: { revision: 4 },
+    })
+  })
+
+  it('500 and an error audit row when the store throws', async () => {
+    profileThrows = true
+    const res = await post('/api/ops/profile', { revision: 1, profile: fields }, auth_)
+    expect(res.status).toBe(500)
+    expect(await res.text()).not.toContain('db down')
+    expect(state.actions.at(-1)).toMatchObject({ action: 'ops.profile', result: 'error' })
   })
 })
 

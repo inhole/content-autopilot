@@ -313,12 +313,14 @@ export type OpsResponse = {
    * The campaign profile in effect (the owner's preferences; no address or phone): the copy saved
    * from this page when there is one, else config/campaign-profile.json. Null when neither loads.
    */
-  profile: (OpsProfileFields & {
-    /** Where it was read from: `db` (saved from this page) or `file` (the bundled default). */
-    source: 'db' | 'file'
-    /** Edit guard to send back with a save or reset; 0 while `source` is `file`. */
-    revision: number
-  }) | null
+  profile:
+    | (OpsProfileFields & {
+        /** Where it was read from: `db` (saved from this page) or `file` (the bundled default). */
+        source: 'db' | 'file'
+        /** Edit guard to send back with a save or reset; 0 while `source` is `file`. */
+        revision: number
+      })
+    | null
 }
 
 /** Editable profile fields as the API reads and writes them (unset optional values are null). */
