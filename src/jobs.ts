@@ -46,6 +46,11 @@ export const Q = {
   pollReplies: 'poll-replies',
 } as const
 
+/** Shared by the schedules below and the dashboard's operations page, so they never disagree. */
+export const HOURLY_CRON = '0 * * * *'
+export const INSIGHTS_QUEUE = 'collect-insights'
+export const INSIGHTS_CRON = '0 5 * * *'
+
 /** Queue name from before the policy change; still drained so in-flight jobs are not lost. */
 const LEGACY_GENERATE_QUEUE = 'generate'
 
@@ -297,7 +302,7 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   // Hourly: expire stale drafts, warn 24h before expiry, and send the 09:00 / 18:00 reminder (decided from the local hour).
   const maintenanceQueue = 'review-maintenance'
   await boss.createQueue(maintenanceQueue, { policy: 'singleton', retryLimit: 0 })
-  await boss.schedule(maintenanceQueue, '0 * * * *', null, { tz })
+  await boss.schedule(maintenanceQueue, HOURLY_CRON, null, { tz })
   await boss.work(maintenanceQueue, async () => {
     const now = new Date()
     const result = await runReviewMaintenance(
@@ -324,11 +329,11 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   })
 
   // Insights: snapshot numbers daily before the 06:00 pipeline; report every Monday morning.
-  const insightsQueue = 'collect-insights'
+  const insightsQueue = INSIGHTS_QUEUE
   const reportQueue = 'weekly-report'
   await boss.createQueue(insightsQueue, { policy: 'singleton', retryLimit: 1, retryDelay: 600 })
   await boss.createQueue(reportQueue, { policy: 'singleton', retryLimit: 1, retryDelay: 600 })
-  await boss.schedule(insightsQueue, '0 5 * * *', null, { tz })
+  await boss.schedule(insightsQueue, INSIGHTS_CRON, null, { tz })
   await boss.schedule(reportQueue, '0 9 * * 1', null, { tz })
   await boss.work(insightsQueue, async () => {
     console.log('[collect-insights]', await collectInsights())

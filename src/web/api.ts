@@ -1,5 +1,5 @@
 import { type CampaignSource, competition, sourceInfo } from '../campaigns/types.ts'
-import type { ApiError } from './api-types.ts'
+import type { ApiError, OpsResponse } from './api-types.ts'
 import {
   type CampaignDetailData,
   type CampaignFilter,
@@ -26,6 +26,7 @@ export type ApiLoaders = {
   insights(days: number, now: Date): Promise<InsightsData>
   post(id: number): Promise<PostDetailData | null>
   revivable(): Promise<RevivableData>
+  ops(): Promise<OpsResponse>
 }
 
 export type ApiResult = { status: number; body: unknown }
@@ -88,6 +89,8 @@ export async function handleApi(
     const data = await loaders.post(Number(idText))
     return data ? { status: 200, body: data } : apiError(404, 'not found')
   }
+
+  if (path === '/api/ops') return { status: 200, body: await loaders.ops() }
 
   if (path === '/api/revivable') return { status: 200, body: await loaders.revivable() }
 
