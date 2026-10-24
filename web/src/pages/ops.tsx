@@ -1,4 +1,4 @@
-import { CheckIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
+import { CheckIcon, PencilIcon, PlayIcon, RotateCcwIcon, TriangleAlertIcon } from 'lucide-react'
 import { useState } from 'react'
 import { PageHeader, QueryBoundary } from '@/components/query-state.tsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from '@/components/ui/card.tsx'
 import { Spinner } from '@/components/ui/spinner.tsx'
+import { ApiError } from '@/lib/api.ts'
 import { formatAge, formatShortDateTime, formatWon } from '@/lib/format.ts'
 import {
   humanizeCron,
@@ -20,8 +21,9 @@ import {
   OPS_STATE_LABELS,
   OPS_STATE_TONES,
 } from '@/lib/ops.ts'
-import { OPS_POLL_MAX_MS, useOps, useRunOps } from '@/lib/queries.ts'
+import { OPS_POLL_MAX_MS, useOps, useResetProfile, useRunOps } from '@/lib/queries.ts'
 import type { OpsJob, OpsJobName, OpsProfile, OpsResponse, OpsSettings } from '@/lib/types.ts'
+import { ProfileForm } from '@/pages/ops-profile.tsx'
 import { Confirm } from '@/pages/post-actions.tsx'
 
 type Notice = { kind: 'ok' | 'error'; text: string }
@@ -158,48 +160,116 @@ function BadgeList({ items }: { items: string[] }) {
   )
 }
 
-export function ProfileCard({ profile }: { profile: OpsProfile | null }) {
+export function ProfileCard({
+  profile,
+  onNotice,
+}: {
+  profile: OpsProfile | null
+  onNotice?: (kind: Notice['kind'], text: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const reset = useResetProfile()
+  const say = (kind: Notice['kind'], text: string) => onNotice?.(kind, text)
+  const doReset = () => {
+    if (!profile) return
+    reset.mutate(
+      { revision: profile.revision },
+      {
+        onSuccess: () => say('ok', '기본 파일 내용으로 되돌렸어요.'),
+        onError: (e) =>
+          say(
+            'error',
+            e instanceof ApiError && e.status === 409
+              ? '다른 곳에서 먼저 바뀌었어요. 최신 내용을 다시 불러왔어요.'
+              : e.message,
+          ),
+      },
+    )
+  }
   return (
-    <Card>
+    <Card data-testid="profile-card">
       <CardHeader>
-        <CardTitle>체험단 프로필</CardTitle>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          체험단 프로필
+          {profile && (
+            <Badge variant={profile.source === 'db' ? 'info' : 'outline'}>
+              {profile.source === 'db' ? '페이지에서 수정함' : '기본 파일'}
+            </Badge>
+          )}
+        </CardTitle>
         <CardDescription>
-          읽기 전용이에요. config/campaign-profile.json을 고치고 다시 배포해야 반영돼요.
+          저장하면 다시 배포하지 않아도 다음 수집·선별과 리뷰 초안부터 바로 반영돼요.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
         {profile === null ? (
           <p className="text-sm text-muted-foreground">프로필을 읽지 못했어요.</p>
+        ) : editing ? (
+          <ProfileForm
+            profile={profile}
+            onCancel={() => setEditing(false)}
+            onSaved={() => {
+              setEditing(false)
+              say('ok', '프로필을 저장했어요. 다음 수집·선별부터 반영돼요.')
+            }}
+            onError={(m) => say('error', m)}
+          />
         ) : (
-          <dl className="flex flex-col gap-2 text-sm">
-            <Row label="소개">{profile.about || '-'}</Row>
-            <Row label="관심사">
-              <BadgeList items={profile.interests} />
-            </Row>
-            <Row label="선호 키워드">
-              <BadgeList items={profile.preferKeywords} />
-            </Row>
-            <Row label="제외 키워드">
-              <BadgeList items={profile.excludeKeywords} />
-            </Row>
-            <Row label="제외 브랜드">
-              <BadgeList items={profile.excludeBrands} />
-            </Row>
-            <Row label="최대 경쟁률">
-              {profile.maxCompetition == null ? '제한 없음' : `${profile.maxCompetition}:1`}
-            </Row>
-            <Row label="최소 가격">
-              {profile.minPriceWon == null ? '제한 없음' : formatWon(profile.minPriceWon)}
-            </Row>
-            <Row label="리뷰 말투">{profile.review.tone}</Row>
-            <Row label="리뷰 분량">
-              {profile.review.minChars}~{profile.review.maxChars}자
-            </Row>
-            <Row label="리뷰 포인트">
-              <BadgeList items={profile.review.points} />
-            </Row>
-            <Row label="협찬 문구">{profile.disclosure || '없음'}</Row>
-          </dl>
+          <>
+            <dl className="flex flex-col gap-2 text-sm">
+              <Row label="소개">{profile.about || '-'}</Row>
+              <Row label="관심사">
+                <BadgeList items={profile.interests} />
+              </Row>
+              <Row label="선호 키워드">
+                <BadgeList items={profile.preferKeywords} />
+              </Row>
+              <Row label="제외 키워드">
+                <BadgeList items={profile.excludeKeywords} />
+              </Row>
+              <Row label="제외 브랜드">
+                <BadgeList items={profile.excludeBrands} />
+              </Row>
+              <Row label="최대 경쟁률">
+                {profile.maxCompetition == null ? '제한 없음' : `${profile.maxCompetition}:1`}
+              </Row>
+              <Row label="최소 가격">
+                {profile.minPriceWon == null ? '제한 없음' : formatWon(profile.minPriceWon)}
+              </Row>
+              <Row label="리뷰 말투">{profile.review.tone}</Row>
+              <Row label="리뷰 분량">
+                {profile.review.minChars}~{profile.review.maxChars}자
+              </Row>
+              <Row label="리뷰 포인트">
+                <BadgeList items={profile.review.points} />
+              </Row>
+              <Row label="협찬 문구">{profile.disclosure || '없음'}</Row>
+            </dl>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+                <PencilIcon data-icon="inline-start" />
+                편집
+              </Button>
+              {profile.source === 'db' && (
+                <Confirm
+                  trigger={
+                    <Button type="button" size="sm" variant="ghost" disabled={reset.isPending}>
+                      {reset.isPending ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <RotateCcwIcon data-icon="inline-start" />
+                      )}
+                      기본 파일로 되돌리기
+                    </Button>
+                  }
+                  title="기본 파일 내용으로 되돌릴까요?"
+                  description="페이지에서 고친 내용이 사라지고 config/campaign-profile.json 내용이 다시 쓰여요."
+                  action="되돌리기"
+                  onConfirm={doReset}
+                />
+              )}
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
@@ -210,11 +280,13 @@ export function OpsView({
   data,
   runningName,
   onRun,
+  onNotice,
   now,
 }: {
   data: OpsResponse
   runningName: OpsJobName | null
   onRun: (name: OpsJobName) => void
+  onNotice?: (kind: Notice['kind'], text: string) => void
   now?: Date
 }) {
   const jobs = OPS_JOB_ORDER.flatMap((n) => data.jobs.find((j) => j.name === n) ?? [])
@@ -227,7 +299,7 @@ export function OpsView({
       </div>
       <div className="grid items-start gap-3 lg:grid-cols-2">
         <SettingsCard settings={data.settings} />
-        <ProfileCard profile={data.profile} />
+        <ProfileCard profile={data.profile} onNotice={onNotice} />
       </div>
     </>
   )
@@ -260,7 +332,7 @@ export function OpsPage() {
     <>
       <PageHeader
         title="운영"
-        description="예약 작업을 지금 실행하고, 파이프라인 설정과 체험단 프로필을 확인해요"
+        description="예약 작업을 지금 실행하고, 파이프라인 설정을 확인하고 체험단 프로필을 고쳐요"
       />
       {notice && (
         <Alert variant={notice.kind === 'error' ? 'destructive' : 'default'}>
@@ -274,6 +346,7 @@ export function OpsPage() {
             data={data}
             runningName={run.isPending ? (run.variables ?? null) : null}
             onRun={start}
+            onNotice={say}
           />
         )}
       </QueryBoundary>
