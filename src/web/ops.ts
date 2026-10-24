@@ -1,7 +1,7 @@
 import { CQ, MAINTENANCE_CRON } from '../campaigns/jobs.ts'
 import { type CampaignProfile, loadCampaignProfile } from '../campaigns/profile.ts'
 import { config } from '../config.ts'
-import { query, transaction } from '../db/pool.ts'
+import { type Query, query, transaction } from '../db/pool.ts'
 import { INSIGHTS_CRON, INSIGHTS_QUEUE, Q } from '../jobs.ts'
 import type { OpsJobName, OpsJobState, OpsResponse } from './api-types.ts'
 
@@ -44,10 +44,13 @@ const shorten = (text: string) => {
  * job keeps the serialized error in `output` (`message`, plus a stack that is never read); a
  * non-object output is stored as `{ value }`. Returns empty runs when the schema does not exist.
  */
-export async function loadQueueRuns(queues: string[]): Promise<Map<string, QueueRun>> {
+export async function loadQueueRuns(
+  queues: string[],
+  q: Query = query,
+): Promise<Map<string, QueueRun>> {
   const runs = new Map<string, QueueRun>(queues.map((q) => [q, { last: null, busy: false }]))
   try {
-    const latest = await query<{
+    const latest = await q<{
       name: string
       state: OpsJobState
       created_on: Date
@@ -73,7 +76,7 @@ export async function loadQueueRuns(queues: string[]): Promise<Map<string, Queue
         error: r.state === 'failed' && r.message ? shorten(r.message) : null,
       }
     }
-    const busy = await query<{ name: string }>(
+    const busy = await q<{ name: string }>(
       `select distinct name from pgboss.job
         where name = any($1) and state in ('created', 'retry', 'active')`,
       [queues],
@@ -168,11 +171,13 @@ export async function loadOps(
  * Holds a transaction-scoped advisory lock per queue while `fn` runs, so concurrent run requests
  * (two tabs, or two instances during a redeploy) check and send one at a time. pg-boss sends on its
  * own connection and commits before the lock is released, so the next holder sees that job.
+ * `fn` reads through the transaction's client: asking the pool for another one while holding a
+ * client would exhaust the pool when several requests wait on the lock at once.
  */
-const lockQueue = <T>(queue: string, fn: () => Promise<T>): Promise<T> =>
+const lockQueue = <T>(queue: string, fn: (q: Query) => Promise<T>): Promise<T> =>
   transaction(async (q) => {
     await q('select pg_advisory_xact_lock(hashtext($1))', [`ops-run:${queue}`])
-    return fn()
+    return fn(q)
   })
 
 /**
@@ -183,14 +188,14 @@ const lockQueue = <T>(queue: string, fn: () => Promise<T>): Promise<T> =>
 export async function runOpsJob(
   name: OpsJobName,
   deps: {
-    runs?: (queues: string[]) => Promise<Map<string, QueueRun>>
+    runs?: (queues: string[], q: Query) => Promise<Map<string, QueueRun>>
     send: (queue: string) => Promise<string | null>
-    lock?: <T>(queue: string, fn: () => Promise<T>) => Promise<T>
+    lock?: <T>(queue: string, fn: (q: Query) => Promise<T>) => Promise<T>
   },
 ): Promise<boolean> {
   const { queue } = OPS_JOBS[name]
-  return (deps.lock ?? lockQueue)(queue, async () => {
-    const run = (await (deps.runs ?? loadQueueRuns)([queue])).get(queue)
+  return (deps.lock ?? lockQueue)(queue, async (q) => {
+    const run = (await (deps.runs ?? loadQueueRuns)([queue], q)).get(queue)
     if (run?.busy) return false
     return (await deps.send(queue)) !== null
   })

@@ -1,7 +1,7 @@
 import type { PgBoss } from 'pg-boss'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { CQ } from '../../src/campaigns/jobs.ts'
-import { query } from '../../src/db/pool.ts'
+import { type Query, query } from '../../src/db/pool.ts'
 import { createBoss, Q } from '../../src/jobs.ts'
 import { loadOps, loadProfileForOps, loadQueueRuns, runOpsJob } from '../../src/web/ops.ts'
 
@@ -46,20 +46,19 @@ describe('ops job state', () => {
   })
 
   it('concurrent run requests on a singleton queue send one job', async () => {
-    // The singleton policy only limits active jobs, so without the lock all three would queue.
+    // The singleton policy only limits active jobs, so without the lock every request would queue.
     // The pause between the busy check and the send makes every request read "not busy" first
     // unless the lock serializes them.
     const send = (q: string) => boss.send(q, null)
-    const runs = async (queues: string[]) => {
-      const read = await loadQueueRuns(queues)
-      await new Promise((r) => setTimeout(r, 200))
+    const runs = async (queues: string[], q: Query) => {
+      const read = await loadQueueRuns(queues, q)
+      await new Promise((r) => setTimeout(r, 100))
       return read
     }
-    const results = await Promise.all([
-      runOpsJob('threads-daily', { send, runs }),
-      runOpsJob('threads-daily', { send, runs }),
-      runOpsJob('threads-daily', { send, runs }),
-    ])
+    // More requests than the pool has clients (5): the waiters must not starve the lock holder.
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => runOpsJob('threads-daily', { send, runs })),
+    )
     expect(results.filter(Boolean)).toHaveLength(1)
     const [row] = await query<{ n: number }>(
       'select count(*)::int as n from pgboss.job where name = $1',
