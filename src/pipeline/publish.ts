@@ -18,6 +18,14 @@ function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === '23505'
 }
 
+/** The post is not awaiting review or its revision moved on: the caller's view is stale. */
+export class NotAwaitingReviewError extends Error {
+  constructor(postId: number) {
+    super(`post ${postId} is not awaiting review or has changed`)
+    this.name = 'NotAwaitingReviewError'
+  }
+}
+
 /**
  * Approves a reviewed draft and assigns it the next free publish slot. Pass the `revision` the
  * reviewer saw so a draft rewritten in the meantime is not approved unread.
@@ -47,7 +55,7 @@ export async function approvePost(
          returning id`,
         [postId, at, opts.revision ?? null],
       )
-      if (rows.length === 0) throw new Error(`post ${postId} is not awaiting review or has changed`)
+      if (rows.length === 0) throw new NotAwaitingReviewError(postId)
       return at
     } catch (err) {
       // A concurrent approval took this slot (unique index); re-read taken slots and retry.
@@ -56,12 +64,22 @@ export async function approvePost(
   }
 }
 
-export async function rejectPost(postId: number, reason?: string): Promise<void> {
-  await query(
+/**
+ * Discards a draft under review. With `revision` (the web console) it only applies to the text
+ * the page displayed. Returns whether a row was rejected.
+ */
+export async function rejectPost(
+  postId: number,
+  reason?: string,
+  opts: { revision?: number } = {},
+): Promise<boolean> {
+  const rows = await query(
     `update posts set status = 'REJECTED', reject_reason = $2, updated_at = now()
-     where id = $1 and status = 'PENDING_REVIEW'`,
-    [postId, reason ?? null],
+     where id = $1 and status = 'PENDING_REVIEW' and ($3::int is null or revision = $3)
+     returning id`,
+    [postId, reason ?? null, opts.revision ?? null],
   )
+  return rows.length > 0
 }
 
 /**
