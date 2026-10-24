@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 1 | [만료된 초안 다시 쓰기](#1-만료된-초안-다시-쓰기) | 1~3일 | A·B 코드 완료 (결정 14). 실제 품질 확인 남음 |
 | 2 | [체험단 남은 일](#2-체험단-남은-일) | 운영 확인 + 2~3일 | 일부는 사용자 행동이 먼저 |
-| 3 | [대시보드 React + Vite + shadcn/ui 전환](#3-대시보드-react--vite--shadcnui-전환) → [관리자 콘솔](#관리자-콘솔-후속-작업) | 읽기 전용 완료, 관리자 콘솔 5~7일 | 읽기 전용 대시보드와 shadcn 재설계 완료. 관리자 콘솔(웹에서 Threads·체험단 조작, Telegram 코드 로그인)은 후속 작업으로 확정 |
+| 3 | [대시보드 React + Vite + shadcn/ui 전환](#3-대시보드-react--vite--shadcnui-전환) → [관리자 콘솔](#관리자-콘솔-후속-작업) | 읽기 전용 완료, 관리자 콘솔 5~7일 | 읽기 전용 대시보드와 shadcn 재설계 완료. 관리자 콘솔은 1단계(Telegram 코드 로그인, Basic 인증 교체) 완료, 2~4단계(웹에서 체험단·Threads 조작) 남음 |
 | 4 | [YouTube Shorts / Instagram Reels 확장](#4-youtube-shorts--instagram-reels-확장) | 2~3주 | 미착수, 계정·API 확인부터 |
 
 ## 1. 만료된 초안 다시 쓰기
@@ -118,7 +118,7 @@
 - 로그인 화면에서 `코드 받기`를 누르면 봇이 `TELEGRAM_CHAT_ID`로 6자리 코드를 보낸다. 웹에 그 코드를 넣으면 로그인된다. Telegram 계정을 가진 사람만 들어올 수 있으므로 계정 보안이 곧 콘솔 보안이다.
 - 코드는 5분 동안 유효하고 한 번만 쓴다. 저장은 해시로만 한다(새 테이블 `admin_login_codes`: code_hash, expires_at, used_at, attempts).
 - 틀린 입력은 코드당 5회까지만 받는다. 코드 요청은 1분에 1회, 시간당 5회로 제한한다. 제한에 걸리거나 로그인에 성공하면 Telegram으로 알린다(`🔐 관리자 콘솔 로그인`, 시각과 IP).
-- 세션은 서명된 HttpOnly 쿠키다(`Secure`, `SameSite=Strict`, 30일, 서버 비밀값 `ADMIN_SESSION_SECRET`). 세션 목록을 DB(`admin_sessions`)에 둬서 `/logout`과 "모든 세션 끊기"가 즉시 먹게 한다.
+- 세션은 HttpOnly 쿠키다(`Secure`, `SameSite=Strict`, 30일). 세션 목록을 DB(`admin_sessions`)에 둬서 `/logout`과 "모든 세션 끊기"가 즉시 먹게 한다. 구현할 때 서명 쿠키 대신 무작위 토큰(32바이트)을 쿠키에 두고 DB에는 해시만 두기로 바꿨다. 매 요청 DB에서 확인하므로 서명이 더할 것이 없고, `ADMIN_SESSION_SECRET`도 필요 없다. CSRF 토큰은 세션 토큰에서 파생한다.
 - 지금의 Basic 인증(`DASHBOARD_PASSWORD`)은 콘솔이 배포되면 걷어낸다. `/healthz`와 `/go/gift/:id`는 계속 인증 없이 둔다.
 
 **넣을 조작 (Telegram과 같은 기능)**
@@ -142,10 +142,10 @@
 
 **단계**
 
-1. 로그인(Telegram 코드, 세션, CSRF, 감사 기록)과 Basic 인증 교체. 아직 쓰기 기능 없이 배포해 로그인만 검증한다.
+1. 로그인(Telegram 코드, 세션, CSRF, 감사 기록)과 Basic 인증 교체. 아직 쓰기 기능 없이 배포해 로그인만 검증한다. **(완료, 2026-10-24, migration `019`. 서버 렌더링 페이지도 이때 지웠다. 자세한 동작은 `docs/dashboard.md`)**
 2. 체험단 조작(위험이 낮음): 신청함·패스·선정·미선정·기한·리뷰 초안.
 3. Threads 초안·예약 조작과 만료 초안·주간 묶음.
-4. 운영 버튼(지금 수집 등)과 서버 렌더링 페이지 삭제.
+4. 운영 버튼(지금 수집 등).
 
 **테스트:** 로그인 흐름(만료·재사용·시도 제한·요청 제한), CSRF·Origin 거부, revision 충돌 시 거절, Telegram 버튼 정리, 감사 기록을 통합 테스트로 확인한다. 화면은 Testing Library로 확인한다.
 

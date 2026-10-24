@@ -150,9 +150,10 @@ describe('sessions', () => {
     expect(await loadSession('x'.repeat(43))).toBeNull()
     const a = await login()
     const b = await login()
-    await query(`update admin_sessions set expires_at = now() - interval '1 second' where id = $1`, [
-      a.id,
-    ])
+    await query(
+      `update admin_sessions set expires_at = now() - interval '1 second' where id = $1`,
+      [a.id],
+    )
     expect(await loadSession(a.token)).toBeNull()
     await revokeSession(b.id)
     expect(await loadSession(b.token)).toBeNull()

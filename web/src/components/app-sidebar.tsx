@@ -1,8 +1,16 @@
-import { ActivityIcon, BarChart3Icon, GiftIcon, LayoutDashboardIcon, MessageSquareTextIcon } from 'lucide-react'
+import {
+  ActivityIcon,
+  BarChart3Icon,
+  GiftIcon,
+  LayoutDashboardIcon,
+  MessageSquareTextIcon,
+} from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
+import { AccountMenu } from '@/components/account-menu.tsx'
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -84,6 +92,9 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter>
+        <AccountMenu />
+      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )

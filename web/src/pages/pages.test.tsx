@@ -11,6 +11,7 @@ import {
   insightsFixture,
   overviewFixture,
   postsFixture,
+  sessionFixture,
 } from '@/mocks/fixtures.ts'
 import type { CampaignRow } from '@/lib/types.ts'
 import { CampaignDetailView } from './campaign-detail.tsx'
@@ -201,6 +202,16 @@ describe('InsightsView', () => {
   })
 })
 
+/** Stubs fetch with a live session; every other request goes to `handler`. */
+function stubFetch(handler: (url: string, init?: RequestInit) => Promise<Response>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) =>
+      url === '/api/auth/session' ? new Response(JSON.stringify(sessionFixture)) : handler(url, init),
+    ),
+  )
+}
+
 function LocationProbe() {
   const l = useLocation()
   return <output data-testid="loc">{`${l.pathname}${l.search}`}</output>
@@ -221,7 +232,7 @@ describe('routing with the API', () => {
 
   it('loads the overview through fetch with same-origin credentials', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(overviewFixture)))
-    vi.stubGlobal('fetch', fetchMock)
+    stubFetch(fetchMock)
     renderApp('/')
     await waitFor(() => expect(screen.getByText(/그때 확인한 체험단 475건/)).toBeInTheDocument())
     expect(fetchMock).toHaveBeenCalledWith(
@@ -235,8 +246,7 @@ describe('routing with the API', () => {
   })
 
   it('shows an error state with retry', async () => {
-    vi.stubGlobal(
-      'fetch',
+    stubFetch(
       vi.fn(async () => new Response(JSON.stringify({ error: '서버 오류' }), { status: 500 })),
     )
     const client = createQueryClient()
@@ -248,7 +258,7 @@ describe('routing with the API', () => {
 
   it('passes status and source from the URL to the API', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ filter: {}, rows: [] })))
-    vi.stubGlobal('fetch', fetchMock)
+    stubFetch(fetchMock)
     renderApp('/campaigns?status=APPLIED&source=musinsa')
     await waitFor(() => expect(screen.getByText('해당하는 체험단이 없어요.')).toBeInTheDocument())
     expect(fetchMock).toHaveBeenCalledWith(
@@ -261,7 +271,7 @@ describe('routing with the API', () => {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify({ filter: {}, rows: campaignRowsFixture })),
     )
-    vi.stubGlobal('fetch', fetchMock)
+    stubFetch(fetchMock)
     const user = userEvent.setup()
     renderApp('/campaigns')
     await screen.findAllByRole('link', { name: /#101/ })
@@ -275,8 +285,7 @@ describe('routing with the API', () => {
 
   it('opens a campaign as a sheet over the list and a full page on direct navigation', async () => {
     const detail = campaignDetailFixture(101)
-    vi.stubGlobal(
-      'fetch',
+    stubFetch(
       vi.fn(async (url: string) =>
         String(url).startsWith('/api/campaigns/101')
           ? new Response(JSON.stringify(detail))
