@@ -64,7 +64,7 @@ await registerCampaignJobs(boss)
 await registerReviveJobs(boss, reviewer, sendWithKeyboard)
 await registerDigestJobs(boss)
 reviewer.start()
-// Null when DASHBOARD_PASSWORD is unset.
+// Null when Telegram is not configured (login codes go there).
 const dashboard = await startDashboard()
 
 console.log(
