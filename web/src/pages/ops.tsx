@@ -1,5 +1,5 @@
 import { CheckIcon, PencilIcon, PlayIcon, RotateCcwIcon, TriangleAlertIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { PageHeader, QueryBoundary } from '@/components/query-state.tsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
@@ -170,10 +170,13 @@ export function ProfileCard({
   const [editing, setEditing] = useState(false)
   const reset = useResetProfile()
   const say = (kind: Notice['kind'], text: string) => onNotice?.(kind, text)
+  // The revision shown when the confirmation opened: polling may bring a newer copy while it is
+  // open, and resetting on that one would discard it instead of answering 409.
+  const resetRevision = useRef(0)
   const doReset = () => {
     if (!profile) return
     reset.mutate(
-      { revision: profile.revision },
+      { revision: resetRevision.current },
       {
         onSuccess: () => say('ok', '기본 파일 내용으로 되돌렸어요.'),
         onError: (e) =>
@@ -253,7 +256,15 @@ export function ProfileCard({
               {profile.source === 'db' && (
                 <Confirm
                   trigger={
-                    <Button type="button" size="sm" variant="ghost" disabled={reset.isPending}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={reset.isPending}
+                      onClick={() => {
+                        resetRevision.current = profile.revision
+                      }}
+                    >
                       {reset.isPending ? (
                         <Spinner data-icon="inline-start" />
                       ) : (

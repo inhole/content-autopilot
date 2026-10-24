@@ -12,6 +12,8 @@ import type { OpsProfile, OpsProfileFields } from '@/lib/types.ts'
 // Mirrors the limits in src/web/api-types.ts (the server stays authoritative).
 const LIST_MAX_ITEMS = 50
 const LIST_MAX_CHARS = 50
+/** Characters as the server counts them (code points, so an emoji is one). */
+const chars = (s: string) => [...s].length
 
 export type FormState = {
   about: string
@@ -38,7 +40,7 @@ export const parseList = (text: string): string[] => [
   ),
 ]
 
-const toForm = (p: OpsProfileFields): FormState => ({
+export const toForm = (p: OpsProfileFields): FormState => ({
   about: p.about,
   interests: p.interests.join('\n'),
   preferKeywords: p.preferKeywords.join('\n'),
@@ -87,15 +89,15 @@ export function buildProfile(
   } as const
   for (const [key, items] of Object.entries(lists)) {
     if (items.length > LIST_MAX_ITEMS) errors[key as Key] = `항목은 ${LIST_MAX_ITEMS}개까지예요`
-    else if (items.some((i) => i.length > LIST_MAX_CHARS))
+    else if (items.some((i) => chars(i) > LIST_MAX_CHARS))
       errors[key as Key] = `항목 하나는 ${LIST_MAX_CHARS}자까지예요`
   }
   const about = f.about.trim()
-  if (about.length > 500) errors.about = '소개는 500자까지예요'
+  if (chars(about) > 500) errors.about = '소개는 500자까지예요'
   const tone = f.tone.trim()
-  if (tone.length > 200) errors['review.tone'] = '말투는 200자까지예요'
+  if (chars(tone) > 200) errors['review.tone'] = '말투는 200자까지예요'
   const disclosure = f.disclosure.trim()
-  if (disclosure.length > 200) errors.disclosure = '협찬 문구는 200자까지예요'
+  if (chars(disclosure) > 200) errors.disclosure = '협찬 문구는 200자까지예요'
 
   const maxCompetition = num(f.maxCompetition)
   if (maxCompetition !== null && !(Number.isFinite(maxCompetition) && maxCompetition > 0))
@@ -257,7 +259,7 @@ export function ProfileForm({
         label="소개"
         error={errors.about}
         htmlFor={`${id}-about`}
-        hint={`${form.about.length}/500자`}
+        hint={`${chars(form.about)}/500자`}
       >
         <Textarea
           id={`${id}-about`}

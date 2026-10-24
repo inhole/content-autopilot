@@ -8,6 +8,7 @@ import { humanizeCron } from '@/lib/ops.ts'
 import { mockOps, resetMockOps } from '@/mocks/fixtures.ts'
 import type { OpsProfile } from '@/lib/types.ts'
 import { OpsPage } from './ops.tsx'
+import { buildProfile, toForm } from './ops-profile.tsx'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 
@@ -258,6 +259,31 @@ describe('profile editing', () => {
     await user.click(screen.getByRole('button', { name: '저장' }))
     await waitFor(() => expect(posts()).toHaveLength(1))
     expect(lastBody().revision).toBe(4)
+  })
+
+  it('resets on the revision shown when the confirmation opened', async () => {
+    ops = { ...mockOps(), profile: dbProfile() }
+    serveProfile(() => json({ error: 'stale', stale: true }, 409))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const user = userEvent.setup()
+    renderPage(client)
+    await user.click(await screen.findByRole('button', { name: '기본 파일로 되돌리기' }))
+    const dialog = await screen.findByRole('alertdialog')
+    ops = { ...mockOps(), profile: { ...dbProfile(), revision: 5 } }
+    const gets = () => fetchMock.mock.calls.filter(([, init]) => init?.method !== 'POST').length
+    const before = gets()
+    await client.invalidateQueries({ queryKey: ['ops'] })
+    await waitFor(() => expect(gets()).toBeGreaterThan(before))
+    await user.click(within(dialog).getByRole('button', { name: '되돌리기' }))
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(lastBody()).toEqual({ revision: 4 })
+  })
+
+  it('counts characters as code points, like the server', async () => {
+    const emoji = '😀'.repeat(50)
+    const base = toForm(dbProfile())
+    expect(buildProfile({ ...base, interests: emoji }).ok).toBe(true)
+    expect(buildProfile({ ...base, interests: `${emoji}a` }).ok).toBe(false)
   })
 
   it('blocks an invalid value on the client without posting', async () => {
