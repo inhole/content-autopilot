@@ -21,7 +21,7 @@
 | 단계 | 내용 |
 |---|---|
 | 수집 | `gift-collect`가 하루 3번(09·15·21시, `GIFT_COLLECT_CRON`) 공개 목록 전체를 읽어 `campaigns`에 upsert한다. 상태와 내 기록은 건드리지 않는다. |
-| 선별 | 규칙(제외 키워드·브랜드, `maxCompetition`, 마감)으로 거르고, 남은 후보를 LLM이 60건씩 점수화해 하루 `CAMPAIGN_DAILY_MAX`개를 뽑는다. |
+| 선별 | 규칙(제외 키워드·브랜드, `maxCompetition`, `minPriceWon`, 마감)으로 거르고, 남은 후보를 코드가 경쟁률·정가·관심 단어로 점수화해(`CAMPAIGN_RANK_MODE=rule`, 기본. `llm`이면 LLM이 60건씩) 출처마다 하루 `CAMPAIGN_DAILY_MAX`개를 뽑는다. |
 | 카드 | 사진 카드에 경쟁률, `D-n (추정)`, 점수와 이유를 담고 `📱 선물하기에서 열기` / `✅ 신청함` / `🙅 패스`(사유 선택) 버튼을 붙인다. |
 | 기록 | `✅` 뒤 `🎉 선정` / `😢 미선정`. `/due <번호> <날짜>`로 리뷰 기한. `/camps`로 진행 중 목록. |
 | 유지보수 | `campaign-maintenance`가 매시 마감 지난 카드를 `EXPIRED`로 만들고, 09~21시에 리마인더(`result-check`, `due-missing`, `review-d3/d1/d0`)를 보낸다. |
@@ -29,7 +29,7 @@
 | 대시보드 | 읽기 전용 웹 페이지([dashboard.md](../dashboard.md))와 `/status`에 체험단 단계별 개수. |
 | CLI | `gift:list`, `musinsa:list`(둘 다 읽기 전용), `campaign:collect`, `musinsa:collect`, `campaign:rank`, `campaign:show`, `campaign:card`, `campaign:remind`, `review:draft` |
 
-설정은 `GIFT_COLLECT_CRON`, `GIFT_TRIAL_PAGE_ID`(33325), `CAMPAIGN_DAILY_MAX`(5, 출처마다), `CAMPAIGN_PROFILE_PATH`(`config/campaign-profile.json`), `MUSINSA_COLLECT_CRON`(`0 10,16,22 * * *`)다.
+설정은 `GIFT_COLLECT_CRON`, `GIFT_TRIAL_PAGE_ID`(33325), `CAMPAIGN_DAILY_MAX`(5, 출처마다), `CAMPAIGN_RANK_MODE`(`rule`), `CAMPAIGN_PROFILE_PATH`(`config/campaign-profile.json`), `MUSINSA_COLLECT_CRON`(`0 10,16,22 * * *`)다.
 
 ## 3. 실제로 확인한 것 (2026-10-18)
 
@@ -50,7 +50,7 @@
 | 항목 | 왜 중요한가 | 확인 방법 |
 |---|---|---|
 | `remainingDays`의 의미 | 신청 마감 추정(오늘 + 남은 일수의 끝)과 `EXPIRED`, `result-check` 시점이 모두 여기에 달려 있다. 당일 마감이 0인지 1인지, 실제 마감 시각이 언제인지 모른다. | 마감일이 알려진 체험단을 며칠 추적해 `remaining_days` 변화와 카톡의 실제 마감을 비교한다 |
-| LLM 선별 품질 | 475건 중 하루 5개를 뽑는 것이 핵심이다. 점수가 취향과 맞는지, 60건 배치 간 점수 편차가 없는지 모른다. | 첫 1~2주의 카드와 `🙅 패스` 사유를 모아 프롬프트와 프로필을 조정한다 |
+| 선별 품질 | 475건 중 하루 5개를 뽑는 것이 핵심이다. 규칙 점수(2026-10-24부터 기본)는 경쟁률이 낮은 것을 앞에 두지만, 제목만으로 취향을 읽지 못해 키즈 의류처럼 안 맞는 품목이 올라올 수 있다. | 첫 1~2주의 카드와 `🙅 패스` 사유를 모아 `excludeKeywords`·`preferKeywords`와 가중치를 조정한다. 안 맞으면 `CAMPAIGN_RANK_MODE=llm` |
 | 실제 봇의 사진 카드 | 이미지 URL이 Telegram에서 받아지는지, 캡션이 1024자 안에서 보기 좋은지 확인하지 못했다. | `campaign:collect` 또는 `campaign:card <id>`로 실제 봇에 보낸다 |
 | 폰에서 링크가 카톡으로 열리는지 | `gift.kakao.com/giftbox/trial-campaign/<id>`를 Telegram에서 폰으로 열었을 때 카카오톡 앱의 해당 체험단으로 가는지, 브라우저로 열리는지 모른다. 브라우저로 열리면 신청 동선이 늘어난다. | 폰 Telegram에서 카드 버튼을 눌러 본다 |
 | 리뷰 초안 품질 | 메모만 근거로 한 100~500자 초안이 쓸 만한지, 글자 수 보정(줄이기·늘리기)이 자연스러운지 모른다. | 선정된 건으로 한 번 끝까지 돌려 본다 |
@@ -64,7 +64,7 @@
 
 1. 위 미확인 항목을 첫 1~2주 운영하면서 확인한다. 가장 먼저 사진 카드와 폰에서 링크 열림을 본다.
 2. `remainingDays` 실측 결과로 마감 추정을 고친다. 맞으면 `(추정)` 표시를 줄이는 것도 본다.
-3. 선별 결과가 나오면 프롬프트와 `config/campaign-profile.json`(`interests`, `excludeKeywords`, `maxCompetition`)을 조정한다.
+3. 선별 결과가 나오면 `config/campaign-profile.json`(`preferKeywords`, `interests`, `excludeKeywords`, `maxCompetition`)과 규칙 점수 가중치(`src/campaigns/rank.ts`)를 조정한다.
 4. 무신사 카드를 1~2주 받아 보며 경쟁률과 카드 정보가 선별에 쓸 만한지, `🙅 패스` 사유를 본다.
 5. **무신사 자동 신청**은 프리유저 가입 뒤의 다음 단계다. 스냅을 한 번 올려 가입하고, 신청 API가 열리는지 확인한다. 열리면 옵션을 고르는 Telegram 버튼을 만들고, 내가 로그인한 Aside 브라우저로 신청한다. 신청 직전 확인 단계를 두고, 리뷰 게시는 자동화하지 않는다(결정 10, 13).
 

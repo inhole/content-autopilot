@@ -40,6 +40,8 @@
 | 초안 작성 | `LLM_MODEL` | `anthropic/claude-sonnet-5.5` |
 | 주제 선정 | `LLM_RANK_MODEL` | `anthropic/claude-haiku-4.5` |
 
+체험단 선별은 기본으로 LLM을 쓰지 않는다(`CAMPAIGN_RANK_MODE=rule`, 5-1절). `LLM_RANK_MODEL`은 Threads 주제 선정과 `CAMPAIGN_RANK_MODE=llm`일 때의 체험단 선별에 쓰인다.
+
 ## 3. Telegram 봇
 
 1. Telegram에서 `@BotFather`에게 `/newbot`을 보내 봇을 만들고 토큰을 받는다.
@@ -110,7 +112,7 @@
 
 ## 5. 체험단 (카카오톡 선물하기, 무신사 프리유저)
 
-체험단은 계정이나 토큰이 필요 없다. 선물하기와 무신사 모두 공개 목록을 읽기만 한다. 위의 Supabase, OpenRouter, Telegram 설정이 되어 있으면 바로 돈다. 클라우드 워커 하나가 Threads와 두 출처의 체험단을 같이 처리하고, 별도 PC나 브라우저 자동화를 쓰지 않는다. 로그인이 필요한 무신사 신청은 지금은 내가 직접 한다(5-4절).
+체험단은 계정이나 토큰이 필요 없다. 선물하기와 무신사 모두 공개 목록을 읽기만 한다. 위의 Supabase, Telegram 설정이 되어 있으면 바로 돈다. 수집, 선별, 카드는 OpenRouter 없이 돌고, 리뷰 초안만 OpenRouter가 필요하다. 클라우드 워커 하나가 Threads와 두 출처의 체험단을 같이 처리하고, 별도 PC나 브라우저 자동화를 쓰지 않는다. 로그인이 필요한 무신사 신청은 지금은 내가 직접 한다(5-4절).
 
 신청과 리뷰 작성은 카카오톡 **모바일 앱**에서만 된다. 폰에 카카오톡이 있고 선물하기에서 체험단에 신청할 수 있는 계정이면 된다. Telegram은 그 폰에도 깔려 있어야 카드의 링크를 바로 열 수 있다.
 
@@ -123,10 +125,11 @@
 | `GIFT_COLLECT_CRON` | `0 9,15,21 * * *` | 공개 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `GIFT_TRIAL_PAGE_ID` | `33325` | 선물하기 체험단 탭의 페이지 번호. `gift.kakao.com/page/<번호>`다. 탭이 바뀌면 이 값을 고친다. |
 | `CAMPAIGN_DAILY_MAX` | `5` | 출처(카카오톡, 무신사)마다 하루에 Telegram으로 보낼 카드 최대 개수 (1~20) |
+| `CAMPAIGN_RANK_MODE` | `rule` | 선별 점수 방식. `rule`은 코드가 경쟁률·정가·관심 단어로 매기고 LLM을 부르지 않는다. `llm`은 `LLM_RANK_MODEL`이 매긴다([architecture.md](architecture.md) 선별) |
 | `MUSINSA_COLLECT_CRON` | `0 10,16,22 * * *` | 무신사 목록을 읽는 시각 (`TZ_NAME` 기준) |
 | `CAMPAIGN_PROFILE_PATH` | `config/campaign-profile.json` | 선별 규칙과 리뷰 문체, 광고 표기를 담은 프로필 파일 |
 
-선별 모델은 `LLM_RANK_MODEL`, 리뷰 초안 모델은 `LLM_MODEL`을 쓴다(2절). 카카오톡 카드 버튼이 카카오톡 앱으로 바로 열리게 하려면 `PUBLIC_BASE_URL`(대시보드 공개 https 주소, 경로 없이)도 넣는다([dashboard.md](dashboard.md)). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
+선별은 기본으로 LLM 없이 돌고(`CAMPAIGN_RANK_MODE=llm`일 때만 `LLM_RANK_MODEL`), 리뷰 초안은 `LLM_MODEL`을 쓴다(2절). 카카오톡 카드 버튼이 카카오톡 앱으로 바로 열리게 하려면 `PUBLIC_BASE_URL`(대시보드 공개 https 주소, 경로 없이)도 넣는다([dashboard.md](dashboard.md)). 읽기 전용 웹 대시보드를 켜려면 `DASHBOARD_PASSWORD`를 넣는다([dashboard.md](dashboard.md)).
 
 ### 5-2. 프로필 `config/campaign-profile.json`
 
@@ -136,6 +139,7 @@
 {
   "about": "IT 개발자. 실사용 위주로 꼼꼼히 써보고 장단점을 솔직하게 남기는 편",
   "interests": ["IT 액세서리", "주변기기", "생활용품", "식품", "주방용품"],
+  "preferKeywords": ["키보드", "마우스", "충전", "디지털", "텀블러", "프라이팬"],
   "excludeKeywords": ["다이어트 보조제", "주류", "성인"],
   "excludeBrands": [],
   "maxCompetition": 200,
@@ -153,8 +157,9 @@
 | 필드 | 설명 |
 |---|---|
 | `about` | 나를 소개하는 한두 문장. 선별과 리뷰 초안의 맥락이다. |
-| `interests` | 관심 품목. 선별 LLM이 참고한다. |
-| `excludeKeywords` | 제목·브랜드에 있으면 코드가 LLM 전에 바로 건너뛴다. |
+| `interests` | 관심 품목. 규칙 점수에서는 `preferKeywords`와 같이 쓰이고, LLM 선별에서는 프롬프트에 들어간다. |
+| `preferKeywords` | 제목, 브랜드, 무신사 품목 이름에 들어 있으면 규칙 점수에 2점을 더하는 단어. 부분 일치라 짧은 단어는 엉뚱한 데 걸린다(예: `허브`는 브랜드 `에센허브`, `케이블`은 `케이블 비니`). 생략하면 빈 목록이다. |
+| `excludeKeywords` | 제목·브랜드에 있으면 코드가 점수를 매기기 전에 바로 건너뛴다. |
 | `excludeBrands` | 브랜드 이름에 포함되면 건너뛴다. 생략하면 빈 목록이다. |
 | `minPriceWon` | 정가(원)가 이보다 낮은 체험단은 건너뛴다(`가격 낮음: 14,900원`). 정가를 모르면 건너뛰지 않는다. 저장소 기본 파일은 `30000`이고, 생략하면 제한이 없다. 선물하기 정가는 수집 때 공개 상품 API에서 읽고, 무신사는 목록의 대표 상품 정가를 쓴다. |
 | `maxCompetition` | 모집 인원 한 명당 신청자 수가 이보다 많으면 건너뛴다. **생략하면 제한이 없다** (저장소 기본 파일에는 없다. 위 예시의 200은 예시 값이다). |

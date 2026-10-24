@@ -58,6 +58,8 @@ export const schema = z.object({
   // gift.kakao.com/page/<id>: the 체험단 tab of 선물하기.
   GIFT_TRIAL_PAGE_ID: z.coerce.number().int().default(33325),
   CAMPAIGN_DAILY_MAX: z.coerce.number().int().min(1).max(20).default(5),
+  // How surviving candidates are scored: `rule` in code (no LLM call), `llm` with LLM_RANK_MODEL.
+  CAMPAIGN_RANK_MODE: z.enum(['rule', 'llm']).default('rule'),
   CAMPAIGN_PROFILE_PATH: z.string().default('config/campaign-profile.json'),
 
   // Musinsa 체험단 (preuser) trials (docs/plans/campaign-autopilot.md). The list is public.
