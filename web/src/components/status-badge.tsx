@@ -3,11 +3,13 @@ import {
   daysUntil,
   formatDday,
   ORIGIN_LABELS,
+  PART_STATUS_LABELS,
   postStatusLabel,
   sourceLabel,
   statusLabel,
+  VERDICT_LABELS,
 } from '@/lib/format.ts'
-import { campaignTone, deadlineTone, postTone } from '@/lib/status.ts'
+import { type BadgeTone, campaignTone, deadlineTone, postTone } from '@/lib/status.ts'
 import type { CampaignRow, PostItem } from '@/lib/types.ts'
 import { cn } from '@/lib/utils.ts'
 
@@ -21,6 +23,24 @@ export const PostStatusBadge = ({ status }: { status: string }) => (
 
 export const OriginBadge = ({ origin }: { origin: PostItem['origin'] }) =>
   ORIGIN_LABELS[origin] ? <Badge variant="outline">{ORIGIN_LABELS[origin]}</Badge> : null
+
+const PART_TONES: Record<string, BadgeTone> = {
+  PENDING: 'outline',
+  PUBLISHING: 'info',
+  PUBLISHED: 'success',
+  FAILED: 'destructive',
+}
+
+export const PartStatusBadge = ({ status }: { status: string }) => (
+  <Badge variant={PART_TONES[status] ?? 'outline'}>{PART_STATUS_LABELS[status] ?? status}</Badge>
+)
+
+/** The expired-draft judgement: evergreen / stale / not judged yet. */
+export const VerdictBadge = ({ verdict }: { verdict: 'evergreen' | 'stale' | null }) => (
+  <Badge variant={verdict === 'evergreen' ? 'success' : verdict === 'stale' ? 'muted' : 'outline'}>
+    {verdict ? VERDICT_LABELS[verdict] : '미판정'}
+  </Badge>
+)
 
 /** A small dot that tells the sources apart without spending a colour on the whole row. */
 export function SourceDot({ source, className }: { source: string; className?: string }) {

@@ -1,5 +1,17 @@
 // Types only: nothing from src/ is bundled (verbatimModuleSyntax + `import type`).
 import type {
+  AddTopicConflict,
+  AddTopicRequest,
+  AddTopicResponse,
+  PostActionConflict,
+  PostActionName,
+  PostActionRequests,
+  PostActionResponse,
+  PostDetailResponse,
+  PostRejectReason,
+  PostStatus,
+  QueuedResponse,
+  RevivableResponse,
   AuthCodeResponse,
   AuthSessionResponse,
   CampaignActionConflict,
@@ -14,6 +26,18 @@ import type {
 } from '../../../src/web/api-types.ts'
 
 export type {
+  AddTopicConflict,
+  AddTopicRequest,
+  AddTopicResponse,
+  PostActionConflict,
+  PostActionName,
+  PostActionRequests,
+  PostActionResponse,
+  PostDetailResponse,
+  PostRejectReason,
+  PostStatus,
+  QueuedResponse,
+  RevivableResponse,
   AuthCodeResponse,
   AuthSessionResponse,
   CampaignActionConflict,
@@ -30,3 +54,6 @@ export type {
 export type CampaignRow = CampaignListResponse['rows'][number]
 export type PostItem = PostListResponse['rows'][number]
 export type StatusFilter = CampaignListResponse['filter']['status']
+export type PostDetail = PostDetailResponse['post']
+export type PostPart = PostDetailResponse['parts'][number]
+export type RevivableRow = RevivableResponse['rows'][number]

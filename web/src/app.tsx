@@ -11,8 +11,10 @@ import { ApiError } from '@/lib/api.ts'
 import { endSession, SESSION_KEY } from '@/lib/queries.ts'
 import { CampaignDetailPage, CampaignSheet } from '@/pages/campaign-detail.tsx'
 import { CampaignsPage } from '@/pages/campaigns.tsx'
+import { ExpiredPage } from '@/pages/expired.tsx'
 import { LoginPage } from '@/pages/login.tsx'
 import { OverviewPage } from '@/pages/overview.tsx'
+import { PostDetailPage, PostSheet } from '@/pages/post-detail.tsx'
 import { PostsPage } from '@/pages/posts.tsx'
 
 // recharts is heavy: the insights page (and the charts) load only when opened.
@@ -68,6 +70,8 @@ export function AppRoutes() {
             <Route path="campaigns" element={<CampaignsPage />} />
             <Route path="campaigns/:id" element={<CampaignDetailPage />} />
             <Route path="posts" element={<PostsPage />} />
+            <Route path="posts/:id" element={<PostDetailPage />} />
+            <Route path="expired" element={<ExpiredPage />} />
             <Route
               path="insights"
               element={
@@ -92,6 +96,7 @@ export function AppRoutes() {
       {background && (
         <Routes>
           <Route path="campaigns/:id" element={<CampaignSheet />} />
+          <Route path="posts/:id" element={<PostSheet />} />
         </Routes>
       )}
     </>

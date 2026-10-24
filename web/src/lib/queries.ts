@@ -5,6 +5,9 @@ import type {
   CampaignActionName,
   CampaignActionRequests,
   CampaignDetailResponse,
+  PostActionName,
+  PostActionRequests,
+  PostDetailResponse,
 } from './types.ts'
 
 export const REFRESH_MS = 60_000
@@ -73,6 +76,116 @@ export function useCampaignAction(id: number) {
 
 export const usePosts = () =>
   useQuery({ queryKey: ['posts'], queryFn: () => api.posts(50), ...live })
+
+/** How often a post is re-read while a regeneration or revival is being written. */
+export const POST_POLL_MS = 3_000
+/** A queued regeneration/revival older than this is probably lost (the worker alerts Telegram). */
+export const POST_SLOW_MS = 10 * 60_000
+
+/**
+ * A regeneration or revival was queued: the displayed state to compare against. The request is
+ * done once the post's revision (regeneration) or status (revival) differs from it.
+ */
+export type PostWatch = {
+  kind: 'regenerate' | 'revive'
+  revision: number
+  status: string
+  since: number
+}
+
+export const startPostWatch = (
+  kind: PostWatch['kind'],
+  post: PostDetailResponse['post'],
+  now = Date.now(),
+): PostWatch => ({
+  kind,
+  revision: post.revision,
+  status: post.status,
+  since: now,
+})
+
+/** True while the queued request has not changed the post yet. */
+export const isPostWatchPending = (watch: PostWatch | null, post: PostDetailResponse['post']) =>
+  watch !== null && post.revision === watch.revision && post.status === watch.status
+
+/** The request has been waiting longer than the worker is expected to need. */
+export const isPostWatchSlow = (watch: PostWatch, now = Date.now()) =>
+  now - watch.since > POST_SLOW_MS
+
+/** One post; `watching` looks again every few seconds until the queued job has changed it. */
+export const usePost = (id: number, watching = false) =>
+  useQuery({
+    queryKey: ['post', id],
+    queryFn: () => api.post(id),
+    ...live,
+    refetchInterval: watching ? POST_POLL_MS : REFRESH_MS,
+  })
+
+/** The expired drafts; polled faster for a while after a judgement was requested. */
+export const useRevivable = (pollUntil = 0) =>
+  useQuery({
+    queryKey: ['revivable'],
+    queryFn: api.revivable,
+    ...live,
+    refetchInterval: () => (Date.now() < pollUntil ? 5_000 : REFRESH_MS),
+  })
+
+/** Everything a Threads operation can change. */
+function refreshPostData(client: QueryClient, id?: number) {
+  return Promise.all([
+    id === undefined
+      ? client.invalidateQueries({ queryKey: ['post'] })
+      : client.invalidateQueries({ queryKey: ['post', id] }),
+    client.invalidateQueries({ queryKey: ['posts'] }),
+    client.invalidateQueries({ queryKey: ['revivable'] }),
+    client.invalidateQueries({ queryKey: ['overview'] }),
+  ])
+}
+
+export type PostActionVars = {
+  [K in PostActionName]: { name: K; body: PostActionRequests[K] }
+}[PostActionName]
+
+/** Runs one Threads operation; a 409 refetches the post and leaves the server's message. */
+export function usePostAction(id: number) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: PostActionVars) => api.postAction(id, vars.name, vars.body as never),
+    onSuccess: (res) => {
+      if (res.detail) client.setQueryData(['post', id], res.detail)
+      void refreshPostData(client, id)
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) void refreshPostData(client, id)
+    },
+  })
+}
+
+/** POST /api/posts/add: a manual topic from a URL. */
+export function useAddTopic() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: api.addTopic,
+    onSuccess: () => void refreshPostData(client),
+  })
+}
+
+/** The two queued jobs: judge the expired drafts, build the weekly digest. */
+export function useReviveCheck() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: api.reviveCheck,
+    onSuccess: () => void refreshPostData(client),
+  })
+}
+
+export function useDigest() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: api.digest,
+    onSuccess: () => void refreshPostData(client),
+  })
+}
 
 export const useInsights = (days: number) =>
   useQuery({ queryKey: ['insights', days], queryFn: () => api.insights(days), ...live })

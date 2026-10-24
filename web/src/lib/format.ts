@@ -35,6 +35,30 @@ export const ORIGIN_LABELS: Record<string, string> = {
   digest: '🗞 주간 묶음',
 }
 
+/** Labels of the 🗑 폐기 reasons (REJECT_REASONS in src/pipeline/style.ts). */
+export const POST_REJECT_LABELS: Record<string, string> = {
+  fact: '사실 오류',
+  boring: '재미없음',
+  topic: '주제 별로',
+  dup: '중복',
+  other: '기타',
+}
+
+export const PART_STATUS_LABELS: Record<string, string> = {
+  PENDING: '대기',
+  PUBLISHING: '발행 중',
+  PUBLISHED: '발행됨',
+  FAILED: '실패',
+}
+
+export const VERDICT_LABELS: Record<string, string> = {
+  evergreen: '상록',
+  stale: '시의성 지남',
+}
+
+/** Characters as the editor counts them: code points, not UTF-16 units. */
+export const charCount = (text: string) => Array.from(text).length
+
 export const statusLabel = (status: string) => CAMPAIGN_STATUS_LABELS[status] ?? status
 
 const sourceOf = (source: string) => SOURCES.find((s) => s.key === source) ?? SOURCES[0]

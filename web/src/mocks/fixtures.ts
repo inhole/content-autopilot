@@ -1,10 +1,15 @@
 import type {
+  AddTopicRequest,
+  AddTopicResponse,
   AuthSessionResponse,
   CampaignDetailResponse,
   CampaignRow,
   InsightsResponse,
   OverviewResponse,
+  PostDetailResponse,
   PostListResponse,
+  QueuedResponse,
+  RevivableResponse,
 } from '../lib/types.ts'
 
 const hours = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString()
@@ -310,7 +315,333 @@ export const postsFixture: PostListResponse = {
       replies: null,
       origin: 'news',
     },
+    ...[
+      [51, 'PENDING_REVIEW', 'Cloudflare가 에이전트용 샌드박스 컨테이너를 공개함'],
+      [52, 'PENDING_REVIEW', 'Postgres 18 정식 출시. 비동기 I/O가 들어갔음'],
+      [61, 'EXPIRED', 'HTTP 캐시 헤더를 제대로 이해하는 방법. 결국 max-age와 ETag 두 개가 전부임'],
+      [62, 'EXPIRED', '오늘 열린 컨퍼런스 키노트 요약. 신제품 세 개가 나왔음'],
+      [63, 'EXPIRED', 'SQLite가 의외로 서버에서도 쓸 만한 이유'],
+    ].map(([id, status, text]) => ({
+      id: id as number,
+      status: status as string,
+      text: text as string,
+      scheduled_at: null,
+      published_at: null,
+      views: null,
+      likes: null,
+      replies: null,
+      origin: 'news' as const,
+    })),
   ],
+}
+
+type MockPost = PostDetailResponse
+const LIMITS: MockPost['limits'] = { text: 500, lastFollowup: 430, cta: '더 보고 싶으면 팔로우' }
+
+const noRevive: MockPost['post']['revive'] = {
+  verdict: null,
+  reason: null,
+  checked_at: null,
+  revived_at: null,
+  from_text: null,
+}
+
+function mockPostBase(
+  id: number,
+  status: MockPost['post']['status'],
+  title: string,
+  text: string,
+  over: Partial<MockPost['post']> = {},
+  parts: MockPost['parts'] = [],
+): MockPost {
+  return {
+    post: {
+      id,
+      status,
+      origin: 'news',
+      text,
+      angle: '직접 써 보면 체감이 큰 변화라는 쪽',
+      source_url: `https://example.com/articles/${id}`,
+      caveats: [],
+      revision: 1,
+      regen_seq: 0,
+      scheduled_at: null,
+      published_at: null,
+      created_at: hours(-30),
+      updated_at: hours(-2),
+      reject_reason: null,
+      attempts: 0,
+      last_error: null,
+      topic: { id: id + 500, title, url: `https://example.com/articles/${id}`, note: null, score: 8.2 },
+      revive: noRevive,
+      digest_post_id: null,
+      ...over,
+    },
+    parts,
+    limits: LIMITS,
+  }
+}
+
+const part = (
+  idx: number,
+  text: string,
+  over: Partial<MockPost['parts'][number]> = {},
+): MockPost['parts'][number] => ({
+  idx,
+  text,
+  status: 'PENDING',
+  attempts: 0,
+  last_error: null,
+  link_url: null,
+  ...over,
+})
+
+const buildMockPosts = () =>
+  new Map<number, MockPost>(
+    [
+      mockPostBase(
+        51,
+        'PENDING_REVIEW',
+        'Cloudflare 샌드박스 컨테이너',
+        'Cloudflare가 에이전트용 샌드박스 컨테이너를 공개함. 코드를 격리해서 돌리는 용도라 에이전트가 만든 코드를 안전하게 실행할 수 있음',
+        { caveats: ['가격은 아직 베타라 바뀔 수 있음'] },
+      ),
+      mockPostBase(
+        52,
+        'PENDING_REVIEW',
+        'Postgres 18 출시',
+        'Postgres 18 나왔음. 이번엔 비동기 I/O가 핵심임',
+        {},
+        [
+          part(2, '디스크 읽기를 기다리지 않고 여러 요청을 한꺼번에 던질 수 있게 됐음. 순차 스캔이 특히 빨라진다고 함'),
+          part(3, 'uuidv7도 기본 함수로 들어왔음. 정렬 가능한 id가 필요했던 사람한텐 반가운 소식임', {
+            link_url: 'https://example.com/articles/52',
+          }),
+        ],
+      ),
+      mockPostBase(
+        41,
+        'SCHEDULED',
+        'Claude Code 에이전트 SDK',
+        'Claude Code가 새 에이전트 SDK를 공개함. 서브에이전트를 코드에서 바로 정의할 수 있음',
+        { scheduled_at: hours(3), revision: 3 },
+      ),
+      mockPostBase(
+        40,
+        'PUBLISHED',
+        'TypeScript 5.9',
+        '지난주 만료된 글 다시 올림. TypeScript 5.9 요약',
+        {
+          origin: 'revived',
+          scheduled_at: hours(-20),
+          published_at: hours(-20),
+          revive: {
+            verdict: 'evergreen',
+            reason: '버전 요약이라 시간이 지나도 유효함',
+            checked_at: days(-3),
+            revived_at: days(-1),
+            from_text: '어제 TypeScript 5.9이 나왔음. 주요 변경점 정리했음',
+          },
+        },
+      ),
+      mockPostBase(
+        39,
+        'PUBLISHED',
+        '이번 주 AI 소식 묶음',
+        '이번 주 AI 소식 묶음. 세 가지만 골랐음',
+        { origin: 'digest', scheduled_at: hours(-44), published_at: hours(-44) },
+        [
+          part(2, '1) 모델 가격이 또 내려갔음. 같은 성능이 절반 값임', {
+            status: 'PUBLISHED',
+            attempts: 1,
+            link_url: 'https://example.com/a',
+          }),
+          part(3, '2) 새 벤치마크가 나왔는데 에이전트가 실제 업무를 얼마나 하는지 재는 쪽임', {
+            status: 'FAILED',
+            attempts: 3,
+            last_error: 'Threads API 500: temporarily unavailable',
+          }),
+        ],
+      ),
+      mockPostBase(38, 'FAILED', '발행 실패', '발행에 실패한 글', {
+        scheduled_at: hours(-60),
+        attempts: 3,
+        last_error: 'container ERROR: media could not be fetched',
+      }),
+      mockPostBase(
+        61,
+        'EXPIRED',
+        'HTTP 캐시',
+        'HTTP 캐시 헤더를 제대로 이해하는 방법. 결국 max-age와 ETag 두 개가 전부임',
+        {
+          revive: {
+            verdict: 'evergreen',
+            reason: '시간이 지나도 변하지 않는 개념 설명',
+            checked_at: hours(-5),
+            revived_at: null,
+            from_text: null,
+          },
+        },
+      ),
+      mockPostBase(
+        62,
+        'EXPIRED',
+        '컨퍼런스 키노트',
+        '오늘 열린 컨퍼런스 키노트 요약. 신제품 세 개가 나왔음',
+        {
+          revive: {
+            verdict: 'stale',
+            reason: '"오늘" 행사 소식이라 지금 올리면 어색함',
+            checked_at: hours(-5),
+            revived_at: null,
+            from_text: null,
+          },
+        },
+      ),
+      mockPostBase(63, 'EXPIRED', 'SQLite 서버', 'SQLite가 의외로 서버에서도 쓸 만한 이유'),
+    ].map((p) => [p.post.id, p]),
+  )
+
+let mockPosts = buildMockPosts()
+
+export const mockPostDetail = (id: number): MockPost | null => {
+  const p = mockPosts.get(id)
+  return p ? structuredClone(p) : null
+}
+
+/** The list overlays what the mock POSTs changed. */
+export const mockPostsList = (): PostListResponse => ({
+  rows: postsFixture.rows.map((r) => {
+    const p = mockPosts.get(r.id)?.post
+    return p
+      ? {
+          ...r,
+          status: p.status,
+          text: p.text,
+          origin: p.origin,
+          scheduled_at: p.scheduled_at,
+          published_at: p.published_at,
+        }
+      : r
+  }),
+})
+
+export const mockRevivable = (): RevivableResponse => ({
+  rows: [...mockPosts.values()]
+    .filter((m) => m.post.status === 'EXPIRED' && m.post.origin === 'news' && !m.post.revive.revived_at)
+    .map(({ post: p }) => ({
+      id: p.id,
+      title: p.topic.title,
+      text: p.text,
+      source_url: p.source_url,
+      created_at: p.created_at,
+      verdict: p.revive.verdict,
+      reason: p.revive.reason,
+      checked_at: p.revive.checked_at,
+    })),
+})
+
+/** Judges every unjudged expired draft (alternating), like the revive-check job. */
+export function mockReviveCheck(): QueuedResponse {
+  let n = 0
+  for (const m of mockPosts.values()) {
+    if (m.post.status !== 'EXPIRED' || m.post.revive.verdict) continue
+    m.post.revive = {
+      ...m.post.revive,
+      verdict: n++ % 2 === 0 ? 'evergreen' : 'stale',
+      reason: '모의 판정',
+      checked_at: new Date().toISOString(),
+    }
+  }
+  return { ok: true }
+}
+
+export function mockAddTopic(body: AddTopicRequest): AddTopicResponse | { postId: number } {
+  return body.url.includes('dup') ? { postId: 40 } : { ok: true, topicId: 900 }
+}
+
+/** Applies a post action to the mock state; 'stale' when the view was outdated. */
+export function mockPostAction(
+  id: number,
+  name: string,
+  body: unknown,
+): MockPost | 'stale' | 'not_found' {
+  const m = mockPosts.get(id)
+  if (!m) return 'not_found'
+  const p = m.post
+  const b = (body ?? {}) as Record<string, unknown>
+  const draft = p.status === 'PENDING_REVIEW' && b.revision === p.revision
+  const at = (v: unknown) => p.status === 'SCHEDULED' && String(v) === p.scheduled_at
+  const bump = () => {
+    p.revision += 1
+    p.updated_at = new Date().toISOString()
+  }
+  switch (name) {
+    case 'approve':
+      if (!draft) return 'stale'
+      p.status = 'SCHEDULED'
+      p.scheduled_at = hours(12)
+      break
+    case 'reject':
+      if (!draft) return 'stale'
+      p.status = 'REJECTED'
+      p.reject_reason = b.reason as MockPost['post']['reject_reason']
+      break
+    case 'regenerate':
+      if (!draft) return 'stale'
+      p.text = `${p.text.split('. ')[0]}. (다시 쓴 글)`
+      bump()
+      break
+    case 'edit': {
+      if (!draft) return 'stale'
+      const idx = Number(b.idx)
+      if (idx === 1) p.text = String(b.text)
+      else {
+        const target = m.parts.find((x) => x.idx === idx)
+        if (!target) return 'stale'
+        target.text = String(b.text)
+      }
+      bump()
+      break
+    }
+    case 'deletePart': {
+      if (!draft) return 'stale'
+      const idx = Number(b.idx)
+      if (!m.parts.some((x) => x.idx === idx)) return 'stale'
+      m.parts = m.parts.filter((x) => x.idx !== idx).map((x, i) => ({ ...x, idx: i + 2 }))
+      bump()
+      break
+    }
+    case 'unschedule':
+      if (!at(b.scheduledAt)) return 'stale'
+      p.status = 'PENDING_REVIEW'
+      p.scheduled_at = null
+      bump()
+      break
+    case 'publishNow':
+      if (!at(b.scheduledAt)) return 'stale'
+      p.scheduled_at = new Date().toISOString()
+      break
+    case 'retryParts':
+      if (p.status !== 'PUBLISHED' || !m.parts.some((x) => x.status === 'FAILED')) return 'stale'
+      for (const x of m.parts) if (x.status === 'FAILED') x.status = 'PENDING'
+      break
+    case 'revive':
+      if (p.status !== 'EXPIRED' || p.revive.revived_at || p.digest_post_id) return 'stale'
+      p.status = 'PENDING_REVIEW'
+      p.origin = 'revived'
+      p.revive = { ...p.revive, revived_at: new Date().toISOString(), from_text: p.text }
+      bump()
+      break
+    default:
+      return 'not_found'
+  }
+  return structuredClone(m)
+}
+
+/** Test helper: back to the initial mock posts. */
+export const resetMockPosts = () => {
+  mockPosts = buildMockPosts()
 }
 
 export const insightsFixture = (nDays: number): InsightsResponse => {
