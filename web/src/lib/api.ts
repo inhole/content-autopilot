@@ -9,6 +9,9 @@ import type {
   CampaignDetailResponse,
   CampaignListResponse,
   InsightsResponse,
+  OpsJobName,
+  OpsResponse,
+  OpsRunResponse,
   OverviewResponse,
   PostActionName,
   PostActionRequests,
@@ -73,6 +76,7 @@ async function mockGet(path: string): Promise<unknown> {
     return d
   }
   if (p === '/api/insights') return f.insightsFixture(Number(url.searchParams.get('days') ?? 30))
+  if (p === '/api/ops') return f.mockOps()
   if (p === '/api/auth/session') return f.sessionFixture
   throw new ApiError('찾을 수 없어요', 404)
 }
@@ -99,6 +103,12 @@ async function mockPost(path: string, body: unknown): Promise<unknown> {
     const result = f.mockAddTopic(body as AddTopicRequest)
     if ('postId' in result)
       throw new ApiError('이미 다룬 기사예요', 409, null, { postId: result.postId })
+    return result
+  }
+  const ops = path.match(/^\/api\/ops\/([a-z-]+)\/run$/)
+  if (ops) {
+    const result = f.mockRunOps(ops[1] as string)
+    if (result === 'not_found') throw new ApiError('알 수 없는 작업이에요', 404)
     return result
   }
   if (path === '/api/revivable/check') return f.mockReviveCheck()
@@ -176,6 +186,8 @@ export const api = {
     name: K,
     body: CampaignActionRequests[K],
   ) => post<CampaignActionResponse>(`/api/campaigns/${id}/${name}`, body),
+  ops: () => get<OpsResponse>('/api/ops'),
+  runOps: (name: OpsJobName) => post<OpsRunResponse>(`/api/ops/${name}/run`, {}),
   session: () => get<AuthSessionResponse>('/api/auth/session'),
   requestCode: () => post<AuthCodeResponse>('/api/auth/code'),
   login: (code: string) => post<AuthSessionResponse>('/api/auth/login', { code }),

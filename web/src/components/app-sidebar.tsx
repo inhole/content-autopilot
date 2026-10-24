@@ -5,6 +5,7 @@ import {
   GiftIcon,
   LayoutDashboardIcon,
   MessageSquareTextIcon,
+  SlidersHorizontalIcon,
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { AccountMenu } from '@/components/account-menu.tsx'
@@ -48,6 +49,12 @@ export const NAV = [
     label: '성과',
     icon: BarChart3Icon,
     match: (p: string) => p.startsWith('/insights'),
+  },
+  {
+    to: '/ops',
+    label: '운영',
+    icon: SlidersHorizontalIcon,
+    match: (p: string) => p.startsWith('/ops'),
   },
 ]
 
