@@ -12,6 +12,7 @@ import {
   sendWithKeyboard,
 } from './pipeline/revive-jobs.ts'
 import { createReviewer } from './review/telegram.ts'
+import { registerVideoBots, registerVideoJobs } from './video/jobs.ts'
 import { startDashboard } from './web/server.ts'
 
 let stopping = false
@@ -57,12 +58,14 @@ const reviewer = createReviewer({
         await enqueueDigest(boss)
       },
     })
+    registerVideoBots(boss, bot)
   },
 })
 await registerJobs(boss, reviewer)
 await registerCampaignJobs(boss)
 await registerReviveJobs(boss, reviewer, sendWithKeyboard)
 await registerDigestJobs(boss)
+await registerVideoJobs(boss)
 reviewer.start()
 // Null when Telegram is not configured (login codes go there).
 const dashboard = await startDashboard(
@@ -90,7 +93,9 @@ const dashboard = await startDashboard(
 console.log(
   `[worker] started · collect "${config.COLLECT_CRON}" ${config.TZ_NAME} · slots ${config.PUBLISH_SLOTS.join(', ')}` +
     ` · gift-collect "${config.GIFT_COLLECT_CRON}" · musinsa-collect "${config.MUSINSA_COLLECT_CRON}"` +
-    (config.THREADS_DRY_RUN ? ' · THREADS DRY-RUN' : ''),
+    (config.THREADS_DRY_RUN ? ' · THREADS DRY-RUN' : '') +
+    (config.VIDEO_ENABLED ? ` · video-pick "${config.VIDEO_CRON}"` : '') +
+    (config.VIDEO_PUBLISH_DRY_RUN ? ' · VIDEO DRY-RUN' : ''),
 )
 onSignals(async () => {
   await reviewer.stop()

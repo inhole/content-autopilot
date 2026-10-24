@@ -42,6 +42,8 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 | `/report` | 최근 7일 성과 리포트(발행 수, 조회·좋아요·답글·리포스트 합계와 평균, 답글률, 답글 많은 글 3개, 조회 가장 적은 글, 연결 글과 단일 글의 평균 조회·답글 비교)를 보여준다. 매주 월요일 09:00에도 자동으로 온다. |
 | `/revive` | 지난 30일 안에 만료된 초안을 상록 / 시의성 지남으로 판정해 목록으로 보여준다. 상록 초안의 `♻️ #id 살리기`를 누르면 시점 표현만 고친 글이 `♻️ 재활용` 라벨을 달고 다시 검수로 온다. 시의성이 지난 초안은 주간 묶음 후보로 남는다. |
 | `/digest` | 만료 초안을 묶은 "이번 주 놓친 소식" 연결 글을 지금 만들어 검수로 보낸다. 매주 일요일 18:00에도 자동으로 만든다. 재료가 2개 미만이면 만들지 않는다. |
+| `/video [글 번호]` | 숏폼 영상을 만든다 (아래 [숏폼 영상](#숏폼-영상)) |
+| `/videos` | 영상 목록 |
 | `/camps` | 진행 중인 체험단을 단계별로 보여준다 (아래 [체험단](#체험단)) |
 | `/due <번호> <날짜>` | 체험단 리뷰 기한을 기록한다 (예: `/due 12 10/30`) |
 | `/start` | chat id를 알려준다 (처음 설정할 때) |
@@ -232,3 +234,54 @@ CLI는 Telegram을 polling하지 않고 보내기만 한다. 워커가 실행 �
 | 초안이 너무 짧다 | 메모에 더 쓸 내용이 없으면 글도 짧다. 메모를 보태서 피드백으로 답장한다. |
 | 리마인더가 밤에 안 온다 | 정상이다. 09~21시(KST)에만 보낸다. 쌓인 것은 다음 날 아침에 간다. |
 | `/due`가 "신청·선정 단계의 체험단이 아니에요" | 신청함, 선정, 초안 검수 상태에서만 기한을 기록할 수 있다. `/camps`로 번호와 단계를 확인한다. |
+
+## 숏폼 영상
+
+반응 좋았던 Threads 글을 30~45초 세로 영상으로 만들어 Reels와 Shorts에 올린다. 설계는 [plans/video.md](plans/video.md), 준비는 [setup.md](setup.md) 6절이다.
+
+### 하는 일
+
+| 동작 | 결과 |
+|---|---|
+| `/video` | 최근 21일 발행 글 중 조회가 가장 많고 영상이 없는 글로 하나 만든다(주 `VIDEO_WEEKLY_MAX`편 한도). `VIDEO_ENABLED=true`면 화·목·토 07:00에 자동으로 한다 |
+| `/video <글 번호>` | 그 발행 글로 만든다(한도를 보지 않는다). 실패하거나 만료된 영상이면 처음부터 다시 만든다 |
+| `/videos` | 최근 영상과 상태, 예약 시각 |
+| 원고 메시지 + 영상 | 원고(장면별 화면 문구·내레이션, 캡션)와 영상이 차례로 온다. 영상 아래에 `✅ 승인` / `🔁 다시 만들기` / `🗑 폐기` |
+| `수정2: <문장>` 답장 | 2번 장면 내레이션을 바꾸고 다시 렌더한다. `화면2: <문구>`는 화면 문구(18자) |
+| `제목: …`, `캡션: …` 답장 | 그대로 바꾸고 검수 메시지를 다시 보낸다(영상은 그대로) |
+| 그 밖의 답장 | 피드백으로 원고부터 다시 쓴다 |
+| ✅ 승인 | `VIDEO_PLATFORMS`의 플랫폼마다 다음 영상 슬롯(`VIDEO_PUBLISH_SLOT`, 하루 하나)에 예약한다. 비어 있으면 캡션 복사 메시지와 `📤 직접 올림` 버튼이 온다 |
+| 발행 실패 알림의 `🔁 다시 시도` | 다음 빈 슬롯으로 다시 예약한다. "업로드 세션이 만료됐어요" 알림이면 채널에 영상이 없는지 먼저 확인하고 누른다(새로 올린다) |
+
+검수 영상은 72시간 손대지 않으면 `EXPIRED`가 된다. 원고·렌더가 45분 넘게 멈추면 두 번까지 다시 넣고 그래도 안 되면 ❌ 알림과 함께 `FAILED`가 된다. 슬롯이 6시간 넘게 지난 예약은 늦게 내보내지 않고 다음 슬롯으로 옮긴 뒤 ⏭ 알림을 보낸다. 주간 리포트에는 영상이 나간 주에만 🎬 구역이 붙는다.
+
+### 영상 CLI
+
+```bash
+npm run cli -- video:tts-sample "<문장>"   # TTS 공급자별 WAV 샘플 (data/videos/samples)
+npm run cli -- video:script <글 번호>      # 원고만 써서 출력 (DB에 쓰지 않음)
+npm run cli -- video:render <글 번호>      # 원고 + 렌더 → data/videos/preview/post-<번호>.mp4 (DB에 쓰지 않음)
+npm run cli -- video:make <글 번호>        # 큐 없이 원고 → 렌더 → Telegram 검수
+npm run cli -- video:list
+npm run cli -- video:show <영상 번호>      # 원고와 발행 행
+npm run cli -- video:approve <영상 번호>
+npm run cli -- video:publish-now <영상 번호>  # 예약된 발행을 지금 바로
+npm run cli -- video:reset-dry <영상 번호>    # dry-run으로 "발행된" 영상을 실제 발행용으로 다시 예약
+npm run cli -- video:insights
+npm run cli -- instagram:check
+npm run cli -- youtube:auth                # 처음 한 번
+npm run cli -- youtube:check
+```
+
+### 영상 문제 해결
+
+| 증상 | 확인할 것 |
+|---|---|
+| 영상이 무음이다 | `VIDEO_TTS_PROVIDER`가 `silent`(기본)다. 검수 메시지에 🔇 표시가 붙는다. 공급자와 키를 넣고 `/video <글 번호>`로 다시 만든다 |
+| `ffmpeg-static has no binary` | `npm ci`가 설치 스크립트를 건너뛰었다(`--ignore-scripts`). `npm rebuild ffmpeg-static` |
+| `영상이 N초로 75초를 넘어요` | 원고가 너무 길다. 피드백("더 짧게")으로 다시 쓰거나 `수정N:`으로 줄인다 |
+| `invalid video config` 로 시작 실패 | `VIDEO_PLATFORMS`에 `reels`가 있으면 `VIDEO_STORAGE=supabase`와 Supabase 키가 필요하다 |
+| Reels `토큰이 거절됐어요` | Instagram 토큰이 만료됐거나 권한이 빠졌다. 새 토큰을 받아 `platform_accounts`(INSTAGRAM)를 지우고 `.env`에 넣은 뒤 재시작한다 |
+| `계정이 승인 때와 달라요` | 승인 뒤 계정이 바뀌었다(dry-run에서 승인하고 실제로 켠 경우 포함). 확인 뒤 `🔁 다시 시도`, dry-run으로 끝난 것은 `video:reset-dry` |
+| `YouTube 인증이 만료됐어요` | refresh token이 취소·만료됐다. 동의 화면이 프로덕션인지 확인하고 `youtube:auth`를 다시 한다 |
+| Shorts가 비공개로 올라갔다는 ⚠️ | 채널·프로젝트 상태 때문에 공개 범위가 바뀌었다. YouTube Studio에서 확인한다 |

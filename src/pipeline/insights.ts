@@ -2,6 +2,7 @@ import { query } from '../db/pool.ts'
 import { getThreadsApi } from '../threads/account.ts'
 import type { ThreadsApi } from '../threads/client.ts'
 import type { Insights } from '../threads/insights.ts'
+import { videoReport } from '../video/insights.ts'
 
 /** Counts keep moving for a while after publishing; older posts are no longer worth polling. */
 const COLLECT_WINDOW_DAYS = 14
@@ -202,5 +203,6 @@ export function buildWeeklyReport(rows: InsightRow[]): string {
   return out.join('\n')
 }
 
+/** The Threads report plus the video section (docs/plans/video.md 3-12) when videos went out. */
 export const weeklyReport = async (now = new Date()) =>
-  buildWeeklyReport(await loadInsightRows(now))
+  [buildWeeklyReport(await loadInsightRows(now)), ...(await videoReport(now))].join('\n')

@@ -7,7 +7,7 @@
 - 반응이 좋았던 Threads 글을 30~45초 세로 영상(1080×1920)으로 만든다. 사람이 Telegram에서 미리보기를 보고 승인하면 정해진 시간에 Reels와 Shorts로 올라간다.
 - 영상은 하루 1편, 자동 선택은 주 3편을 넘기지 않는다(roadmap 4절 리스크).
 - **이번 범위:** V1(원고·TTS·렌더·Telegram 미리보기·직접 업로드), V2(Reels 자동 발행), V3(Shorts 자동 발행), V4(영상 성과 수집과 주간 리포트). 모두 설정으로 하나씩 켠다.
-- **V0는 사람이 할 일이다:** Instagram 프로페셔널 계정 전환, Meta 앱에 Instagram 제품 추가, Google Cloud OAuth 클라이언트, TTS 키 발급, Supabase Storage 버킷. 순서는 [setup.md](../setup.md) 7절에 적는다.
+- **V0는 사람이 할 일이다:** Instagram 프로페셔널 계정 전환, Meta 앱에 Instagram 제품 추가, Google Cloud OAuth 클라이언트, TTS 키 발급, Supabase Storage 버킷. 순서는 [setup.md](../setup.md) 6절에 적는다.
 - **범위 밖:** 웹 대시보드 화면, 체험단 리뷰 릴스(roadmap 2순위), 장면 전환 효과와 배경 영상, 기본 배경음악, 묶음 글(digest)과 만료 초안으로 만드는 영상.
 
 ## 2. 흐름
@@ -150,7 +150,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
   - 공개 URL: `{SUPABASE_URL}/storage/v1/object/public/{bucket}/{key}`.
   - 삭제: `DELETE {SUPABASE_URL}/storage/v1/object/{bucket}`에 `{ "prefixes": [key] }`.
 - 키는 `v<videoId>/<렌더 실행 id>-<sha256 앞 16자>.mp4`다. 같은 실행이 응답 유실 뒤 같은 키로 다시 올리다 “이미 있음”(409)이 나면 성공으로 본다.
-- 로컬 개발은 `VIDEO_STORAGE=local`(기본)로 `VIDEO_LOCAL_DIR`(기본 `.data/videos`, `.gitignore`)에 저장한다. `VIDEO_PLATFORMS`에 `reels`가 있는데 `supabase`가 아니면 설정 검증에서 시작을 거부한다.
+- 로컬 개발은 `VIDEO_STORAGE=local`(기본)로 `VIDEO_LOCAL_DIR`(기본 `data/videos`, `.gitignore`에 이미 있는 `data/`)에 저장한다. `VIDEO_PLATFORMS`에 `reels`가 있는데 `supabase`가 아니면 설정 검증에서 시작을 거부한다.
 - **정리(`video-cleanup`):** 지울 수 있는 것은 (1) `REJECTED`/`EXPIRED`가 된 지 3일 지난 영상, (2) `PUBLISHED`가 된 지 14일 지난 영상의 파일뿐이다. `APPROVED`(발행 대기·실패 포함)는 지우지 않는다. 지우기 직전에 같은 조건으로 행을 다시 확인하고, 삭제가 성공한 뒤에만 `storage_deleted_at`을 쓴다. 새 렌더로 대체된 파일과 반영되지 못한 렌더 파일은 렌더 작업이 그 자리에서 지운다. 렌더 도중 프로세스가 죽어 남은 파일은 드물어서 감수한다.
 
 ### 3-11. 계정과 토큰
@@ -217,7 +217,7 @@ platform_accounts: platform check에 INSTAGRAM, YOUTUBE 추가, refresh_token �
 | `GOOGLE_TTS_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` | | 공급자 키 |
 | `VIDEO_BGM_PATH` | | 배경음악 파일 |
 | `VIDEO_STORAGE` | `local` | `local` 또는 `supabase` |
-| `VIDEO_LOCAL_DIR` | `.data/videos` | 로컬 저장 위치 |
+| `VIDEO_LOCAL_DIR` | `data/videos` | 로컬 저장 위치 |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `VIDEO_STORAGE_BUCKET` | `videos` | Supabase Storage |
 | `INSTAGRAM_API_BASE` | `https://graph.instagram.com/v24.0` | |
 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` | | 처음 한 번 넣는 값. 이후 DB가 기준 |

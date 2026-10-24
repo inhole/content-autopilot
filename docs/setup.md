@@ -9,6 +9,7 @@
 | Telegram 봇 | 초안 검수 (승인/재생성/폐기) | 콘솔 출력 + CLI로 검수 |
 | Meta 앱 (Threads API) | 실제 발행 | `THREADS_DRY_RUN=true`로 로그만 남김 |
 | 카카오톡 선물하기·무신사 (5절) | 체험단 공개 목록 | 계정·토큰 필요 없음. 읽기만 한다 |
+| TTS·Supabase Storage·Instagram·YouTube (6절) | 숏폼 영상 | 무음 미리보기를 로컬에 저장, 발행은 직접 |
 
 모든 값은 `.env`에 넣는다. 형식은 `.env.example`을 참고한다. `.env`는 git에 올라가지 않는다.
 
@@ -179,3 +180,45 @@
 무신사 체험단 목록(`musinsa.com/preuser/main`이 쓰는 공개 API)은 로그인 없이 읽힌다. 따로 준비할 것이 없고 `MUSINSA_COLLECT_CRON` 시각마다 클라우드 워커가 읽는다. `npm run cli -- musinsa:list`로 목록이 나오는지 본다(DB에는 쓰지 않는다). 그다음 `npm run cli -- musinsa:collect`로 수집·선별·카드 전송을 한 번 돌린다([결정 13](decisions.md#13-무신사-체험단-목록은-공개-api라-클라우드에서-읽는다)).
 
 무신사 프리유저 **가입**은 별도다. 신청, 내 신청 내역은 로그인한 가입 계정만 쓸 수 있고, 가입하려면 스냅을 한 번 올려야 한다(`MCMP_001_006 작성한 스냅이 있는 회원만 신청할 수 있습니다`). 가입 전에는 카드의 링크를 PC에서 열어 직접 신청하고 `✅ 신청함`을 누른다. 가입 뒤 자동 신청은 후속 단계이고, 그때는 내가 로그인한 Aside 브라우저를 쓸 계획이다([plans/campaign-autopilot.md](plans/campaign-autopilot.md)). 비밀번호나 쿠키를 코드나 `.env`에 넣지 않는다.
+
+## 6. 숏폼 영상 (Instagram Reels, YouTube Shorts)
+
+설계는 [plans/video.md](plans/video.md), 결정은 [결정 15](decisions.md#15-숏폼-영상은-발행된-글로-만들고-클라우드에서-렌더한다)다. 아무것도 설정하지 않아도 `/video <글 번호>`로 무음 미리보기 영상을 만들어 Telegram으로 받을 수 있다(`VIDEO_TTS_PROVIDER=silent`, 로컬 저장). 아래를 하나씩 붙이면 단계가 올라간다.
+
+| 단계 | 준비할 것 | 켜는 설정 |
+|---|---|---|
+| V1 음성 | TTS 키 하나 | `VIDEO_TTS_PROVIDER`, 그 공급자의 키 |
+| V1 저장 | Supabase Storage 공개 버킷 | `VIDEO_STORAGE=supabase`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` |
+| V2 Reels | Instagram 프로페셔널 계정, Meta 앱의 Instagram 제품, 장기 토큰 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN`, `VIDEO_PLATFORMS=reels` |
+| V3 Shorts | Google Cloud OAuth 클라이언트(데스크톱), `youtube:auth` | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `VIDEO_PLATFORMS=reels,shorts` |
+| 자동 선택 | 위가 다 돌면 | `VIDEO_ENABLED=true` (화·목·토 07:00, 주 3편까지) |
+
+실제 발행은 `VIDEO_PUBLISH_DRY_RUN=false`로 바꿔야 나간다(기본 true, 로그만 남김).
+
+### 6-1. TTS 고르기
+
+1. 공급자 키를 하나 이상 넣는다: Google Cloud Text-to-Speech API를 켠 프로젝트의 API 키(`GOOGLE_TTS_API_KEY`), OpenAI(`OPENAI_API_KEY`), ElevenLabs(`ELEVENLABS_API_KEY`와 `VIDEO_TTS_VOICE`에 음성 id).
+2. `npm run cli -- video:tts-sample "이번 주에 나온 개발 소식 하나 정리해 볼게. 생각보다 꽤 큰 변화야."`를 실행하면 키가 있는 공급자마다 `data/videos/samples/`에 WAV가 생긴다.
+3. 들어보고 `VIDEO_TTS_PROVIDER`를 정한다. 음성을 바꾸려면 `VIDEO_TTS_VOICE`(Google 기본 `ko-KR-Chirp3-HD-Charon`, OpenAI 기본 `alloy`). 음성을 바꾸면 렌더 해시가 바뀌어 다음 렌더부터 새 음성이 된다.
+
+### 6-2. Supabase Storage
+
+1. Supabase 대시보드 → Storage → New bucket, 이름 `videos`, **Public bucket** 켜기.
+2. Project Settings → API의 `service_role` 키를 `SUPABASE_SERVICE_KEY`에, 프로젝트 URL(`https://<ref>.supabase.co`)을 `SUPABASE_URL`에 넣는다. service_role 키는 서버에만 둔다.
+3. `VIDEO_STORAGE=supabase`. 무료 플랜 용량(1GB)은 `video-cleanup`이 끝난 영상을 지워서 지킨다.
+
+### 6-3. Instagram (Reels)
+
+1. Instagram 앱에서 계정을 프로페셔널(크리에이터 또는 비즈니스)로 바꾼다. Facebook 페이지는 필요 없다.
+2. Meta 앱(Threads와 같은 앱에 추가할 수 있으면 그 앱)에 **Instagram** 제품을 추가하고 "Instagram 로그인을 사용하는 API 설정"으로 들어간다. 앱 역할에 이 Instagram 계정을 테스터로 추가하고 Instagram 앱에서 초대를 수락한다.
+3. 권한 `instagram_business_basic`, `instagram_business_content_publish`, `instagram_business_manage_insights`로 토큰 생성 → 장기 토큰(60일)과 사용자 id를 `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_USER_ID`에 넣는다. 처음 한 번 DB(`platform_accounts`)로 옮겨지고 이후 `video-refresh-token`이 갱신한다.
+4. `npm run cli -- instagram:check`로 확인한다(`VIDEO_PUBLISH_DRY_RUN=false`일 때 실제 호출).
+
+### 6-4. YouTube (Shorts)
+
+1. Google Cloud 콘솔에서 YouTube Data API v3를 켠다. OAuth 동의 화면을 "외부"로 만들고 **게시 상태를 프로덕션으로** 바꾼다. Testing이면 refresh token이 7일 만에 만료된다. 미검증 앱 경고는 본인만 쓰니 "고급 → 계속"으로 넘어간다.
+2. 사용자 인증 정보 → OAuth 클라이언트 ID → **데스크톱 앱**. id와 secret을 `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`에 넣는다.
+3. 운영 DB를 가리키는 `.env`로 `npm run cli -- youtube:auth`를 실행하고 출력된 주소를 브라우저에서 열어 채널 계정으로 로그인한다. CLI가 `127.0.0.1`에서 리디렉션을 받아 채널 id와 토큰을 저장한다.
+4. `npm run cli -- youtube:check`로 채널 이름이 나오는지 본다.
+
+미검증 API 프로젝트가 올린 영상도 비공개로 잠기지 않는다(2026-10-24 `videos.insert` 문서 기준). 그래도 첫 업로드 뒤 `video-publish-due`가 공개 범위를 확인해서 `YOUTUBE_PRIVACY`와 다르면 알려준다. 업로드 할당량은 하루 100회다.
