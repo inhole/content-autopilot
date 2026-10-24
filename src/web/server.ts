@@ -222,6 +222,8 @@ export function isSameOriginWrite(req: http.IncomingMessage): boolean {
 const BODY_LIMIT = 4096
 // Campaign actions carry a memo or a review draft (Korean text, up to 3 bytes per character).
 const ACTION_BODY_LIMIT = 16384
+// A profile at its limits (five lists of 50 items of 50 Korean chars) is about 40KB.
+const PROFILE_BODY_LIMIT = 65536
 
 class BadBody extends Error {}
 
@@ -452,7 +454,7 @@ export function createRequestHandler(deps: DashboardDeps) {
         fields,
       } satisfies OpsProfileInvalid)
     }
-    const body = await readJson(req, ACTION_BODY_LIMIT).catch(async (err) => {
+    const body = await readJson(req, PROFILE_BODY_LIMIT).catch(async (err) => {
       if (!(err instanceof BadBody)) throw err
       return undefined
     })

@@ -318,9 +318,9 @@ export type OpsResponse = {
         /** Where it was read from: `db` (saved from this page) or `file` (the bundled default). */
         source: 'db' | 'file'
         /**
-         * Edit guard to send back with a save or reset: the saved copy's revision, 0 when there is
-         * none. A saved copy that fails validation is reported as `file` with its own revision, so
-         * a save can still replace it.
+         * Edit guard to send back with a save or reset: 0 until the first save, then it only grows
+         * (also on a reset). `file` may carry a non-zero revision after a reset or when the saved
+         * copy fails validation; a save on that revision still works.
          */
         revision: number
       })
@@ -345,15 +345,14 @@ export type OpsProfileFields = {
  * write; audited as `ops.profile` / `ops.profile.reset` (the profile text is not logged). The
  * saved copy lives in the database and wins over config/campaign-profile.json from the next
  * ranking run or review draft on, without a redeploy or restart.
- * - POST /api/ops/profile `{ revision, profile }`: saves on the displayed `revision` (0 = the file
- *   is in effect). Strings are trimmed, list items trimmed, empty ones dropped and duplicates
+ * - POST /api/ops/profile `{ revision, profile }`: saves on the displayed `revision`. Strings are trimmed, list items trimmed, empty ones dropped and duplicates
  *   removed; an empty `disclosure` means none. Limits: `about` <= 500 chars, `tone` and
  *   `disclosure` <= 200, each list <= 50 items of <= 50 chars, `maxCompetition` > 0 or null,
  *   `minPriceWon` a positive integer or null, `minChars` >= 10, `maxChars` 50..4000,
  *   `minChars` < `maxChars`, and the disclosure line (with its gap) must leave room for a body
  *   of at least 10 chars within `maxChars` (`disclosureReserve` in review-draft.ts).
- * - POST /api/ops/profile/reset `{ revision }`: deletes the saved copy, so the file is in effect
- *   again.
+ * - POST /api/ops/profile/reset `{ revision }`: clears the saved copy (the revision still grows),
+ *   so the file is in effect again.
  * 200 `OpsProfileResponse`; 409 `OpsProfileConflict` when the revision is not current (the app
  * refetches); 400 `OpsProfileInvalid` with the dotted paths of the rejected fields.
  */

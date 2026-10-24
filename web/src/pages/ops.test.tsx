@@ -32,8 +32,9 @@ afterEach(() => {
   setCsrfToken(null)
 })
 
-function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function renderPage(
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -238,6 +239,25 @@ describe('profile editing', () => {
     })
     expect(await screen.findByText(/프로필을 저장했어요/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '저장' })).toBeNull()
+  })
+
+  it('saves on the revision the form was filled from, even after a refetch', async () => {
+    ops = { ...mockOps(), profile: dbProfile() }
+    serveProfile(() => json({ error: 'stale', stale: true }, 409))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const user = userEvent.setup()
+    renderPage(client)
+    await screen.findByText('설정')
+    await user.click(screen.getByRole('button', { name: '편집' }))
+    // Another tab saved meanwhile: polling brings revision 5 while this form shows revision 4.
+    ops = { ...mockOps(), profile: { ...dbProfile(), revision: 5 } }
+    const gets = () => fetchMock.mock.calls.filter(([, init]) => init?.method !== 'POST').length
+    const before = gets()
+    await client.invalidateQueries({ queryKey: ['ops'] })
+    await waitFor(() => expect(gets()).toBeGreaterThan(before))
+    await user.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(lastBody().revision).toBe(4)
   })
 
   it('blocks an invalid value on the client without posting', async () => {

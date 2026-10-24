@@ -810,6 +810,24 @@ describe('ops profile', () => {
     expect(JSON.stringify(row)).not.toContain('secret-about-text')
   })
 
+  it('save: a profile at its list limits fits the request size limit', async () => {
+    // Five lists of 50 distinct 50-char Korean items: about 40KB of JSON, over the 16KB action limit.
+    const list = (tag: string) =>
+      Array.from({ length: 50 }, (_, i) => `${tag}${i}`.padEnd(50, '가'))
+    const big = {
+      ...fields,
+      interests: list('a'),
+      preferKeywords: list('b'),
+      excludeKeywords: list('c'),
+      excludeBrands: list('d'),
+      review: { ...fields.review, points: list('e') },
+    }
+    expect(JSON.stringify(big).length).toBeGreaterThan(12000)
+    const res = await post('/api/ops/profile', { revision: 3, profile: big }, auth_)
+    expect(res.status).toBe(200)
+    expect(profileCalls).toEqual(['save:3:secret-about-text'])
+  })
+
   it('save: 400 with dotted field paths, nothing saved', async () => {
     const bad = {
       ...fields,

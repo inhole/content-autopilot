@@ -841,6 +841,7 @@ export function mockSaveProfile(req: OpsProfileRequests['save']) {
 
 export function mockResetProfile(req: OpsProfileRequests['reset']) {
   if (req.revision !== mockProfileState.revision) return 'stale' as const
-  mockProfileState = { ...fileProfile(), source: 'file', revision: 0 }
+  // Like the server: the revision keeps growing across a reset.
+  mockProfileState = { ...fileProfile(), source: 'file', revision: req.revision + 1 }
   return { ok: true as const, profile: mockProfileState }
 }

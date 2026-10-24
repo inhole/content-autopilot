@@ -49,15 +49,15 @@ async function loadFileProfile(path: string): Promise<CampaignProfile> {
 export type ProfileInEffect = {
   profile: CampaignProfile
   source: 'db' | 'file'
-  /** Edit guard: the saved row's revision, 0 while no row exists. */
+  /** Edit guard: the row's revision, 0 until the first save. */
   revision: number
 }
 
 /**
  * The profile in effect. The saved copy (table `campaign_profile`) is re-read on every call, so an
  * edit applies from the next ranking run or review draft without a restart; the file is read once
- * per process. A saved copy that no longer matches the schema is logged and ignored (the file
- * applies), and keeps its row revision so the page can save over it.
+ * per process. A reset copy (null) or one that no longer matches the schema (logged) leaves the
+ * file in effect, with the row's revision so the page can save over it.
  */
 export async function loadProfileInEffect(
   path = config.CAMPAIGN_PROFILE_PATH,
@@ -65,6 +65,9 @@ export async function loadProfileInEffect(
   const [row] = await query<{ profile: unknown; revision: number }>(
     'select profile, revision from campaign_profile where id = 1',
   )
+  if (row && row.profile === null) {
+    return { profile: await loadFileProfile(path), source: 'file', revision: row.revision }
+  }
   if (row) {
     const parsed = campaignProfileSchema.safeParse(row.profile)
     if (parsed.success) return { profile: parsed.data, source: 'db', revision: row.revision }
@@ -84,8 +87,9 @@ export async function loadCampaignProfile(
 }
 
 /**
- * Saves the profile if `revision` is the one the caller saw: 0 = no saved copy yet (inserts only
- * while no row exists, giving revision 1), n > 0 = updates the row at revision n to n + 1.
+ * Saves the profile if `revision` is the one the caller saw: 0 = never saved (inserts only while
+ * no row exists, giving revision 1), n > 0 = updates the row at revision n to n + 1 (also after a
+ * reset, which keeps the row).
  * Returns the new revision, or null when the revision is stale.
  */
 export async function saveCampaignProfile(
@@ -109,9 +113,10 @@ export async function saveCampaignProfile(
 }
 
 /**
- * Deletes the saved copy so the file applies again. True when done; false when `revision` is
- * stale. Revision 0 means the page showed the file: nothing to delete, so true while there still
- * is no row, false if someone saved one meanwhile (the page should refetch).
+ * Clears the saved copy so the file applies again. The row stays and its revision still grows, so
+ * a page holding an older revision cannot later match a copy saved after the reset. True when
+ * done; false when `revision` is stale. Revision 0 means the page never saw a saved copy: nothing
+ * to clear, so true while there still is no row, false if someone saved one meanwhile.
  */
 export async function resetCampaignProfile(revision: number): Promise<boolean> {
   if (revision === 0) {
@@ -119,7 +124,8 @@ export async function resetCampaignProfile(revision: number): Promise<boolean> {
     return rows.length === 0
   }
   const rows = await query(
-    'delete from campaign_profile where id = 1 and revision = $1 returning id',
+    `update campaign_profile set profile = null, revision = revision + 1, updated_at = now()
+      where id = 1 and revision = $1 returning id`,
     [revision],
   )
   return rows.length > 0

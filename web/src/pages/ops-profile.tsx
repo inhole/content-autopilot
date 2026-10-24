@@ -168,6 +168,9 @@ export function ProfileForm({
 }) {
   const id = useId()
   const [form, setForm] = useState<FormState>(() => toForm(profile))
+  // The revision the form was filled from: polling may bring a newer profile while editing, and
+  // saving these values on that newer revision would overwrite it instead of answering 409.
+  const [revision] = useState(profile.revision)
   const [errors, setErrors] = useState<Errors>({})
   const save = useSaveProfile()
   const set = (k: keyof FormState) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
@@ -182,7 +185,7 @@ export function ProfileForm({
     }
     setErrors({})
     save.mutate(
-      { revision: profile.revision, profile: built.profile },
+      { revision, profile: built.profile },
       {
         onSuccess: onSaved,
         onError: (err) => {

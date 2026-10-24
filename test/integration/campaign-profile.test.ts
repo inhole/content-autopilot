@@ -101,8 +101,23 @@ describe('campaign profile storage', () => {
     expect(await resetCampaignProfile(5)).toBe(false)
     expect((await loadProfileInEffect(FILE)).source).toBe('db')
     expect(await resetCampaignProfile(1)).toBe(true)
-    expect(await loadProfileInEffect(FILE)).toMatchObject({ source: 'file', revision: 0 })
+    expect(await loadProfileInEffect(FILE)).toMatchObject({ source: 'file', revision: 2 })
     expect(await resetCampaignProfile(1)).toBe(false)
+  })
+
+  it('a page that saw an older copy stays stale across a reset and a new save', async () => {
+    await saveCampaignProfile(saved('one'), 0)
+    // Another tab resets (1 -> 2) and saves again (2 -> 3); this tab still holds revision 1.
+    expect(await resetCampaignProfile(1)).toBe(true)
+    expect(await saveCampaignProfile(saved('newer'), 0)).toBeNull()
+    expect(await saveCampaignProfile(saved('newer'), 2)).toBe(3)
+    expect(await saveCampaignProfile(saved('old tab'), 1)).toBeNull()
+    expect(await resetCampaignProfile(1)).toBe(false)
+    expect(await loadProfileInEffect(FILE)).toMatchObject({
+      source: 'db',
+      revision: 3,
+      profile: { about: 'newer' },
+    })
   })
 
   it('reset with revision 0: ok while no row exists, stale once one was saved', async () => {
@@ -118,7 +133,7 @@ describe('campaign profile storage', () => {
     expect(await dbProfileEdit.save(saved('late'), 0)).toBeNull()
     expect(await loadProfileForOps()).toMatchObject({ about: 'edited', revision: 1 })
     const back = await dbProfileEdit.reset(1)
-    expect(back).toMatchObject({ ok: true, profile: { source: 'file', revision: 0 } })
+    expect(back).toMatchObject({ ok: true, profile: { source: 'file', revision: 2 } })
     expect(await dbProfileEdit.reset(1)).toBeNull()
   })
 })
