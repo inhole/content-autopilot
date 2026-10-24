@@ -2,6 +2,10 @@
 import type {
   AuthCodeResponse,
   AuthSessionResponse,
+  CampaignActionConflict,
+  CampaignActionName,
+  CampaignActionRequests,
+  CampaignActionResponse,
   CampaignDetailResponse,
   CampaignListResponse,
   InsightsResponse,
@@ -12,6 +16,10 @@ import type {
 export type {
   AuthCodeResponse,
   AuthSessionResponse,
+  CampaignActionConflict,
+  CampaignActionName,
+  CampaignActionRequests,
+  CampaignActionResponse,
   CampaignDetailResponse,
   CampaignListResponse,
   InsightsResponse,

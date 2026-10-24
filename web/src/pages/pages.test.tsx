@@ -20,7 +20,11 @@ import { InsightsView } from './insights.tsx'
 import { OverviewView } from './overview.tsx'
 import { PostsTable } from './posts.tsx'
 
-const wrap = (ui: React.ReactNode) => <MemoryRouter>{ui}</MemoryRouter>
+const wrap = (ui: React.ReactNode) => (
+  <QueryClientProvider client={createQueryClient()}>
+    <MemoryRouter>{ui}</MemoryRouter>
+  </QueryClientProvider>
+)
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -142,7 +146,7 @@ describe('CampaignDetailView', () => {
       expect.stringContaining('st.kakaocdn.net'),
     )
     expect(screen.getByText(/review-d3/)).toBeInTheDocument()
-    expect(screen.getByText(/둘째 날부터 효과를 느낌/)).toBeInTheDocument()
+    expect(screen.getByText(/둘째 날부터 효과를 느낌/, { selector: 'pre' })).toBeInTheDocument()
     for (const title of ['공고', '선별', '진행', '메모·초안'])
       expect(screen.getByText(title, { selector: '[data-slot=card-title]' })).toBeInTheDocument()
   })
