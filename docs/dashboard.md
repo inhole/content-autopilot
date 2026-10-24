@@ -1,6 +1,6 @@
 # 웹 대시보드
 
-Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험단 진행, 최근 Threads 글과 성과를 보는 화면이다. 관리자 콘솔로 넓히는 중이다(roadmap.md 3절). 지금은 1단계로 Telegram 1회용 코드 로그인만 있고, 데이터 조작은 아직 Telegram에서 한다.
+Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험단 진행, 최근 Threads 글과 성과를 보는 화면이다. 관리자 콘솔로 넓히는 중이다(roadmap.md 3절). 1단계(Telegram 1회용 코드 로그인)와 2단계(체험단 조작)까지 있고, Threads 글 조작은 아직 Telegram에서 한다.
 
 워커 안에서 뜬다. 별도 프로세스 없이 `node:http`로 같은 워커 안에서 돈다 (`src/web/`).
 
@@ -46,7 +46,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 
 ## React 앱과 JSON API
 
-화면은 `web/`의 React + Vite + shadcn/ui 앱이고, 서버(`src/web/`)는 JSON API와 빌드 결과 서빙만 맡는다. 서버는 데이터를 바꾸지 않는다. 쓰기 요청은 로그인과 로그아웃뿐이다.
+화면은 `web/`의 React + Vite + shadcn/ui 앱이고, 서버(`src/web/`)는 JSON API와 빌드 결과 서빙만 맡는다. 데이터 조회 API는 읽기 전용이다. 쓰기 요청은 로그인·로그아웃과 체험단 조작(아래 「체험단 조작」)뿐이다.
 
 화면 구성: 왼쪽 사이드바(데스크톱은 아이콘으로 접기, 모바일은 슬라이드)에 현황·체험단·Threads 글·성과가 있고, 위쪽 헤더에 경로, 마지막 갱신 시각, 라이트/다크/시스템 테마 전환이 있다. 테마 선택은 브라우저 localStorage에 저장하고 기본은 시스템 설정을 따른다. 체험단 목록은 정렬(마감·경쟁률·점수)·검색·20건 단위 쪽 나누기를 지원하고, 행을 누르면 목록 위에 상세 시트가 열린다(`/campaigns/:id`로 바로 들어가면 전체 페이지). 성과는 7/30/90일 영역 차트를 쓴다.
 
@@ -91,6 +91,46 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 
 모든 POST는 `Content-Type: application/json`이고 `Origin`이 이 서버(`Host`, `X-Forwarded-Host` 또는 `PUBLIC_BASE_URL`)여야 하며, `Sec-Fetch-Site`가 있으면 `same-origin`이어야 한다. 아니면 403이다. 로그아웃 두 개는 세션과 `X-CSRF-Token` 헤더(세션 응답의 `csrf`)도 맞아야 한다. 본문은 4KB까지 받는다.
 
+## 체험단 조작
+
+체험단 상세 화면(시트와 전체 페이지 모두)의 `작업` 카드에서 Telegram 버튼이 하던 일을 한다. 상태별로 보이는 조작이 다르다.
+
+| 상태 | 조작 | API |
+|---|---|---|
+| `PENDING_REVIEW` | `신청함` | `apply` |
+| | `패스` (사유 선택, 확인 창) | `reject` |
+| `APPLIED` | `선정` | `result` `{ selected: true }` |
+| | `미선정` (확인 창) | `result` `{ selected: false }` |
+| `SELECTED`, `DRAFT_REVIEW` | 리뷰 기한 (`/due`와 같은 형식, 그날 끝까지) | `deadline` |
+| | 사용 메모 입력 → 초안 만들기 (`DRAFT_REVIEW`에서는 메모 저장하고 다시 쓰기) | `memo` |
+| `DRAFT_REVIEW` | 다시 쓰기 (피드백은 선택) | `regenerate` |
+| | 초안 직접 수정 (`수정:` 답장과 같다. 협찬 문구는 코드가 맨 앞에 맞춘다) | `draft` |
+| | `리뷰 올림` (확인 창) | `posted` |
+
+초안은 `메모·초안` 카드에 복사 버튼과 함께 보인다(`navigator.clipboard`가 막히면 직접 복사하라는 안내를 띄운다). 끝난 상태(`POSTED`, `REJECTED` 등)에는 작업 카드가 없다.
+
+**API** (`POST /api/campaigns/<id>/<조작>`, 본문은 `api-types.ts`의 `CampaignActionRequests`):
+
+| 조작 | 본문 | 기준 |
+|---|---|---|
+| `apply` | `{ revision }` | `PENDING_REVIEW`이고 카드 revision이 같을 때 |
+| `reject` | `{ revision, reason }` (`category` / `competition` / `brand` / `other`) | 위와 같다 |
+| `result` | `{ selected }` | 상태가 `APPLIED`일 때 (Telegram 결과 버튼과 같다) |
+| `deadline` | `{ status, date }` | 화면이 본 상태와 같을 때. `date`는 `10/30`, `10-30`, `10.30`, `2026-10-30` |
+| `memo` | `{ status, revision, memo }` (2000자까지) | 상태와 revision이 같을 때. 메모를 저장하고 `review-draft` 작업을 큐에 넣는다 |
+| `regenerate` | `{ revision, feedback? }` | `DRAFT_REVIEW`이고 revision이 같을 때. 큐에 넣는다 |
+| `draft` | `{ revision, text }` | `DRAFT_REVIEW`이고 revision이 같을 때. 새 초안과 컨트롤 메시지를 Telegram에도 다시 보낸다 |
+| `posted` | `{ revision }` | `DRAFT_REVIEW`이고 revision이 같을 때 |
+
+- 응답: 200 `{ ok: true, telegramSynced, detail }` (`detail`은 처리 뒤 상세, 앱이 캐시에 바로 넣는다), 400 본문·날짜·글자 수 오류, 404 없는 캠페인, **409 `{ error: "이미 처리됐거나 내용이 바뀌었어요. 새로 고침했어요", stale: true }`**.
+- 모든 쓰기는 Telegram 버튼이 부르는 **같은 조건부 함수**를 부른다 (`src/campaigns/actions.ts`). 전환 SQL을 새로 만들지 않았다. 화면이 본 `revision`과 `status`를 같이 보내므로, 그 사이 Telegram에서 먼저 처리했거나 초안이 바뀌었으면 아무것도 바꾸지 않고 409를 돌려주고, 앱은 상세를 다시 받는다. 웹은 컨트롤 메시지가 없어도 쓸 수 있게 `markPosted(id, revision, { control: false })`와 `replaceDraftGuarded(id, { revision }, text)`로 revision에만 묶는다 (Telegram 쪽 호출은 그대로 컨트롤 메시지에 묶인다).
+- **LLM은 큐로만.** `memo`와 `regenerate`는 `enqueueReviewDraft`로 `regen_seq`를 올리고 `review-draft` 작업을 넣을 뿐, 웹 요청 안에서 기다리지 않는다. `startDashboard()`가 `enqueueDraft`를 주입받는다. 초안이 쓰이면 워커가 Telegram에 초안과 컨트롤 메시지를 보낸다.
+- **초안 작성 중 표시.** `campaigns.draft_seq`(migration `020`)는 현재 초안이 쓰인 `regen_seq`다. `regen_seq > draft_seq`이면 요청이 진행 중이라 화면이 `초안 작성 중` 안내를 띄우고 3초마다 상세를 다시 받는다. 10분이 지나도 안 오면 오래 걸린다는 안내와 함께 다시 요청할 수 있게 한다(작업이 최종 실패하면 Telegram으로 알림이 간다). 직접 수정(`draft`)은 `regen_seq`와 `draft_seq`를 함께 올려 대기 중이던 재생성이 덮어쓰지 못하게 한다.
+- **Telegram과 맞추기** (best effort, 실패하면 로그만 남기고 조작은 성공으로 돌려준다. `telegramSynced: false`로 알린다): `apply`는 카드 키보드를 지우고 결과 버튼(`🎉 선정` / `😢 미선정`) 메시지를 보낸다. `reject`는 카드 키보드를 지우고 `🙅 패스했어요`를 보낸다. `result`는 선정이면 `📝 리뷰 초안 쓰기` 버튼 메시지를, 미선정이면 안내를 보낸다. `draft`는 `수정:` 답장처럼 `sendDraft`로 새 초안과 컨트롤 메시지를 보내고 이전 컨트롤 메시지의 키보드를 지운다. `posted`는 컨트롤 메시지 키보드를 지우고 `🎉 리뷰 완료로 기록했어요`를 보낸다. 메시지 문구는 봇과 같은 함수를 쓴다. `deadline`은 Telegram에 보내지 않는다.
+- 결과 버튼 메시지(`apply` 뒤에 보낸 것)의 ID는 저장하지 않으므로, 웹에서 선정·미선정을 처리해도 그 메시지의 버튼은 남는다. 나중에 누르면 `이미 처리됐어요`로 끝난다(결과 전환은 상태로만 막는다).
+- 세션, 같은 출처 JSON, `X-CSRF-Token`을 모두 검사한다 (`server.ts`의 `authorizeWrite`, 로그아웃도 같은 함수). 본문은 이 경로에서만 16KB까지 받는다(메모·초안이 한글이라 4KB로는 모자란다).
+- **감사 기록**: 세션이 확인된 쓰기는 `admin_actions`에 `campaign.<조작>`, `campaign:<id>`, 결과(`ok` / `stale` / `invalid` / `not_found` / `error`), IP, `detail`(사유·글자 수·`telegramSynced` 등)로 남는다. 메모와 초안 본문은 남기지 않는다. 세션이 없거나 CSRF가 틀린 요청은 기록 없이 401/403으로 끝난다(비인증 요청으로 테이블이 불어나지 않게).
+
 ## 인증 없이 열리는 경로
 
 - `/healthz` 인증 없이 `ok`를 돌려준다. 헬스체크용이다.
@@ -104,7 +144,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 
 ## 보안
 
-- 데이터 API는 GET/HEAD만 허용하고 나머지는 405를 돌려준다. 쓰기는 인증 API 다섯 개뿐이다.
+- 데이터 조회 API는 GET/HEAD만 허용하고 나머지는 405를 돌려준다. 쓰기는 인증 API 다섯 개와 체험단 조작 여덟 개(`POST /api/campaigns/:id/<조작>`)뿐이고, 모두 같은 출처 JSON + 세션 + CSRF 토큰을 요구한다.
 - 코드와 세션 토큰은 sha256 해시로만 저장하고 `timingSafeEqual`로 비교한다. CSRF 토큰은 세션 토큰에서 파생해 따로 저장하지 않는다.
 - 코드 요청과 확인은 DB advisory lock으로 순서를 맞춰, 동시에 들어온 요청이 한도나 1회 사용 규칙을 넘지 못한다.
 - React가 모든 동적 텍스트를 이스케이프하고, `http(s)` URL만 링크로 만든다.
@@ -116,3 +156,4 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 - Threads 글의 permalink는 DB에 없어서 표시하지 않는다.
 - 한도는 IP별이 아니라 전체 기준이다(사용자가 한 명). 누가 코드 요청을 계속 보내면 그동안 나도 코드를 못 받는다. 이때는 Telegram 알림을 보고 판단한다.
 - 감사 기록(`admin_actions`)을 보는 화면은 아직 없다. DB에서 직접 본다.
+- Threads 글(검수·예약)과 수집 실행은 아직 웹에서 조작할 수 없다(roadmap.md 3절 3~4단계).

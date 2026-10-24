@@ -9,6 +9,7 @@ import {
   markControlSent,
   markPosted,
   replaceDraft,
+  replaceDraftGuarded,
   requestDraftRegeneration,
   saveMemo,
   startIntake,
@@ -155,5 +156,54 @@ describe('markPosted', () => {
     await replaceDraft(id, 200, '새 글', profile)
     expect(await markPosted(id, 1)).toBe(false)
     expect((await getCampaign(id)).status).toBe('DRAFT_REVIEW')
+  })
+})
+
+describe('pending draft requests (draft_seq)', () => {
+  it('a request is pending until the draft for that seq is written', async () => {
+    const id = await seedCampaign({ memo: '메모' })
+    const seq = (await requestDraftRegeneration(id)) ?? 0
+    let c = await getCampaign(id)
+    expect(c.regen_seq).toBeGreaterThan(c.draft_seq)
+    chatJson.mockResolvedValue({ text: '요청에 대한 결과입니다' })
+    expect(await generateReviewDraft(id, { seq })).toBe(true)
+    c = await getCampaign(id)
+    expect(c.draft_seq).toBe(c.regen_seq)
+  })
+  it('a newer request keeps it pending after an older result is dropped', async () => {
+    const id = await seedCampaign({ memo: '메모' })
+    const older = (await requestDraftRegeneration(id)) ?? 0
+    await requestDraftRegeneration(id)
+    chatJson.mockResolvedValue({ text: '오래된 요청의 결과입니다' })
+    expect(await generateReviewDraft(id, { seq: older })).toBe(false)
+    const c = await getCampaign(id)
+    expect(c.regen_seq).toBeGreaterThan(c.draft_seq)
+  })
+  it('an owner edit leaves nothing pending', async () => {
+    const id = await seedDraftCampaign()
+    await requestDraftRegeneration(id)
+    await replaceDraft(id, 200, '내가 고친 리뷰', profile)
+    const c = await getCampaign(id)
+    expect(c.draft_seq).toBe(c.regen_seq)
+  })
+  it('requestDraftRegeneration with a revision refuses a changed draft', async () => {
+    const id = await seedDraftCampaign()
+    expect(await requestDraftRegeneration(id, 0)).toBeNull()
+    expect(await requestDraftRegeneration(id, 1)).not.toBeNull()
+  })
+})
+
+describe('without a control message (web console)', () => {
+  it('replaceDraftGuarded binds to the revision instead of the control message', async () => {
+    const id = await seedDraftCampaign()
+    const stale = await replaceDraftGuarded(id, { revision: 0 }, '글', profile)
+    expect(stale).toMatchObject({ ok: false, stale: true })
+    expect((await replaceDraftGuarded(id, { revision: 1 }, '글입니다', profile)).ok).toBe(true)
+  })
+  it('markPosted with control: false ignores review_revision, but not revision', async () => {
+    const id = await seedDraftCampaign({ review_revision: 0 })
+    expect(await markPosted(id, 1)).toBe(false)
+    expect(await markPosted(id, 0, { control: false })).toBe(false)
+    expect(await markPosted(id, 1, { control: false })).toBe(true)
   })
 })

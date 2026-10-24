@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card.tsx'
+import { CopyButton } from '@/components/copy-button.tsx'
 import { Separator } from '@/components/ui/separator.tsx'
 import {
   Sheet,
@@ -35,6 +36,7 @@ import {
   sourceLabel,
   sourceLinkLabel,
 } from '@/lib/format.ts'
+import { CampaignActionsPanel } from '@/pages/campaign-actions.tsx'
 import { useCampaign } from '@/lib/queries.ts'
 import { deadlineTone } from '@/lib/status.ts'
 import type { CampaignDetailResponse } from '@/lib/types.ts'
@@ -211,6 +213,8 @@ export function CampaignDetailView({
         </div>
       </div>
 
+      <CampaignActionsPanel data={data} now={now} />
+
       <Section title="공고">
         <FieldList>
           <Field label="출처">{sourceLabel(c.source)}</Field>
@@ -304,7 +308,12 @@ export function CampaignDetailView({
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">리뷰 초안</span>
             {c.draft_text ? (
-              <pre className="font-[inherit] break-words whitespace-pre-wrap">{c.draft_text}</pre>
+              <>
+                <pre className="font-[inherit] break-words whitespace-pre-wrap">{c.draft_text}</pre>
+                <div>
+                  <CopyButton text={c.draft_text} label="초안 복사" />
+                </div>
+              </>
             ) : (
               <p className="text-muted-foreground">아직 초안이 없어요.</p>
             )}

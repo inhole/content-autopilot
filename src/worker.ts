@@ -1,4 +1,4 @@
-import { registerCampaignBots, registerCampaignJobs } from './campaigns/jobs.ts'
+import { enqueueReviewDraft, registerCampaignBots, registerCampaignJobs } from './campaigns/jobs.ts'
 import { config } from './config.ts'
 import { migrate } from './db/migrate.ts'
 import { pool } from './db/pool.ts'
@@ -65,7 +65,9 @@ await registerReviveJobs(boss, reviewer, sendWithKeyboard)
 await registerDigestJobs(boss)
 reviewer.start()
 // Null when Telegram is not configured (login codes go there).
-const dashboard = await startDashboard()
+const dashboard = await startDashboard({
+  enqueueDraft: (id, feedback, revision) => enqueueReviewDraft(boss, id, feedback, revision),
+})
 
 console.log(
   `[worker] started · collect "${config.COLLECT_CRON}" ${config.TZ_NAME} · slots ${config.PUBLISH_SLOTS.join(', ')}` +

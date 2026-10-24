@@ -1,6 +1,9 @@
 import type {
   AuthCodeResponse,
   AuthSessionResponse,
+  CampaignActionName,
+  CampaignActionRequests,
+  CampaignActionResponse,
   CampaignDetailResponse,
   CampaignListResponse,
   InsightsResponse,
@@ -51,8 +54,16 @@ async function mockGet(path: string): Promise<unknown> {
   throw new ApiError('찾을 수 없어요', 404)
 }
 
-async function mockPost(path: string): Promise<unknown> {
+async function mockPost(path: string, body: unknown): Promise<unknown> {
   const f = await import('../mocks/fixtures.ts')
+  const action = path.match(/^\/api\/campaigns\/(\d+)\/([a-z]+)$/)
+  if (action) {
+    const result = f.mockCampaignAction(Number(action[1]), action[2] as string, body)
+    if (result === 'stale')
+      throw new ApiError('이미 처리됐거나 내용이 바뀌었어요. 새로 고침했어요', 409)
+    if (result === 'not_found') throw new ApiError('찾을 수 없어요', 404)
+    return { ok: true, telegramSynced: true, detail: result }
+  }
   if (path === '/api/auth/code') return { expiresAt: new Date(Date.now() + 300_000).toISOString() }
   if (path === '/api/auth/login') return f.sessionFixture
   return { ok: true, revoked: 1 }
@@ -84,7 +95,7 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function post<T>(path: string, body: unknown = {}): Promise<T> {
-  if (MOCK) return (await mockPost(path)) as T
+  if (MOCK) return (await mockPost(path, body)) as T
   const res = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
@@ -112,6 +123,11 @@ export const api = {
   campaign: (id: number) => get<CampaignDetailResponse>(`/api/campaigns/${id}`),
   posts: (limit = 50) => get<PostListResponse>(`/api/posts${qs({ limit })}`),
   insights: (days: number) => get<InsightsResponse>(`/api/insights${qs({ days })}`),
+  campaignAction: <K extends CampaignActionName>(
+    id: number,
+    name: K,
+    body: CampaignActionRequests[K],
+  ) => post<CampaignActionResponse>(`/api/campaigns/${id}/${name}`, body),
   session: () => get<AuthSessionResponse>('/api/auth/session'),
   requestCode: () => post<AuthCodeResponse>('/api/auth/code'),
   login: (code: string) => post<AuthSessionResponse>('/api/auth/login', { code }),

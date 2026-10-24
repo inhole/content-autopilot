@@ -256,4 +256,4 @@ COLLECTED ──▶ SKIPPED            (규칙 또는 선별 탈락)
 | `campaigns` | 체험단 한 건의 모든 상태(`014`). `source`는 `kakao-gift` 또는 `musinsa`다. `(source, external_id)`와 `url_hash`가 unique. 목록 필드, 점수·이유·`skip_reason`, 카드(`revision`, `review_message_id`, `review_revision`, `reject_reason`), 신청·선정·결과·`review_deadline`, 리뷰(`intake_message_id`, `memo`, `draft_text`, `regen_seq`, `posted_at`)를 가진다. |
 | `campaign_reminders` | 보낸 리마인더. `(campaign_id, kind)`가 primary key |
 
-웹 대시보드가 같은 데이터를 보여준다([dashboard.md](dashboard.md)). 로그인은 Telegram 1회용 코드이고, 그 기록은 `admin_login_codes`, `admin_sessions`, `admin_actions`(감사 기록) 테이블에 있다(`019`).
+웹 대시보드가 같은 데이터를 보여준다([dashboard.md](dashboard.md)). 로그인은 Telegram 1회용 코드이고, 그 기록은 `admin_login_codes`, `admin_sessions`, `admin_actions`(감사 기록) 테이블에 있다(`019`). 체험단은 상세 화면에서 신청·결과·기한·리뷰 초안까지 웹으로도 처리하고(`campaigns.draft_seq`, `020`), 같은 조건부 전환 함수를 부른다.

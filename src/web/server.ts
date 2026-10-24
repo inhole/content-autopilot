@@ -1,4 +1,9 @@
 import http from 'node:http'
+import {
+  type CampaignActionDeps,
+  type CampaignActions,
+  createCampaignActions,
+} from '../campaigns/actions.ts'
 import { GIFT_CAMPAIGN_ID_RE, giftTrialUrl } from '../campaigns/gift.ts'
 import { telegramApi } from '../campaigns/tg.ts'
 import { config, dashboardEnabled } from '../config.ts'
@@ -24,6 +29,7 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_DAYS,
 } from './auth.ts'
+import { matchCampaignActionPath, runCampaignAction } from './campaign-actions.ts'
 import {
   loadCampaignDetail,
   loadCampaignList,
@@ -49,6 +55,8 @@ export type AdminAuth = {
 export type DashboardDeps = {
   loaders: DashboardLoaders
   auth: AdminAuth
+  /** Campaign operations (campaigns/actions.ts); tests pass fakes. */
+  actions: CampaignActions
   /** Sends a text to the owner's Telegram chat; rejects when it cannot. */
   notify: (text: string) => Promise<void>
   now?: () => Date
@@ -175,15 +183,17 @@ export function isSameOriginWrite(req: http.IncomingMessage): boolean {
 }
 
 const BODY_LIMIT = 4096
+// Campaign actions carry a memo or a review draft (Korean text, up to 3 bytes per character).
+const ACTION_BODY_LIMIT = 16384
 
 class BadBody extends Error {}
 
-async function readJson(req: http.IncomingMessage): Promise<unknown> {
+async function readJson(req: http.IncomingMessage, limit = BODY_LIMIT): Promise<unknown> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > BODY_LIMIT) throw new BadBody('body too large')
+    if (size > limit) throw new BadBody('body too large')
     chunks.push(chunk as Buffer)
   }
   if (size === 0) return {}
@@ -257,6 +267,69 @@ export function createRequestHandler(deps: DashboardDeps) {
     return session ? { token, session } : null
   }
 
+  /**
+   * The checks every state-changing request passes: same-origin JSON, a live session, and its CSRF
+   * token. Answers 403/401 itself and returns null when one fails.
+   */
+  async function authorizeWrite(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<{ session: ActiveSession; ip: string | null } | null> {
+    if (!isSameOriginWrite(req)) {
+      sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
+      return null
+    }
+    const current = await sessionOf(req)
+    if (!current) {
+      sendJson(req, res, 401, { error: '로그인이 필요해요' }, { 'Set-Cookie': CLEAR_COOKIE })
+      return null
+    }
+    const csrf = req.headers['x-csrf-token']
+    if (!csrfMatches(current.token, Array.isArray(csrf) ? csrf[0] : csrf)) {
+      sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
+      return null
+    }
+    return { session: current.session, ip: clientIp(req) }
+  }
+
+  async function handleCampaignAction(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    match: NonNullable<ReturnType<typeof matchCampaignActionPath>>,
+  ): Promise<void> {
+    const authorized = await authorizeWrite(req, res)
+    if (!authorized) return
+    const { session, ip } = authorized
+    const audit = {
+      sessionId: session.id,
+      action: `campaign.${match.action}`,
+      target: match.id === null ? null : `campaign:${match.id}`,
+      ip,
+    }
+    let body: unknown
+    try {
+      body = await readJson(req, ACTION_BODY_LIMIT)
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err
+      await auth.record({ ...audit, result: 'invalid' })
+      sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+      return
+    }
+    try {
+      const r = await runCampaignAction(
+        { actions: deps.actions, loadDetail: deps.loaders.campaign, now: nowFn() },
+        match.action,
+        match.id,
+        body,
+      )
+      await auth.record({ ...audit, result: r.result, detail: r.detail ?? null })
+      sendJson(req, res, r.status, r.body)
+    } catch (err) {
+      await auth.record({ ...audit, result: 'error' }).catch(() => {})
+      throw err
+    }
+  }
+
   async function handleAuth(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -275,7 +348,10 @@ export function createRequestHandler(deps: DashboardDeps) {
       sendJson(req, res, 200, body)
       return
     }
-    if (!isSameOriginWrite(req)) {
+    // Code and login need no session yet, so they only require the same-origin part; logout
+    // goes through authorizeWrite below.
+    const needsSession = path === '/api/auth/logout' || path === '/api/auth/logout-all'
+    if (!needsSession && !isSameOriginWrite(req)) {
       sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
       return
     }
@@ -357,17 +433,9 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
 
     // logout, logout-all: a session and its CSRF token are required.
-    const current = await sessionOf(req)
-    if (!current) {
-      sendJson(req, res, 401, { error: '로그인이 필요해요' }, { 'Set-Cookie': CLEAR_COOKIE })
-      return
-    }
-    const csrf = req.headers['x-csrf-token']
-    if (!csrfMatches(current.token, Array.isArray(csrf) ? csrf[0] : csrf)) {
-      sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
-      return
-    }
-    const sessionId = current.session.id
+    const authorized = await authorizeWrite(req, res)
+    if (!authorized) return
+    const sessionId = authorized.session.id
     if (path === '/api/auth/logout') {
       await auth.revokeSession(sessionId)
       await auth.record({ sessionId, action: 'logout', result: 'ok', ip })
@@ -414,6 +482,24 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
 
     const isApi = path === '/api' || path.startsWith('/api/')
+    const actionRoute = isApi ? matchCampaignActionPath(path) : null
+    if (actionRoute) {
+      if (req.method !== 'POST') {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
+        return
+      }
+      try {
+        await handleCampaignAction(req, res, actionRoute)
+      } catch (err) {
+        if (err instanceof BadBody) {
+          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+          return
+        }
+        console.error('dashboard campaign action failed:', err)
+        sendJson(req, res, 500, { error: 'internal error' })
+      }
+      return
+    }
     if (!isRead) {
       if (isApi) sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'GET, HEAD' })
       else send(req, res, 405, 'Method Not Allowed', { Allow: 'GET, HEAD' })
@@ -500,12 +586,19 @@ async function notifyOwner(text: string): Promise<void> {
 }
 
 /** Starts the dashboard, or returns null (and says why) when Telegram login is not possible. */
-export async function startDashboard(): Promise<{ close(): Promise<void> } | null> {
+export async function startDashboard(
+  campaignDeps: CampaignActionDeps,
+): Promise<{ close(): Promise<void> } | null> {
   if (!dashboardEnabled()) {
     console.log('dashboard disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are needed to log in')
     return null
   }
-  const server = createDashboardServer({ loaders: dbLoaders, auth: dbAuth, notify: notifyOwner })
+  const server = createDashboardServer({
+    loaders: dbLoaders,
+    auth: dbAuth,
+    actions: createCampaignActions(campaignDeps),
+    notify: notifyOwner,
+  })
   const port = config.PORT ?? 8080
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)

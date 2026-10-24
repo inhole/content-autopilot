@@ -45,6 +45,7 @@ const baseCampaign = {
   review_revision: null,
   intake_message_id: null,
   regen_seq: 0,
+  draft_seq: 0,
   shortlisted_at: null,
   detail: null,
   first_seen_at: days(-5),
@@ -125,7 +126,7 @@ export const campaignListFixture = (status: string, source: string | null) => ({
   rows: campaignRowsFixture.filter((r) => !source || r.source === source),
 })
 
-export const campaignDetailFixture = (id: number): CampaignDetailResponse | null => {
+const buildCampaignDetail = (id: number): CampaignDetailResponse | null => {
   const row = campaignRowsFixture.find((r) => r.id === id)
   if (!row) return null
   const musinsa = row.source === 'musinsa'
@@ -188,6 +189,78 @@ export const campaignDetailFixture = (id: number): CampaignDetailResponse | null
       posted_at: null,
     },
     reminders: row.status === 'SELECTED' ? [{ kind: 'review-d3', sent_at: hours(-10) }] : [],
+  }
+}
+
+type MockCampaign = CampaignDetailResponse['campaign']
+/** What the mock POSTs changed, so `npm run dev:mock` behaves like a live server. */
+const campaignOverrides = new Map<number, Partial<MockCampaign>>()
+
+export const campaignDetailFixture = (id: number): CampaignDetailResponse | null => {
+  const detail = buildCampaignDetail(id)
+  const over = campaignOverrides.get(id)
+  if (detail && over) Object.assign(detail.campaign, over)
+  return detail
+}
+
+/** Applies a campaign action to the mock state; 'stale' when the view was outdated. */
+export function mockCampaignAction(
+  id: number,
+  name: string,
+  body: unknown,
+): CampaignDetailResponse | 'stale' | 'not_found' {
+  const current = campaignDetailFixture(id)
+  if (!current) return 'not_found'
+  const c = current.campaign
+  const b = (body ?? {}) as Record<string, unknown>
+  const set = (patch: Partial<MockCampaign>) => {
+    campaignOverrides.set(id, { ...campaignOverrides.get(id), ...patch })
+    return campaignDetailFixture(id) as CampaignDetailResponse
+  }
+  const bump = { revision: c.revision + 1 }
+  const draftFrom = (memo: string) =>
+    `체험단으로 제품을 제공받아 작성한 솔직한 리뷰입니다.\n\n${memo.split('\n')[0]}. 써보니 만족스러웠음.`
+  const outdated = (ok: boolean) => !ok
+  switch (name) {
+    case 'apply':
+      return outdated(c.status === 'PENDING_REVIEW' && b.revision === c.revision)
+        ? 'stale'
+        : set({ status: 'APPLIED', applied_at: new Date().toISOString() })
+    case 'reject':
+      return outdated(c.status === 'PENDING_REVIEW' && b.revision === c.revision)
+        ? 'stale'
+        : set({ status: 'REJECTED', reject_reason: String(b.reason) })
+    case 'result':
+      return outdated(c.status === 'APPLIED')
+        ? 'stale'
+        : set({ status: b.selected ? 'SELECTED' : 'NOT_SELECTED' })
+    case 'deadline':
+      return outdated(c.status === b.status)
+        ? 'stale'
+        : set({ review_deadline: new Date(Date.now() + 7 * 86_400_000).toISOString() })
+    case 'memo':
+      return outdated(c.status === b.status && c.revision === b.revision)
+        ? 'stale'
+        : set({
+            memo: String(b.memo),
+            status: 'DRAFT_REVIEW',
+            draft_text: draftFrom(String(b.memo)),
+            ...bump,
+          })
+    case 'regenerate':
+      return outdated(c.status === 'DRAFT_REVIEW' && c.revision === b.revision)
+        ? 'stale'
+        : set({ draft_text: draftFrom(c.memo ?? ''), ...bump })
+    case 'draft':
+      return outdated(c.status === 'DRAFT_REVIEW' && c.revision === b.revision)
+        ? 'stale'
+        : set({ draft_text: String(b.text), ...bump })
+    case 'posted':
+      return outdated(c.status === 'DRAFT_REVIEW' && c.revision === b.revision)
+        ? 'stale'
+        : set({ status: 'POSTED', posted_at: new Date().toISOString() })
+    default:
+      return 'not_found'
   }
 }
 

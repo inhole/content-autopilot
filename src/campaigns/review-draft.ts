@@ -81,12 +81,16 @@ export function cutAtSentence(text: string, max: number): string {
  * Registers a draft (re)generation request and returns its sequence number, or null when the
  * campaign is not at the stage of writing a review. Only the latest request's result is kept.
  */
-export async function requestDraftRegeneration(id: number): Promise<number | null> {
+export async function requestDraftRegeneration(
+  id: number,
+  revision?: number,
+): Promise<number | null> {
+  // `revision` (the web console) refuses a request made on a draft that has changed since.
   const [row] = await query<{ regen_seq: number }>(
     `update campaigns set regen_seq = regen_seq + 1, updated_at = now()
-     where id = $1 and ${ACTIVE}
+     where id = $1 and ${ACTIVE} and ($2::int is null or revision = $2)
      returning regen_seq`,
-    [id],
+    [id, revision ?? null],
   )
   return row?.regen_seq ?? null
 }
@@ -145,7 +149,7 @@ export async function generateReviewDraft(
   )
   const rows = await query(
     `update campaigns set draft_text = $2, status = 'DRAFT_REVIEW', revision = revision + 1,
-       updated_at = now()
+       draft_seq = regen_seq, updated_at = now()
      where id = $1 and ${ACTIVE} and memo = $3 and ($4::int is null or regen_seq = $4)
      returning id`,
     [id, composeReview(profile, body), c.memo, opts.seq ?? null],
@@ -165,12 +169,23 @@ export async function startIntake(id: number, messageId: number): Promise<boolea
   return rows.length > 0
 }
 
-export async function saveMemo(id: number, memo: string): Promise<boolean> {
+/**
+ * Saves the owner's memo. With `seen` (the web console) it applies only while the campaign still
+ * has the status and revision the page displayed, so a stale page cannot overwrite newer work.
+ */
+export async function saveMemo(
+  id: number,
+  memo: string,
+  seen?: { status: 'SELECTED' | 'DRAFT_REVIEW'; revision: number },
+): Promise<boolean> {
   const text = memo.trim()
   if (!text) return false
   const rows = await query(
-    `update campaigns set memo = $2, updated_at = now() where id = $1 and ${ACTIVE} returning id`,
-    [id, text],
+    `update campaigns set memo = $2, updated_at = now()
+     where id = $1 and ${ACTIVE}
+       and ($3::text is null or status = $3) and ($4::int is null or revision = $4)
+     returning id`,
+    [id, text, seen?.status ?? null, seen?.revision ?? null],
   )
   return rows.length > 0
 }
@@ -191,15 +206,21 @@ export async function markControlSent(
   return rows.length > 0
 }
 
-export type ReplaceDraftResult = { ok: true; revision: number } | { ok: false; message: string }
+export type ReplaceDraftResult =
+  | { ok: true; revision: number }
+  | { ok: false; message: string; stale?: true }
+
+/** What a draft replacement is bound to: the control message replied to, or a draft revision. */
+export type DraftGuard = { messageId: number } | { revision: number }
 
 /**
- * Replaces the draft verbatim (a `수정:` reply to the control message). The disclosure line stays
- * first. Bumps revision so the old control message's buttons stop working until a new one is sent.
+ * Replaces the draft verbatim (a `수정:` reply to the control message, or the web console's
+ * editor). The disclosure line stays first. Bumps revision so the old control message's buttons
+ * stop working until a new one is sent.
  */
-export async function replaceDraft(
+export async function replaceDraftGuarded(
   id: number,
-  reviewMessageId: number,
+  guard: DraftGuard,
   text: string,
   profile?: CampaignProfile,
 ): Promise<ReplaceDraftResult> {
@@ -214,25 +235,44 @@ export async function replaceDraft(
       message: `리뷰가 ${length}자예요. ${p.review.maxChars}자 이하로 줄여주세요.`,
     }
   }
+  const column = 'messageId' in guard ? 'review_message_id' : 'revision'
   const [row] = await query<{ revision: number }>(
-    // regen_seq moves too, so a regeneration queued before this edit cannot overwrite it.
+    // regen_seq moves too, so a regeneration queued before this edit cannot overwrite it, and
+    // draft_seq follows it so the edit does not leave a draft request pending.
     `update campaigns set draft_text = $3, revision = revision + 1, regen_seq = regen_seq + 1,
-       updated_at = now()
-     where id = $1 and status = 'DRAFT_REVIEW' and review_message_id = $2
+       draft_seq = regen_seq + 1, updated_at = now()
+     where id = $1 and status = 'DRAFT_REVIEW' and ${column} = $2
      returning revision`,
-    [id, reviewMessageId, full],
+    [id, 'messageId' in guard ? guard.messageId : guard.revision, full],
   )
-  if (!row) return { ok: false, message: '이미 처리됐거나 최신 초안 메시지가 아니에요.' }
+  if (!row) {
+    return { ok: false, message: '이미 처리됐거나 최신 초안 메시지가 아니에요.', stale: true }
+  }
   return { ok: true, revision: row.revision }
 }
 
-/** The owner pasted the review into the shop's review form. Bound to the control message they saw. */
-export async function markPosted(id: number, revision: number): Promise<boolean> {
+export const replaceDraft = (
+  id: number,
+  reviewMessageId: number,
+  text: string,
+  profile?: CampaignProfile,
+) => replaceDraftGuarded(id, { messageId: reviewMessageId }, text, profile)
+
+/**
+ * The owner pasted the review into the shop's review form. Bound to the control message they saw
+ * (`review_revision`); with `control: false` (the web console) only to the draft revision.
+ */
+export async function markPosted(
+  id: number,
+  revision: number,
+  opts: { control?: boolean } = {},
+): Promise<boolean> {
   const rows = await query(
     `update campaigns set status = 'POSTED', posted_at = now(), updated_at = now()
-     where id = $1 and status = 'DRAFT_REVIEW' and revision = $2 and review_revision = $2
+     where id = $1 and status = 'DRAFT_REVIEW' and revision = $2
+       and ($3::boolean = false or review_revision = $2)
      returning id`,
-    [id, revision],
+    [id, revision, opts.control ?? true],
   )
   return rows.length > 0
 }
