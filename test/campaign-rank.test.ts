@@ -5,6 +5,7 @@ import {
   chunk,
   pickTopCampaigns,
   remainingQuota,
+  ruleScore,
   ruleSkipReason,
   toRankCandidate,
 } from '../src/campaigns/rank.ts'
@@ -196,5 +197,67 @@ describe('rank prompts per source', () => {
     expect(rankSystem('kakao-gift')).not.toContain('소모성')
     expect(rankSystem('kakao-gift')).toContain('선물하기')
     expect(rankSystem('kakao-gift')).toContain('경쟁률(신청자 수 / 모집 인원)')
+  })
+})
+
+describe('ruleScore', () => {
+  const liking = parseCampaignProfile({
+    about: 'dev',
+    interests: ['주방용품'],
+    preferKeywords: ['키보드'],
+    excludeKeywords: [],
+    review: { tone: 't' },
+  })
+  const row = (over: Record<string, unknown> = {}) =>
+    ({
+      id: 1,
+      source: 'kakao-gift',
+      title: '무선 이어폰',
+      brand: '브랜드',
+      application_count: 50,
+      recruit_count: 5,
+      detail: { price: { basic: 49000, selling: 39000 } },
+      ...over,
+    }) as Parameters<typeof ruleScore>[0]
+  const score = (over: Record<string, unknown> = {}) => ruleScore(row(over), liking).score
+
+  it('explains competition and price in the reason', () => {
+    expect(ruleScore(row(), liking)).toEqual({
+      id: 1,
+      score: expect.any(Number),
+      reason: '경쟁률 10:1 · 정가 49,000원',
+    })
+  })
+  it('ranks lower competition, a higher price and a preferred word higher', () => {
+    expect(score({ application_count: 5 })).toBeGreaterThan(score())
+    expect(score({ detail: { price: { basic: 200000 } } })).toBeGreaterThan(score())
+    expect(score({ title: '기계식 키보드' })).toBeCloseTo(score() + 2, 1)
+    expect(ruleScore(row({ title: '기계식 키보드' }), liking).reason).toContain('관심 키보드')
+  })
+  it('stays within 0 to 10', () => {
+    const best = { application_count: 1, detail: { price: { basic: 900000 } }, title: '키보드' }
+    expect(score(best)).toBe(10)
+    expect(score({ application_count: 99999, detail: { price: { basic: 1000 } } })).toBe(0)
+  })
+  it('gives unknown competition and price part of their points', () => {
+    const unknown = ruleScore(row({ application_count: null, detail: null }), liking)
+    expect(unknown.reason).toBe('경쟁률 모름 · 정가 모름')
+    expect(unknown.score).toBe(3.5)
+  })
+  it('matches preferences against the Musinsa category label', () => {
+    const musinsa = ruleScore(
+      row({
+        source: 'musinsa',
+        title: '무선 충전 패드',
+        detail: { eventCategory: 'DIGITAL_LIFE' },
+      }),
+      parseCampaignProfile({
+        about: 'a',
+        interests: ['디지털'],
+        excludeKeywords: [],
+        review: { tone: 't' },
+      }),
+    )
+    expect(musinsa.reason).toBe('경쟁률 10:1 · 정가 모름 · 관심 디지털')
   })
 })

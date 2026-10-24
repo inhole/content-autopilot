@@ -26,10 +26,40 @@ const { getCampaign, seedCampaign } = await import('./campaign-helpers-rank.ts')
 const score = (id: number, s: number) => ({ id, score: s, reason: `이유 ${id}` })
 const now = new Date()
 
-describe('rankCollected', () => {
+describe('rankCollected by rule', () => {
   beforeEach(() => {
     chatJson.mockReset()
     config.CAMPAIGN_DAILY_MAX = 2
+    config.CAMPAIGN_RANK_MODE = 'rule'
+  })
+
+  it('scores every candidate in code, shortlists the top N and skips the rest', async () => {
+    const crowded = await seedCampaign({ applicationCount: 900, recruitCount: 10 })
+    const easy = await seedCampaign({ applicationCount: 20, recruitCount: 10 })
+    const liked = await seedCampaign({ title: '생활용품 세트', applicationCount: 300 })
+    const keyword = await seedCampaign({ title: '주류 세트' })
+
+    // 2:1 beats 30:1 on competition, but the interest hit puts `liked` first.
+    expect(await rankCollected(now)).toEqual([liked, easy])
+
+    expect(chatJson).not.toHaveBeenCalled()
+    const rowEasy = await getCampaign(easy)
+    expect(rowEasy.status).toBe('SHORTLISTED')
+    expect(rowEasy.reason).toBe('경쟁률 2.0:1 · 정가 모름')
+    expect((await getCampaign(liked)).reason).toContain('관심 생활용품')
+    expect(await getCampaign(crowded)).toMatchObject({
+      status: 'SKIPPED',
+      skip_reason: '선별 탈락: 경쟁률 90:1 · 정가 모름',
+    })
+    expect((await getCampaign(keyword)).skip_reason).toBe('제외 키워드: 주류')
+  })
+})
+
+describe('rankCollected by LLM', () => {
+  beforeEach(() => {
+    chatJson.mockReset()
+    config.CAMPAIGN_DAILY_MAX = 2
+    config.CAMPAIGN_RANK_MODE = 'llm'
   })
 
   it('skips by rule, shortlists the top N and skips the rest', async () => {

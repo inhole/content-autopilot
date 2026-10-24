@@ -10,6 +10,7 @@ import {
   campaignPrice,
   campaignPriceInfo,
   competition,
+  musinsaCategoryLabel,
   musinsaFacts,
 } from './types.ts'
 
@@ -74,6 +75,72 @@ export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date
     return '모집 마감'
   }
   return null
+}
+
+// Rule score (0-10): competition 5, list price 3, owner preference 2 points.
+const COMPETITION_POINTS = 5
+const PRICE_POINTS = 3
+const PREFER_POINTS = 2
+/**
+ * 1:1 or better earns full competition points, this many applicants per slot or more none. On
+ * 2026-10-24 gift ran 18:1 to 2,466:1 (median 693) and Musinsa about 50:1 to 2,200:1, so a lower
+ * floor would flatten most candidates to 0.
+ */
+const COMPETITION_FLOOR = 3000
+/** List prices earn price points on a log scale between these (won). */
+const PRICE_LOW = 10_000
+const PRICE_HIGH = 300_000
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x))
+
+type ScoreInput = Pick<
+  Campaign,
+  'id' | 'source' | 'title' | 'brand' | 'application_count' | 'recruit_count' | 'detail'
+>
+
+/**
+ * Scores a campaign in code: fewer applicants per slot, a higher list price and a hit on the
+ * profile's interests or preferKeywords score higher. Unknown competition or price gets half or
+ * a third of its points, so missing data neither wins nor loses outright.
+ */
+export function ruleScore(c: ScoreInput, profile: CampaignProfile): Scored {
+  const reasons: string[] = []
+
+  const ratio = competition(c)
+  let points = COMPETITION_POINTS / 2
+  if (ratio === null) {
+    reasons.push('경쟁률 모름')
+  } else {
+    points =
+      COMPETITION_POINTS *
+      clamp01(1 - Math.log10(Math.max(ratio, 1)) / Math.log10(COMPETITION_FLOOR))
+    reasons.push(`경쟁률 ${ratio < 10 ? ratio.toFixed(1) : Math.round(ratio)}:1`)
+  }
+
+  const price = campaignPrice(c)
+  if (price === null) {
+    points += PRICE_POINTS / 3
+    reasons.push('정가 모름')
+  } else {
+    points +=
+      PRICE_POINTS * clamp01(Math.log10(price / PRICE_LOW) / Math.log10(PRICE_HIGH / PRICE_LOW))
+    reasons.push(`정가 ${price.toLocaleString('en-US')}원`)
+  }
+
+  const category = musinsaFacts(c)?.category
+  const haystack = [c.title, c.brand, category && musinsaCategoryLabel(category)]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase()
+  const liked = [...profile.preferKeywords, ...profile.interests].find(
+    (kw) => kw && haystack.includes(kw.toLowerCase()),
+  )
+  if (liked) {
+    points += PREFER_POINTS
+    reasons.push(`관심 ${liked}`)
+  }
+
+  return { id: c.id, score: Math.round(points * 10) / 10, reason: reasons.join(' · ') }
 }
 
 /** How many more campaigns may be shortlisted today. Never negative. */
@@ -156,10 +223,11 @@ async function loadHistory(): Promise<RankHistory> {
 }
 
 /**
- * Filters COLLECTED campaigns by rule, scores the rest with the LLM (in batches) and shortlists the
- * best ones up to today's remaining quota. Returns shortlisted ids in score order. Candidates the
- * model leaves out, or all of them when the quota is used up, stay COLLECTED for the next run, and
- * so do gift campaigns still awaiting their price (`awaitingPrice`).
+ * Filters COLLECTED campaigns by rule, scores the rest (`ruleScore`, or the LLM in batches when
+ * CAMPAIGN_RANK_MODE is `llm`) and shortlists the best ones up to today's remaining quota. Returns
+ * shortlisted ids in score order. Candidates the model leaves out, or all of them when the quota is
+ * used up, stay COLLECTED for the next run, and so do gift campaigns still awaiting their price
+ * (`awaitingPrice`).
  */
 export async function rankCollected(now = new Date()): Promise<number[]> {
   const profile = await loadCampaignProfile()
@@ -184,7 +252,7 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   if (candidates.length === 0) return []
 
   // Each source has its own daily quota and its own LLM batches.
-  const history = await loadHistory()
+  const history = config.CAMPAIGN_RANK_MODE === 'llm' ? await loadHistory() : null
   const doneToday = await countShortlistedToday(now)
   const shortlisted: number[] = []
   for (const source of [...new Set(candidates.map((c) => c.source))]) {
@@ -197,28 +265,17 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   return shortlisted
 }
 
-/** Scores one source's candidates in batches and shortlists the top `quota`. */
+/** Scores one source's candidates and shortlists the top `quota`. Without history, by rule. */
 async function rankSource(
   source: string,
   candidates: Campaign[],
   quota: number,
-  history: RankHistory,
+  history: RankHistory | null,
   profile: CampaignProfile,
 ): Promise<number[]> {
-  const scores: Scored[] = []
-  for (const batch of chunk(candidates, RANK_BATCH_SIZE)) {
-    const out = await chatJson({
-      model: config.LLM_RANK_MODEL,
-      system: rankSystem(source),
-      user: rankUser({ profile, history, candidates: batch.map(toRankCandidate) }),
-      schema: rankSchema,
-      schemaName: 'campaign_scores',
-      temperature: 0.3,
-    })
-    const batchIds = new Set(batch.map((c) => c.id))
-    scores.push(...out.scores.filter((s) => batchIds.has(s.id)))
-  }
-
+  const scores = history
+    ? await llmScores(source, candidates, history, profile)
+    : candidates.map((c) => ruleScore(c, profile))
   const { picked, rest } = pickTopCampaigns(scores, new Set(candidates.map((c) => c.id)), quota)
   const shortlisted: number[] = []
   for (const s of picked) {
@@ -239,4 +296,27 @@ async function rankSource(
     )
   }
   return shortlisted
+}
+
+/** Scores one source's candidates with the LLM, RANK_BATCH_SIZE per call. */
+async function llmScores(
+  source: string,
+  candidates: Campaign[],
+  history: RankHistory,
+  profile: CampaignProfile,
+): Promise<Scored[]> {
+  const scores: Scored[] = []
+  for (const batch of chunk(candidates, RANK_BATCH_SIZE)) {
+    const out = await chatJson({
+      model: config.LLM_RANK_MODEL,
+      system: rankSystem(source),
+      user: rankUser({ profile, history, candidates: batch.map(toRankCandidate) }),
+      schema: rankSchema,
+      schemaName: 'campaign_scores',
+      temperature: 0.3,
+    })
+    const batchIds = new Set(batch.map((c) => c.id))
+    scores.push(...out.scores.filter((s) => batchIds.has(s.id)))
+  }
+  return scores
 }
