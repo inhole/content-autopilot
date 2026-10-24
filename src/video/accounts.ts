@@ -184,12 +184,15 @@ export async function getYouTubeApi(): Promise<YouTubeApi> {
   return new YouTubeClient({ accessToken: () => youtubeAccessToken() })
 }
 
+/** The account id dry-run approvals are bound to. */
+export const DRY_RUN_ACCOUNT = 'dry-run'
+
 /**
  * The account a publication is bound to at approval time: the Instagram user id or the YouTube
  * channel id. Null when the account is not set up (approval then refuses).
  */
 export async function currentAccountId(platform: Platform): Promise<string | null> {
-  if (config.VIDEO_PUBLISH_DRY_RUN) return 'dry-run'
+  if (config.VIDEO_PUBLISH_DRY_RUN) return DRY_RUN_ACCOUNT
   if (platform === 'REELS') return (await loadInstagramAccount())?.user_id ?? null
   return (await loadAccount('YOUTUBE'))?.user_id ?? null
 }

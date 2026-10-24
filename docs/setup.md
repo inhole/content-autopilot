@@ -199,7 +199,7 @@
 
 1. 공급자 키를 하나 이상 넣는다: Google Cloud Text-to-Speech API를 켠 프로젝트의 API 키(`GOOGLE_TTS_API_KEY`), OpenAI(`OPENAI_API_KEY`), ElevenLabs(`ELEVENLABS_API_KEY`와 `VIDEO_TTS_VOICE`에 음성 id).
 2. `npm run cli -- video:tts-sample "이번 주에 나온 개발 소식 하나 정리해 볼게. 생각보다 꽤 큰 변화야."`를 실행하면 키가 있는 공급자마다 `data/videos/samples/`에 WAV가 생긴다.
-3. 들어보고 `VIDEO_TTS_PROVIDER`를 정한다. 음성을 바꾸려면 `VIDEO_TTS_VOICE`(Google 기본 `ko-KR-Chirp3-HD-Charon`, OpenAI 기본 `alloy`). 음성을 바꾸면 렌더 해시가 바뀌어 다음 렌더부터 새 음성이 된다.
+3. 들어보고 `VIDEO_TTS_PROVIDER`를 정한다. 음성을 바꾸려면 `VIDEO_TTS_VOICE`(Google 기본 `ko-KR-Chirp3-HD-Charon`, OpenAI 기본 `alloy`). `VIDEO_TTS_VOICE`는 고른 공급자의 음성이고, `VIDEO_TTS_PROVIDER`가 아직 `silent`인 동안에는 ElevenLabs 샘플의 음성 id로 쓰인다. 음성을 바꾸면 렌더 해시가 바뀌어 다음 렌더부터 새 음성이 된다.
 
 ### 6-2. Supabase Storage
 

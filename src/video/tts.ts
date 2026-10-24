@@ -157,9 +157,21 @@ export class ElevenLabsTts implements TtsProvider {
 
 const evenLength = (pcm: Buffer) => (pcm.length % 2 ? pcm.subarray(0, pcm.length - 1) : pcm)
 
+/**
+ * VIDEO_TTS_VOICE belongs to the active provider. While that is still `silent` (choosing one with
+ * video:tts-sample) it can only be meant for ElevenLabs, the one provider without a default voice.
+ */
+function configuredVoice(name: TtsProviderName): string | undefined {
+  const active = config.VIDEO_TTS_PROVIDER
+  if (active === name || (active === 'silent' && name === 'elevenlabs')) {
+    return config.VIDEO_TTS_VOICE
+  }
+  return undefined
+}
+
 /** Builds a provider from config (or an explicit name, for the sample CLI). */
 export function createTts(name: TtsProviderName = config.VIDEO_TTS_PROVIDER): TtsProvider {
-  const voice = config.VIDEO_TTS_PROVIDER === name ? config.VIDEO_TTS_VOICE : undefined
+  const voice = configuredVoice(name)
   const need = (key: string | undefined, env: string) => {
     if (!key) throw new Error(`${env} is not set (VIDEO_TTS_PROVIDER=${name})`)
     return key
@@ -190,6 +202,6 @@ export function configuredProviders(): TtsProviderName[] {
   const names: TtsProviderName[] = []
   if (config.GOOGLE_TTS_API_KEY) names.push('google')
   if (config.OPENAI_API_KEY) names.push('openai')
-  if (config.ELEVENLABS_API_KEY && config.VIDEO_TTS_VOICE) names.push('elevenlabs')
+  if (config.ELEVENLABS_API_KEY && configuredVoice('elevenlabs')) names.push('elevenlabs')
   return names
 }

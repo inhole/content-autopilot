@@ -23,6 +23,7 @@ import {
   registerReview,
   rejectVideo,
   requestRescript,
+  restartVideo,
   unsentReviews,
 } from '../../src/video/store.ts'
 import { retryPublication } from '../../src/video/telegram.ts'
@@ -497,6 +498,55 @@ describe('sweeps and maintenance', () => {
     expect((await loadVideo(kept.id))?.video_url).not.toBeNull()
   })
 
+  const deletedAt = async (id: number) =>
+    (
+      await query<{ storage_deleted_at: Date | null }>(
+        'select storage_deleted_at from videos where id = $1',
+        [id],
+      )
+    )[0]?.storage_deleted_at ?? null
+
+  it('retires a file before deleting it and retries a failed delete', async () => {
+    const v = await videoUnderReview()
+    await rejectVideo(v.id, { revision: v.revision })
+    await query("update videos set updated_at = now() - interval '4 days' where id = $1", [v.id])
+    const down = new FakeStorage()
+    down.remove = async () => {
+      throw new Error('storage down')
+    }
+    expect(await cleanupVideoFiles(new Date(), down)).toEqual({ deleted: 0, failed: 1 })
+    // Already retired, so a restarted video could not reuse it, but not marked deleted.
+    expect((await loadVideo(v.id))?.video_url).toBeNull()
+    expect(await deletedAt(v.id)).toBeNull()
+    expect(await cleanupVideoFiles(new Date(), new FakeStorage())).toEqual({
+      deleted: 1,
+      failed: 0,
+    })
+    expect(await deletedAt(v.id)).not.toBeNull()
+  })
+
+  it('renders a new file for a restarted video whose file was deleted', async () => {
+    const v = await videoUnderReview()
+    await query(
+      "update videos set status = 'EXPIRED', updated_at = now() - interval '4 days' where id = $1",
+      [v.id],
+    )
+    expect(await cleanupVideoFiles(new Date(), new FakeStorage())).toEqual({
+      deleted: 1,
+      failed: 0,
+    })
+    const seq = await restartVideo(v.id)
+    expect(seq).not.toBeNull()
+    expect(await runScript(v.id, seq ?? 0, { write: writer() })).toBe(true)
+    // Same script, same hash: still rendered again, because the old file is gone.
+    expect(
+      (await runRender(v.id, { tts, storage: v.storage, render: fakeRender(), bgm: null })).kind,
+    ).toBe('rendered')
+    expect((await loadVideo(v.id))?.video_url).not.toBeNull()
+    // The new file is cleaned up again later.
+    expect(await deletedAt(v.id)).toBeNull()
+  })
+
   it('collects insights for real publications and reports the latest snapshot', async () => {
     const a = await approved(['SHORTS'])
     await query(
@@ -526,6 +576,22 @@ describe('sweeps and maintenance', () => {
       platform_media_id: null,
     })
     expect((await loadVideo(a.id))?.status).toBe('APPROVED')
+  })
+
+  it('rebinds dry-run approvals that were not published before the switch', async () => {
+    const a = await approved(['SHORTS'])
+    const id = a.pubs[0]?.id ?? 0
+    // Failed on the account check after VIDEO_PUBLISH_DRY_RUN was turned off.
+    await query(
+      `update video_publications set status = 'FAILED', error_kind = 'account', attempts = 1
+       where id = $1`,
+      [id],
+    )
+    expect(await resetDryRun(a.id)).not.toBeNull()
+    expect(await pub(id)).toMatchObject({ status: 'SCHEDULED', attempts: 0, error_kind: null })
+    // Bound to a real account: nothing left over from dry-run.
+    await query("update video_publications set account_user_id = 'UC1' where id = $1", [id])
+    expect(await resetDryRun(a.id)).toBeNull()
   })
 })
 

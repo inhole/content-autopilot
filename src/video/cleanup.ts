@@ -8,7 +8,9 @@ import { getStorage, type VideoStorage } from './storage.ts'
 const ENDED_DAYS = 3
 const PUBLISHED_DAYS = 14
 
-const DELETABLE = `video_url is not null and storage_key is not null and storage_deleted_at is null
+// `video_url` is not part of the condition: it is cleared before the delete (see below), so a
+// delete that failed is tried again on the next run.
+const DELETABLE = `storage_key is not null and storage_deleted_at is null
   and ((status in ('REJECTED', 'EXPIRED', 'FAILED')
         and updated_at < $1::timestamptz - make_interval(days => $2))
     or (status = 'PUBLISHED' and published_at < $1::timestamptz - make_interval(days => $3)))`
@@ -24,12 +26,16 @@ export async function cleanupVideoFiles(
   )
   const result = { deleted: 0, failed: 0 }
   for (const r of rows) {
-    // Re-check right before deleting: a FAILED or EXPIRED video may have been restarted.
-    const still = await query(
-      `select 1 from videos where id = $4 and storage_key = $5 and ${DELETABLE}`,
+    // Retire the file in the same UPDATE that re-checks the condition, so a FAILED or EXPIRED
+    // video restarted meanwhile either keeps it (the check fails) or can no longer reuse it
+    // (`skipRender` needs a video_url) and renders a new file.
+    const retired = await query(
+      `update videos set video_url = null
+       where id = $4 and storage_key = $5 and ${DELETABLE}
+       returning id`,
       [...params, r.id, r.storage_key],
     )
-    if (still.length === 0) continue
+    if (retired.length === 0) continue
     try {
       await storage.remove(r.storage_key)
     } catch (err) {
@@ -39,8 +45,8 @@ export async function cleanupVideoFiles(
     }
     // Recorded only after the delete succeeded.
     await query(
-      `update videos set storage_deleted_at = now(), video_url = null
-       where id = $1 and storage_key = $2`,
+      `update videos set storage_deleted_at = now()
+       where id = $1 and storage_key = $2 and storage_deleted_at is null`,
       [r.id, r.storage_key],
     )
     result.deleted++

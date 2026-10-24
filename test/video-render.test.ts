@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegPath from 'ffmpeg-static'
 import { describe, expect, it } from 'vitest'
+import { config } from '../src/config.ts'
 import {
   concatList,
   ffmpegArgs,
@@ -13,6 +14,8 @@ import {
 } from '../src/video/render.ts'
 import { isDuplicate, LocalStorage, SupabaseStorage, storageKey } from '../src/video/storage.ts'
 import {
+  configuredProviders,
+  createTts,
   ElevenLabsTts,
   GoogleTts,
   OpenAiTts,
@@ -151,6 +154,51 @@ describe('TTS adapters', () => {
     await expect(new OpenAiTts('k', 'x', bad).synthesize('a')).rejects.toThrow(/400/)
     expect(m).toBe(1)
   }, 10_000)
+})
+
+describe('TTS voice config', () => {
+  const withConfig = (patch: Partial<typeof config>, fn: () => void) => {
+    const saved = { ...config }
+    Object.assign(config, patch)
+    try {
+      fn()
+    } finally {
+      Object.assign(config, saved)
+    }
+  }
+
+  it('reads VIDEO_TTS_VOICE as the ElevenLabs voice while the provider is still silent', () => {
+    withConfig(
+      {
+        VIDEO_TTS_PROVIDER: 'silent',
+        VIDEO_TTS_VOICE: 'el-voice',
+        ELEVENLABS_API_KEY: 'k',
+        GOOGLE_TTS_API_KEY: 'g',
+      },
+      () => {
+        expect(configuredProviders()).toContain('elevenlabs')
+        expect(createTts('elevenlabs').voiceId).toBe('el-voice')
+        // The other providers keep their default voice.
+        expect(createTts('google').voiceId).toBe('ko-KR-Chirp3-HD-Charon')
+      },
+    )
+  })
+
+  it('keeps VIDEO_TTS_VOICE for the active provider once one is chosen', () => {
+    withConfig(
+      {
+        VIDEO_TTS_PROVIDER: 'google',
+        VIDEO_TTS_VOICE: 'ko-KR-Other',
+        ELEVENLABS_API_KEY: 'k',
+        GOOGLE_TTS_API_KEY: 'g',
+      },
+      () => {
+        expect(createTts().voiceId).toBe('ko-KR-Other')
+        expect(configuredProviders()).not.toContain('elevenlabs')
+        expect(() => createTts('elevenlabs')).toThrow(/VIDEO_TTS_VOICE/)
+      },
+    )
+  })
 })
 
 describe('storage', () => {

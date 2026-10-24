@@ -262,7 +262,8 @@ export async function applyRender(
   const [row] = await query<{ previous_key: string | null }>(
     `with old as (select storage_key from videos where id = $1 for update)
      update videos v set render_hash = $3, video_url = $4, storage_key = $5, duration_ms = $6,
-       size_bytes = $7, rendered_at = now(), status = 'PENDING_REVIEW', stage_recoveries = 0,
+       size_bytes = $7, rendered_at = now(), storage_deleted_at = null,
+       status = 'PENDING_REVIEW', stage_recoveries = 0,
        last_error = null, review_message_id = null, script_message_id = null,
        review_revision = null, updated_at = now()
      from old

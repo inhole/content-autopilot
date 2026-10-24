@@ -266,7 +266,7 @@ npm run cli -- video:list
 npm run cli -- video:show <영상 번호>      # 원고와 발행 행
 npm run cli -- video:approve <영상 번호>
 npm run cli -- video:publish-now <영상 번호>  # 예약된 발행을 지금 바로
-npm run cli -- video:reset-dry <영상 번호>    # dry-run으로 "발행된" 영상을 실제 발행용으로 다시 예약
+npm run cli -- video:reset-dry <영상 번호>    # dry-run으로 "발행"됐거나 dry-run 계정으로 승인된 영상을 실제 발행용으로 다시 예약
 npm run cli -- video:insights
 npm run cli -- instagram:check
 npm run cli -- youtube:auth                # 처음 한 번
@@ -282,6 +282,6 @@ npm run cli -- youtube:check
 | `영상이 N초로 75초를 넘어요` | 원고가 너무 길다. 피드백("더 짧게")으로 다시 쓰거나 `수정N:`으로 줄인다 |
 | `invalid video config` 로 시작 실패 | `VIDEO_PLATFORMS`에 `reels`가 있으면 `VIDEO_STORAGE=supabase`와 Supabase 키가 필요하다 |
 | Reels `토큰이 거절됐어요` | Instagram 토큰이 만료됐거나 권한이 빠졌다. 새 토큰을 받아 `platform_accounts`(INSTAGRAM)를 지우고 `.env`에 넣은 뒤 재시작한다 |
-| `계정이 승인 때와 달라요` | 승인 뒤 계정이 바뀌었다(dry-run에서 승인하고 실제로 켠 경우 포함). 확인 뒤 `🔁 다시 시도`, dry-run으로 끝난 것은 `video:reset-dry` |
+| `계정이 승인 때와 달라요` | 승인 뒤 계정이 바뀌었다(dry-run에서 승인하고 실제로 켠 경우 포함). 확인 뒤 `🔁 다시 시도`. dry-run에서 승인한 것은 `🔁 다시 시도`로 풀리지 않으니 `video:reset-dry` |
 | `YouTube 인증이 만료됐어요` | refresh token이 취소·만료됐다. 동의 화면이 프로덕션인지 확인하고 `youtube:auth`를 다시 한다 |
 | Shorts가 비공개로 올라갔다는 ⚠️ | 채널·프로젝트 상태 때문에 공개 범위가 바뀌었다. YouTube Studio에서 확인한다 |

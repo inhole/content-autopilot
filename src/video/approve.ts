@@ -1,7 +1,7 @@
 import { config } from '../config.ts'
 import { type Query, query, transaction } from '../db/pool.ts'
 import { nextFreeSlot } from '../lib/time.ts'
-import { currentAccountId } from './accounts.ts'
+import { currentAccountId, DRY_RUN_ACCOUNT } from './accounts.ts'
 import { guardSql, type ReviewGuard } from './store.ts'
 import { type Platform, toPlatform } from './types.ts'
 
@@ -92,9 +92,16 @@ export async function approveVideo(
   }
 }
 
+// Publications left over from dry-run: "published" with a `dry-` media id, or approved under the
+// dry-run account and not published yet (the slot came after the switch, so publishing failed or
+// will fail on the account check).
+const DRY_LEFTOVER = `((status = 'PUBLISHED' and platform_media_id like 'dry-%')
+  or (status in ('SCHEDULED', 'FAILED') and account_user_id = '${DRY_RUN_ACCOUNT}'))`
+
 /**
- * After turning VIDEO_PUBLISH_DRY_RUN off: puts a video's dry-run publications (`dry-` media ids)
- * back to SCHEDULED at the next free slot, bound to the current account. Returns the new time.
+ * After turning VIDEO_PUBLISH_DRY_RUN off (`video:reset-dry`, the owner's explicit step): puts a
+ * video's dry-run publications back to SCHEDULED at the next free slot, bound to the current
+ * account. Returns the new time, or null when there was nothing to reset.
  */
 export async function resetDryRun(
   videoId: number,
@@ -102,13 +109,19 @@ export async function resetDryRun(
 ): Promise<Date | null> {
   const now = opts.now ?? new Date()
   const pubs = await query<{ id: number; platform: Platform }>(
-    `select id, platform from video_publications
-     where video_id = $1 and status = 'PUBLISHED' and platform_media_id like 'dry-%'`,
+    `select id, platform from video_publications where video_id = $1 and ${DRY_LEFTOVER}`,
     [videoId],
   )
   if (pubs.length === 0) return null
-  const accounts = new Map<Platform, string | null>()
-  for (const p of pubs) accounts.set(p.platform, await currentAccountId(p.platform))
+  const accounts = new Map<Platform, string>()
+  for (const p of pubs) {
+    const id = await currentAccountId(p.platform)
+    if (!id)
+      throw new Error(
+        `${p.platform === 'REELS' ? 'Instagram' : 'YouTube'} 계정이 설정되지 않았어요`,
+      )
+    accounts.set(p.platform, id)
+  }
   for (let attempt = 1; ; attempt++) {
     try {
       return await transaction(async (q) => {
@@ -117,17 +130,21 @@ export async function resetDryRun(
           pubs.map((p) => p.platform),
           now,
         )
+        let reset = 0
         for (const p of pubs) {
-          await q(
+          const rows = await q(
             `update video_publications set status = 'SCHEDULED', scheduled_at = $2,
                account_user_id = $3, attempts = 0, container_id = null,
                container_created_at = null, upload_url = null, platform_media_id = null,
                permalink = null, published_at = null, verified_at = null, last_error = null,
                error_kind = null, alerted_at = null, updated_at = now()
-             where id = $1 and status = 'PUBLISHED' and platform_media_id like 'dry-%'`,
+             where id = $1 and ${DRY_LEFTOVER}
+             returning id`,
             [p.id, at, accounts.get(p.platform)],
           )
+          reset += rows.length
         }
+        if (reset === 0) return null
         await q(
           `update videos set status = 'APPROVED', published_at = null, updated_at = now()
            where id = $1 and status = 'PUBLISHED'`,

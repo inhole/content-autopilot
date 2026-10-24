@@ -140,7 +140,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
   | 세션 404/410 | **새 세션을 바로 만들지 않는다.** 이전 업로드가 끝났을 수 있기 때문이다. 내 채널 최근 업로드에서 태그 `capub<id>`가 붙은 영상을 찾아 있으면 그 id를 쓰고, 없으면 `FAILED`와 “업로드 여부를 확인하고 다시 시도” 알림. 이 경우의 `🔁 다시 시도`만 세션을 비우고 새로 올린다 |
 
   업로드가 끝나면 `PUBLISHED`(id 있음)로 두고, sweep이 24시간 동안 `videos.list(part=status,processingDetails)`로 처리 결과를 확인한다. `processed`면 `verified_at`을 찍고, `failed`/`rejected`이거나 공개 범위가 기대와 다르면 한 번 알린다. 처리 실패를 새 업로드로 자동 해결하지 않는다.
-- `VIDEO_PUBLISH_DRY_RUN`(기본 `true`)이면 로그만 남기는 클라이언트를 쓰고, media id는 `dry-`로 시작한다. 성과 수집과 리포트는 `dry-` id를 뺀다. Threads의 dry-run과 같게 dry-run 발행도 `PUBLISHED`로 끝난다. 실제로 켠 뒤 같은 영상을 다시 내보내려면 `video:reset-dry <videoId>`가 `dry-` 발행 행을 다음 빈 슬롯의 `SCHEDULED`로 되돌린다.
+- `VIDEO_PUBLISH_DRY_RUN`(기본 `true`)이면 로그만 남기는 클라이언트를 쓰고, media id는 `dry-`로 시작한다. 성과 수집과 리포트는 `dry-` id를 뺀다. Threads의 dry-run과 같게 dry-run 발행도 `PUBLISHED`로 끝난다. 실제로 켠 뒤 같은 영상을 다시 내보내려면 `video:reset-dry <videoId>`가 `dry-` 발행 행을 다음 빈 슬롯의 `SCHEDULED`로 되돌린다. dry-run 중에 승인됐지만 슬롯이 전환 뒤라 아직 발행되지 않은 행(`SCHEDULED`·`FAILED`, 계정 `dry-run`)도 같은 명령으로 지금 계정에 다시 묶는다. 계정 검사는 그대로 두고, 다시 묶는 일은 주인이 CLI로 직접 할 때만 일어난다.
 - 미검증 API 프로젝트가 올린 영상도 이제 비공개로 잠기지 않는다(`videos.insert` 문서, 2026-10-24 확인). 그래서 Shorts는 YouTube 감사를 기다리지 않는다. OAuth 동의 화면이 Testing이면 refresh token이 7일 만에 만료되므로 “프로덕션”으로 바꾸는 것만 필요하다. 업로드 할당량은 하루 100회다.
 
 ### 3-10. 저장소는 Supabase Storage 공개 버킷
@@ -151,7 +151,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
   - 삭제: `DELETE {SUPABASE_URL}/storage/v1/object/{bucket}`에 `{ "prefixes": [key] }`.
 - 키는 `v<videoId>/<렌더 실행 id>-<sha256 앞 16자>.mp4`다. 같은 실행이 응답 유실 뒤 같은 키로 다시 올리다 “이미 있음”(409)이 나면 성공으로 본다.
 - 로컬 개발은 `VIDEO_STORAGE=local`(기본)로 `VIDEO_LOCAL_DIR`(기본 `data/videos`, `.gitignore`에 이미 있는 `data/`)에 저장한다. `VIDEO_PLATFORMS`에 `reels`가 있는데 `supabase`가 아니면 설정 검증에서 시작을 거부한다.
-- **정리(`video-cleanup`):** 지울 수 있는 것은 (1) `REJECTED`/`EXPIRED`가 된 지 3일 지난 영상, (2) `PUBLISHED`가 된 지 14일 지난 영상의 파일뿐이다. `APPROVED`(발행 대기·실패 포함)는 지우지 않는다. 지우기 직전에 같은 조건으로 행을 다시 확인하고, 삭제가 성공한 뒤에만 `storage_deleted_at`을 쓴다. 새 렌더로 대체된 파일과 반영되지 못한 렌더 파일은 렌더 작업이 그 자리에서 지운다. 렌더 도중 프로세스가 죽어 남은 파일은 드물어서 감수한다.
+- **정리(`video-cleanup`):** 지울 수 있는 것은 (1) `REJECTED`/`EXPIRED`가 된 지 3일 지난 영상, (2) `PUBLISHED`가 된 지 14일 지난 영상의 파일뿐이다. `APPROVED`(발행 대기·실패 포함)는 지우지 않는다. 지우기 전에 같은 조건을 다시 확인하는 UPDATE 한 번으로 `video_url`을 먼저 비운다. 그래서 그사이 다시 시작된 영상은 조건에서 빠지거나, 이 파일을 재사용하지 못하고 새로 렌더한다. 삭제가 성공한 뒤에만 `storage_deleted_at`을 쓰고, 실패하면 다음 회차에 다시 지운다. 새 렌더를 반영하면 `storage_deleted_at`을 비워 새 파일도 나중에 정리되게 한다. 새 렌더로 대체된 파일과 반영되지 못한 렌더 파일은 렌더 작업이 그 자리에서 지운다. 렌더 도중 프로세스가 죽어 남은 파일은 드물어서 감수한다.
 
 ### 3-11. 계정과 토큰
 
