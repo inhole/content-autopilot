@@ -6,7 +6,9 @@ import {
   loadCampaignList,
   loadInsights,
   loadOverview,
+  loadPostDetail,
   loadRecentPosts,
+  loadRevivableList,
   parseCampaignFilter,
   parseCampaignSource,
 } from '../../src/web/data.ts'
@@ -277,5 +279,111 @@ describe('loadInsights', () => {
 
   it('is empty without published posts', async () => {
     expect(await loadInsights(30, now)).toEqual({ days: 30, daily: [], top: [] })
+  })
+})
+
+describe('loadPostDetail', () => {
+  it('returns a single post with its topic and limits, or null', async () => {
+    const [t] = await query<{ id: number }>(
+      `insert into topics (title, url, note, score, url_hash) values ('제목', 'https://e.com/a', '내 의견', 7.5, $1) returning id`,
+      [`h-${Math.random()}`],
+    )
+    const id = await seedPost('PENDING_REVIEW', {
+      topic_id: t?.id,
+      angle: 'angle',
+      source_url: 'https://e.com/a',
+      generation: JSON.stringify({ caveats: ['수치 확인', 3] }),
+    })
+    const d = await loadPostDetail(id)
+    expect(d?.post).toMatchObject({
+      id,
+      status: 'PENDING_REVIEW',
+      origin: 'news',
+      text: 'hello world',
+      angle: 'angle',
+      caveats: ['수치 확인'],
+      topic: { id: t?.id, title: '제목', url: 'https://e.com/a', note: '내 의견', score: 7.5 },
+      revive: { verdict: null, from_text: null, revived_at: null },
+      digest_post_id: null,
+    })
+    expect(d?.post.created_at).toBeInstanceOf(Date)
+    expect(d?.parts).toEqual([])
+    expect(d?.limits.text).toBe(500)
+    expect(d?.limits.lastFollowup).toBeLessThanOrEqual(500)
+    expect(await loadPostDetail(999_999)).toBeNull()
+  })
+
+  it('maps follow-up parts including a FAILED one', async () => {
+    const id = await seedPost('PUBLISHED', { published_at: new Date() })
+    await query(
+      `insert into post_parts (post_id, idx, text, status, attempts, last_error, link_url)
+       values ($1, 2, 'second', 'PUBLISHED', 1, null, null),
+              ($1, 3, 'third', 'FAILED', 3, 'boom', 'https://e.com/x')`,
+      [id],
+    )
+    const d = await loadPostDetail(id)
+    expect(d?.parts).toEqual([
+      {
+        idx: 2,
+        text: 'second',
+        status: 'PUBLISHED',
+        attempts: 1,
+        last_error: null,
+        link_url: null,
+      },
+      {
+        idx: 3,
+        text: 'third',
+        status: 'FAILED',
+        attempts: 3,
+        last_error: 'boom',
+        link_url: 'https://e.com/x',
+      },
+    ])
+  })
+
+  it('exposes the revive fields of a revived post', async () => {
+    const id = await seedPost('PENDING_REVIEW', {
+      origin: 'revived',
+      revive_verdict: 'evergreen',
+      revive_reason: '시간 무관',
+      revive_checked_at: new Date('2026-10-01T00:00:00Z'),
+      revived_at: new Date('2026-10-02T00:00:00Z'),
+      generation: JSON.stringify({ revived: { from_text: '원래 글' } }),
+    })
+    const d = await loadPostDetail(id)
+    expect(d?.post.origin).toBe('revived')
+    expect(d?.post.caveats).toEqual([])
+    expect(d?.post.revive).toEqual({
+      verdict: 'evergreen',
+      reason: '시간 무관',
+      checked_at: new Date('2026-10-01T00:00:00Z'),
+      revived_at: new Date('2026-10-02T00:00:00Z'),
+      from_text: '원래 글',
+    })
+  })
+})
+
+describe('loadRevivableList', () => {
+  it('maps expired news drafts to snake_case rows', async () => {
+    const id = await seedPost('EXPIRED', {
+      source_url: 'https://e.com/r',
+      revive_verdict: 'stale',
+      revive_reason: '오래됨',
+      revive_checked_at: new Date(),
+    })
+    const done = await seedPost('EXPIRED', { revived_at: new Date() })
+    const { rows } = await loadRevivableList()
+    const row = rows.find((r) => r.id === id)
+    expect(row).toMatchObject({
+      id,
+      title: 't',
+      text: 'hello world',
+      source_url: 'https://e.com/r',
+      verdict: 'stale',
+      reason: '오래됨',
+    })
+    expect(row?.created_at).toBeInstanceOf(Date)
+    expect(rows.some((r) => r.id === done)).toBe(false)
   })
 })

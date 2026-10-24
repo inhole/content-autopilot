@@ -9,6 +9,7 @@ import type { CampaignListRow } from '../src/web/data.ts'
 import { createDashboardServer, type DashboardLoaders } from '../src/web/server.ts'
 import { fakeActions } from './fake-actions.ts'
 import { fakeAuth, SESSION_HEADERS } from './fake-auth.ts'
+import { fakePostActions } from './fake-post-actions.ts'
 
 const A = SESSION_HEADERS
 const NOW = new Date('2026-10-18T03:00:00Z')
@@ -89,6 +90,55 @@ const loaders: DashboardLoaders = {
       },
     ]
   },
+  post: async (id) => {
+    if (id === 500) throw new Error('db down')
+    if (id !== 9) return null
+    return {
+      post: {
+        id: 9,
+        status: 'SCHEDULED',
+        origin: 'news',
+        text: 'main',
+        angle: null,
+        source_url: null,
+        caveats: ['check'],
+        revision: 2,
+        regen_seq: 0,
+        scheduled_at: new Date('2026-10-18T09:00:00Z'),
+        published_at: null,
+        created_at: new Date('2026-10-17T00:00:00Z'),
+        updated_at: new Date('2026-10-17T01:00:00Z'),
+        reject_reason: null,
+        attempts: 0,
+        last_error: null,
+        topic: { id: 3, title: 't', url: null, note: null, score: 7 },
+        revive: {
+          verdict: null,
+          reason: null,
+          checked_at: null,
+          revived_at: null,
+          from_text: null,
+        },
+        digest_post_id: null,
+      },
+      parts: [],
+      limits: { text: 500, lastFollowup: 480, cta: null },
+    }
+  },
+  revivable: async () => ({
+    rows: [
+      {
+        id: 4,
+        title: 'old',
+        text: 'x',
+        source_url: null,
+        created_at: new Date('2026-10-10T00:00:00Z'),
+        verdict: 'evergreen',
+        reason: 'r',
+        checked_at: new Date('2026-10-12T00:00:00Z'),
+      },
+    ],
+  }),
   insights: async (days, now) => {
     calls.insights.push([days, now.toISOString()])
     return {
@@ -127,6 +177,7 @@ const app = createDashboardServer({
   loaders,
   auth: fakeAuth().auth,
   actions: fakeActions().actions,
+  postActions: fakePostActions().actions,
   notify,
   now: () => NOW,
   webDist: buildDir,
@@ -135,6 +186,7 @@ const legacy = createDashboardServer({
   loaders,
   auth: fakeAuth().auth,
   actions: fakeActions().actions,
+  postActions: fakePostActions().actions,
   notify,
   now: () => NOW,
   webDist: missingDist,
@@ -190,6 +242,8 @@ describe('api', () => {
       '/api/campaigns',
       '/api/campaigns/7',
       '/api/posts',
+      '/api/posts/9',
+      '/api/revivable',
       '/api/insights',
       '/api/nope',
     ]) {
@@ -266,6 +320,30 @@ describe('api', () => {
     expect(calls.posts.at(-1)).toBe(50)
     await get('/api/posts')
     expect(calls.posts.at(-1)).toBe(50)
+  })
+  it('post detail: ok with ISO dates, 404 for unknown / malformed ids, 500 without details', async () => {
+    const ok = await get('/api/posts/9')
+    expect(ok.status).toBe(200)
+    const body = await ok.json()
+    expect(body.post.scheduled_at).toBe('2026-10-18T09:00:00.000Z')
+    expect(body.limits).toEqual({ text: 500, lastFollowup: 480, cta: null })
+    for (const p of ['/api/posts/42', '/api/posts/abc', '/api/posts/-1']) {
+      const res = await get(p)
+      expect(res.status, p).toBe(404)
+      expect(await res.json()).toEqual({ error: 'not found' })
+    }
+    const err = await get('/api/posts/500')
+    expect(err.status).toBe(500)
+    expect(await err.text()).not.toContain('db down')
+  })
+  it('revivable rows serialize dates', async () => {
+    const body = await (await get('/api/revivable')).json()
+    expect(body.rows[0]).toMatchObject({
+      id: 4,
+      verdict: 'evergreen',
+      created_at: '2026-10-10T00:00:00.000Z',
+      checked_at: '2026-10-12T00:00:00.000Z',
+    })
   })
   it('insights clamp days and serialize dates', async () => {
     const body = await (await get('/api/insights?days=1000')).json()

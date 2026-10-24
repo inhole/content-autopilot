@@ -3,9 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createDashboardServer, readCookie } from '../src/web/server.ts'
 import { fakeActions } from './fake-actions.ts'
 import { CSRF, fakeAuth, SESSION_HEADERS, TOKEN } from './fake-auth.ts'
+import { fakePostActions } from './fake-post-actions.ts'
 
 const { auth, state } = fakeAuth()
 const { actions, state: actionState } = fakeActions()
+const { actions: postActions, state: postState } = fakePostActions()
 const sent: string[] = []
 let failNotify = false
 
@@ -13,6 +15,7 @@ let base = ''
 const server = createDashboardServer({
   auth,
   actions,
+  postActions,
   notify: async (text) => {
     if (failNotify) throw new Error('telegram down')
     sent.push(text)
@@ -27,6 +30,8 @@ const server = createDashboardServer({
     campaign: async () => null,
     posts: async () => [],
     insights: async (days) => ({ days, daily: [], top: [] }),
+    post: async (id) => (id === 12 ? ({ post: { id: 12 }, parts: [], limits: {} } as never) : null),
+    revivable: async () => ({ rows: [] }),
   },
 })
 
@@ -271,6 +276,203 @@ describe('logout', () => {
     expect(state.revokedAll).toBe(1)
     expect(sent[0]).toContain('모든 세션(2개)')
     expect(state.actions.at(-1)).toMatchObject({ action: 'logout_all', detail: { revoked: 2 } })
+  })
+})
+
+describe('post actions', () => {
+  const auth_ = { ...SESSION_HEADERS, 'x-csrf-token': CSRF }
+  const ok = (path: string, body: unknown, headers: Record<string, string> = auth_) =>
+    post(path, body, headers)
+  const AT = '2026-10-18T09:00:00.000Z'
+  const BODIES: [string, unknown][] = [
+    ['approve', { revision: 2 }],
+    ['reject', { revision: 2, reason: 'boring' }],
+    ['regenerate', { revision: 3, feedback: '더 짧게' }],
+    ['edit', { revision: 3, idx: 2, text: '내가 고친 답글' }],
+    ['deletePart', { revision: 3, idx: 3 }],
+    ['unschedule', { scheduledAt: AT }],
+    ['publishNow', { scheduledAt: AT }],
+    ['retryParts', {}],
+    ['revive', {}],
+  ]
+  const COLLECTION: [string, unknown][] = [
+    ['/api/posts/add', { url: 'https://example.com/a', note: '내 의견' }],
+    ['/api/revivable/check', {}],
+    ['/api/digest', {}],
+  ]
+
+  beforeEach(() => {
+    postState.calls.length = 0
+    postState.next = undefined
+    postState.nextAdd = undefined
+    postState.fail = undefined
+  })
+
+  it.each([
+    ...BODIES.map(([n, b]) => [`/api/posts/12/${n}`, b] as [string, unknown]),
+    ...COLLECTION,
+  ])('%s needs same-origin JSON, a session and the CSRF token', async (path, body) => {
+    const noOrigin = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth_ },
+      body: JSON.stringify(body),
+    })
+    expect(noOrigin.status).toBe(403)
+    expect((await ok(path, body, { ...auth_, origin: 'https://evil.example' })).status).toBe(403)
+    expect((await ok(path, body, {})).status).toBe(401)
+    expect((await ok(path, body, SESSION_HEADERS)).status).toBe(403)
+    expect(
+      (await ok(path, body, { ...SESSION_HEADERS, 'x-csrf-token': 'x'.repeat(43) })).status,
+    ).toBe(403)
+    expect(postState.calls).toEqual([])
+    expect(state.actions).toEqual([])
+  })
+
+  it('answers 405 with Allow: POST to GET and other methods', async () => {
+    for (const path of [
+      '/api/posts/12/approve',
+      '/api/posts/add',
+      '/api/revivable/check',
+      '/api/digest',
+    ]) {
+      const get = await fetch(`${base}${path}`, { headers: SESSION_HEADERS })
+      expect(get.status, path).toBe(405)
+      expect(get.headers.get('allow')).toBe('POST')
+      expect((await fetch(`${base}${path}`, { method: 'DELETE' })).status).toBe(405)
+    }
+  })
+
+  it('runs the action with the validated body, returns the detail and audits it', async () => {
+    const res = await ok('/api/posts/12/reject', { revision: 2, reason: 'boring' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      ok: true,
+      telegramSynced: true,
+      detail: { post: { id: 12 }, parts: [], limits: {} },
+    })
+    expect(postState.calls).toEqual([
+      { name: 'reject', id: 12, params: { revision: 2, reason: 'boring' } },
+    ])
+    expect(state.actions.at(-1)).toMatchObject({
+      sessionId: 1,
+      action: 'post.reject',
+      target: 'post:12',
+      result: 'ok',
+      ip: '203.0.113.7',
+      detail: { reason: 'boring', telegramSynced: true },
+    })
+  })
+
+  it('passes each body to the matching action and never audits free text', async () => {
+    for (const [name, body] of BODIES) {
+      expect((await ok(`/api/posts/12/${name}`, body)).status, name).toBe(200)
+    }
+    expect(postState.calls.map((c) => c.name)).toEqual(BODIES.map(([n]) => n))
+    const sched = postState.calls.find((c) => c.name === 'unschedule')?.params as {
+      scheduledAt: Date
+    }
+    expect(sched.scheduledAt).toBeInstanceOf(Date)
+    expect(sched.scheduledAt.toISOString()).toBe(AT)
+    const audits = JSON.stringify(state.actions)
+    expect(audits).not.toContain('내가 고친 답글')
+    expect(audits).not.toContain('더 짧게')
+    expect(state.actions.find((a) => a.action === 'post.edit')?.detail).toMatchObject({
+      idx: 2,
+      chars: 8,
+    })
+    expect(state.actions.find((a) => a.action === 'post.regenerate')?.detail).toMatchObject({
+      feedback: true,
+    })
+    expect(state.actions.find((a) => a.action === 'post.publishNow')?.detail).toMatchObject({
+      scheduledAt: AT,
+    })
+  })
+
+  it('409 stale, 404 and 400 with the action message', async () => {
+    postState.next = { ok: false, reason: 'stale', message: '이미 처리됐어요' }
+    const stale = await ok('/api/posts/12/approve', { revision: 2 })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toEqual({ error: '이미 처리됐어요', stale: true })
+    expect(state.actions.at(-1)).toMatchObject({ action: 'post.approve', result: 'stale' })
+
+    postState.next = { ok: false, reason: 'not_found', message: 'x' }
+    expect((await ok('/api/posts/999/approve', { revision: 2 })).status).toBe(404)
+    expect(state.actions.at(-1)).toMatchObject({ target: 'post:999', result: 'not_found' })
+    expect((await ok('/api/posts/abc/approve', { revision: 2 })).status).toBe(404)
+
+    postState.next = { ok: false, reason: 'invalid', message: '501자예요' }
+    const bad = await ok('/api/posts/12/edit', { revision: 1, idx: 1, text: 'x' })
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: '501자예요' })
+  })
+
+  it('400 for an invalid body, without running the action', async () => {
+    const bad: [string, unknown][] = [
+      ['approve', {}],
+      ['approve', { revision: -1 }],
+      ['reject', { revision: 2, reason: 'nope' }],
+      ['regenerate', { revision: 2, feedback: 'x'.repeat(1001) }],
+      ['edit', { revision: 2, idx: 0, text: 'x' }],
+      ['edit', { revision: 2, idx: 4, text: 'x' }],
+      ['edit', { revision: 2, idx: 1, text: 'x'.repeat(2001) }],
+      ['deletePart', { revision: 2, idx: 1 }],
+      ['unschedule', { scheduledAt: 'not a date' }],
+      ['publishNow', {}],
+      ['retryParts', []],
+    ]
+    for (const [name, body] of bad) {
+      const res = await ok(`/api/posts/12/${name}`, body)
+      expect(res.status, `${name} ${JSON.stringify(body)}`).toBe(400)
+    }
+    expect((await ok('/api/posts/12/approve', '{not json')).status).toBe(400)
+    expect(postState.calls).toEqual([])
+    expect(state.actions.every((a) => a.result === 'invalid')).toBe(true)
+  })
+
+  it('500 and an error audit row when the action throws', async () => {
+    postState.fail = new Error('db down')
+    const res = await ok('/api/posts/12/approve', { revision: 2 })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: 'internal error' })
+    expect(state.actions.at(-1)).toMatchObject({ action: 'post.approve', result: 'error' })
+  })
+
+  it('adds a topic: 200, 409 when already covered, 400 for a bad url', async () => {
+    const res = await ok('/api/posts/add', { url: 'https://example.com/a', note: '내 의견' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, topicId: 77 })
+    expect(postState.calls).toEqual([
+      { name: 'addTopic', params: { url: 'https://example.com/a', note: '내 의견' } },
+    ])
+    expect(state.actions.at(-1)).toMatchObject({ action: 'post.add', target: null, result: 'ok' })
+    expect(JSON.stringify(state.actions)).not.toContain('내 의견')
+
+    postState.nextAdd = { ok: false, reason: 'covered', postId: 5, status: 'PUBLISHED' }
+    const dup = await ok('/api/posts/add', { url: 'https://example.com/a' })
+    expect(dup.status).toBe(409)
+    expect(await dup.json()).toEqual({ error: '이미 다룬 기사예요 (#5, PUBLISHED)', postId: 5 })
+
+    postState.calls.length = 0
+    for (const body of [
+      {},
+      { url: 'ftp://example.com' },
+      { url: 'javascript:alert(1)' },
+      { url: 'not a url' },
+      { url: `https://example.com/${'a'.repeat(2000)}` },
+      { url: 'https://example.com', note: 'x'.repeat(501) },
+    ]) {
+      expect((await ok('/api/posts/add', body)).status, JSON.stringify(body).slice(0, 60)).toBe(400)
+    }
+    expect(postState.calls).toEqual([])
+  })
+
+  it('queues revive-check and digest with 202', async () => {
+    const check = await ok('/api/revivable/check', {})
+    expect(check.status).toBe(202)
+    expect(await check.json()).toEqual({ ok: true })
+    expect((await ok('/api/digest', {})).status).toBe(202)
+    expect(postState.calls.map((c) => c.name)).toEqual(['reviveCheck', 'digest'])
+    expect(state.actions.map((a) => a.action)).toEqual(['revive.check', 'digest.build'])
   })
 })
 
