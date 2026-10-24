@@ -23,6 +23,9 @@ export const CQ = {
   rank: 'campaign-rank',
 } as const
 
+/** Hourly; shared with the dashboard's operations page. */
+export const MAINTENANCE_CRON = '0 * * * *'
+
 // Same idea as the retry limits in src/jobs.ts: shared by createQueue and the final-failure check.
 const COLLECT_RETRY_LIMIT = 1
 const CARD_RETRY_LIMIT = 3
@@ -149,7 +152,7 @@ export async function createCampaignQueues(boss: PgBoss): Promise<void> {
     retryDelay: 60,
   })
   await boss.schedule(CQ.collect, config.GIFT_COLLECT_CRON, null, { tz })
-  await boss.schedule(CQ.maintenance, '0 * * * *', null, { tz })
+  await boss.schedule(CQ.maintenance, MAINTENANCE_CRON, null, { tz })
   await boss.schedule(CQ.musinsaCollect, config.MUSINSA_COLLECT_CRON, null, { tz })
 }
 

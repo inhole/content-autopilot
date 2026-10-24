@@ -9,6 +9,8 @@ const { auth, state } = fakeAuth()
 const { actions, state: actionState } = fakeActions()
 const { actions: postActions, state: postState } = fakePostActions()
 const sent: string[] = []
+const opsRuns: string[] = []
+let opsQueued = true
 let failNotify = false
 
 let base = ''
@@ -16,6 +18,10 @@ const server = createDashboardServer({
   auth,
   actions,
   postActions,
+  runOps: async (name) => {
+    opsRuns.push(name)
+    return opsQueued
+  },
   notify: async (text) => {
     if (failNotify) throw new Error('telegram down')
     sent.push(text)
@@ -32,6 +38,9 @@ const server = createDashboardServer({
     insights: async (days) => ({ days, daily: [], top: [] }),
     post: async (id) => (id === 12 ? ({ post: { id: 12 }, parts: [], limits: {} } as never) : null),
     revivable: async () => ({ rows: [] }),
+    ops: async () => {
+      throw new Error('not used')
+    },
   },
 })
 
@@ -639,6 +648,79 @@ describe('campaign actions', () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ error: 'internal error' })
     expect(state.actions.at(-1)).toMatchObject({ action: 'campaign.apply', result: 'error' })
+  })
+})
+
+describe('ops run', () => {
+  const auth_ = { ...SESSION_HEADERS, 'x-csrf-token': CSRF }
+  const NAMES = [
+    'threads-daily',
+    'gift-collect',
+    'musinsa-collect',
+    'campaign-maintenance',
+    'collect-insights',
+  ]
+
+  beforeEach(() => {
+    opsRuns.length = 0
+    opsQueued = true
+  })
+
+  it('needs same-origin JSON, a session and the CSRF token', async () => {
+    const path = '/api/ops/gift-collect/run'
+    const noOrigin = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth_ },
+      body: '{}',
+    })
+    expect(noOrigin.status).toBe(403)
+    expect((await post(path, {}, { ...auth_, origin: 'https://evil.example' })).status).toBe(403)
+    expect((await post(path, {}, {})).status).toBe(401)
+    expect((await post(path, {}, SESSION_HEADERS)).status).toBe(403)
+    expect(
+      (await post(path, {}, { ...SESSION_HEADERS, 'x-csrf-token': 'x'.repeat(43) })).status,
+    ).toBe(403)
+    expect(opsRuns).toEqual([])
+    expect(state.actions).toEqual([])
+  })
+
+  it('answers 405 to GET, 404 to unknown names', async () => {
+    const get = await fetch(`${base}/api/ops/gift-collect/run`, { headers: SESSION_HEADERS })
+    expect(get.status).toBe(405)
+    expect(get.headers.get('allow')).toBe('POST')
+    expect((await post('/api/ops/nope/run', {}, auth_)).status).toBe(404)
+    expect((await post('/api/ops/constructor/run', {}, auth_)).status).toBe(404)
+    expect(opsRuns).toEqual([])
+  })
+
+  it.each(NAMES)('%s: 202 queued and an audit row', async (name) => {
+    const res = await post(`/api/ops/${name}/run`, {}, auth_)
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({ ok: true, queued: true })
+    expect(opsRuns).toEqual([name])
+    expect(state.actions.at(-1)).toMatchObject({
+      sessionId: 1,
+      action: `ops.${name}`,
+      result: 'ok',
+      ip: '203.0.113.7',
+      detail: { queued: true },
+    })
+  })
+
+  it('200 queued:false when the job is busy or dropped', async () => {
+    opsQueued = false
+    const res = await post('/api/ops/threads-daily/run', {}, auth_)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, queued: false })
+    expect(state.actions.at(-1)).toMatchObject({ detail: { queued: false } })
+  })
+
+  it('400 for a non-object body, without running anything', async () => {
+    for (const body of ['[]', '"x"', 'null', '{bad']) {
+      expect((await post('/api/ops/gift-collect/run', body, auth_)).status).toBe(400)
+    }
+    expect(opsRuns).toEqual([])
+    expect(state.actions.at(-1)).toMatchObject({ action: 'ops.gift-collect', result: 'invalid' })
   })
 })
 
