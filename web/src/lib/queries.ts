@@ -6,6 +6,8 @@ import type {
   CampaignActionRequests,
   CampaignDetailResponse,
   OpsJobName,
+  OpsProfileRequests,
+  OpsProfileResponse,
   OpsResponse,
   PostActionName,
   PostActionRequests,
@@ -222,6 +224,33 @@ export function useRunOps() {
     },
   })
 }
+
+function useProfileMutation<V>(fn: (v: V) => Promise<OpsProfileResponse>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (res) => {
+      client.setQueryData<OpsResponse>(['ops'], (old) =>
+        old ? { ...old, profile: res.profile } : old,
+      )
+      void client.invalidateQueries({ queryKey: ['ops'] })
+    },
+    onError: (e) => {
+      // A stale revision: show what is really saved now.
+      if (e instanceof ApiError && e.status === 409) {
+        void client.invalidateQueries({ queryKey: ['ops'] })
+      }
+    },
+  })
+}
+
+/** Saves the edited profile on the displayed revision. A 400 carries `body.fields`. */
+export const useSaveProfile = () =>
+  useProfileMutation((v: OpsProfileRequests['save']) => api.saveOpsProfile(v))
+
+/** Drops the saved copy so the bundled file is in effect again. */
+export const useResetProfile = () =>
+  useProfileMutation((v: OpsProfileRequests['reset']) => api.resetOpsProfile(v))
 
 export const SESSION_KEY = ['session'] as const
 
