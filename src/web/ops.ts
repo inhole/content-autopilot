@@ -1,7 +1,7 @@
 import { CQ, MAINTENANCE_CRON } from '../campaigns/jobs.ts'
 import { type CampaignProfile, loadCampaignProfile } from '../campaigns/profile.ts'
 import { config } from '../config.ts'
-import { query } from '../db/pool.ts'
+import { query, transaction } from '../db/pool.ts'
 import { INSIGHTS_CRON, INSIGHTS_QUEUE, Q } from '../jobs.ts'
 import type { OpsJobName, OpsJobState, OpsResponse } from './api-types.ts'
 
@@ -165,18 +165,33 @@ export async function loadOps(
 }
 
 /**
+ * Holds a transaction-scoped advisory lock per queue while `fn` runs, so concurrent run requests
+ * (two tabs, or two instances during a redeploy) check and send one at a time. pg-boss sends on its
+ * own connection and commits before the lock is released, so the next holder sees that job.
+ */
+const lockQueue = <T>(queue: string, fn: () => Promise<T>): Promise<T> =>
+  transaction(async (q) => {
+    await q('select pg_advisory_xact_lock(hashtext($1))', [`ops-run:${queue}`])
+    return fn()
+  })
+
+/**
  * Starts a job now. False (nothing sent) when one is already queued or running, or when the queue
- * policy dropped the send (pg-boss answers null for stately/singleton duplicates).
+ * policy dropped the send (pg-boss answers null for stately/singleton duplicates). The busy check
+ * and the send are serialized per queue: the singleton policy alone would queue a second job.
  */
 export async function runOpsJob(
   name: OpsJobName,
   deps: {
     runs?: (queues: string[]) => Promise<Map<string, QueueRun>>
     send: (queue: string) => Promise<string | null>
+    lock?: <T>(queue: string, fn: () => Promise<T>) => Promise<T>
   },
 ): Promise<boolean> {
   const { queue } = OPS_JOBS[name]
-  const run = (await (deps.runs ?? loadQueueRuns)([queue])).get(queue)
-  if (run?.busy) return false
-  return (await deps.send(queue)) !== null
+  return (deps.lock ?? lockQueue)(queue, async () => {
+    const run = (await (deps.runs ?? loadQueueRuns)([queue])).get(queue)
+    if (run?.busy) return false
+    return (await deps.send(queue)) !== null
+  })
 }

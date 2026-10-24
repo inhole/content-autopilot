@@ -189,7 +189,7 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 | `campaign-maintenance` | `campaign-maintenance` | 매시 정각 | 신청 마감 지난 카드 만료, 리마인더(09~21시에만 보낸다) |
 | `collect-insights` | `collect-insights` | 매일 5시 | Threads 성과 스냅샷 |
 
-- `POST /api/ops/<name>/run` (본문 `{}`): 큐에 `boss.send`로 작업 하나를 넣는다. 202 `{ ok: true, queued: true }`. 그 큐에 대기·재시도·실행 중인 작업이 있으면 보내지 않고 200 `{ ok: true, queued: false }`이고, 큐 정책(`stately`/`singleton`)이 중복을 버린 경우도 같다. 모르는 이름은 404, 본문이 객체가 아니면 400, GET은 405다. 세션·같은 출처·`X-CSRF-Token` 검사는 다른 쓰기와 같고, 감사 기록은 `ops.<name>`(`detail: { queued }`)이다.
+- `POST /api/ops/<name>/run` (본문 `{}`): 큐에 `boss.send`로 작업 하나를 넣는다. 202 `{ ok: true, queued: true }`. 그 큐에 대기·재시도·실행 중인 작업이 있으면 보내지 않고 200 `{ ok: true, queued: false }`이고, 큐 정책(`stately`/`singleton`)이 중복을 버린 경우도 같다. `singleton`은 실행 중인 작업만 하나로 막으므로, 확인과 전송을 큐별 advisory lock(`ops-run:<큐>`)으로 묶어 동시에 누른 요청이 작업을 두 번 넣지 못하게 한다. 모르는 이름은 404, 본문이 객체가 아니면 400, GET은 405다. 세션·같은 출처·`X-CSRF-Token` 검사는 다른 쓰기와 같고, 감사 기록은 `ops.<name>`(`detail: { queued }`)이다.
 - 작업 상태는 pg-boss 테이블 `pgboss.job`을 직접 읽는다. 큐마다 가장 최근 작업(`created_on` 기준)의 상태와 시각, 실패하면 `output->>'message'`(스택은 읽지 않는다)를 보여 준다. `pgboss` 스키마가 아직 없으면 실행 기록이 없는 것으로 본다.
 - 일정 문자열은 작업을 등록하는 코드와 같은 상수(`HOURLY_CRON`, `INSIGHTS_CRON`, `MAINTENANCE_CRON`, `config`의 cron)를 읽으므로 화면과 실제 일정이 어긋나지 않는다. 화면은 단순한 cron을 `매일 9·15·21시`처럼 풀어 쓰고, 그 밖의 식은 그대로 보여 준다.
 - 화면은 실행 확인 창(Threads 수집은 LLM 호출과 초안 생성을 경고)을 거친다. 실행 중인 작업이 있으면 3초마다(최대 5분) 다시 읽고, 아니면 60초마다 읽는다.

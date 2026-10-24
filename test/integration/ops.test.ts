@@ -2,7 +2,7 @@ import type { PgBoss } from 'pg-boss'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { CQ } from '../../src/campaigns/jobs.ts'
 import { query } from '../../src/db/pool.ts'
-import { createBoss } from '../../src/jobs.ts'
+import { createBoss, Q } from '../../src/jobs.ts'
 import { loadOps, loadProfileForOps, loadQueueRuns, runOpsJob } from '../../src/web/ops.ts'
 
 let boss: PgBoss
@@ -12,7 +12,9 @@ beforeAll(async () => {
   boss = createBoss()
   await boss.start()
   for (const q of QUEUES) await boss.createQueue(q, { policy: 'stately', retryLimit: 0 })
-  await query('delete from pgboss.job where name = any($1)', [QUEUES])
+  // Same policy as the worker gives it: singleton limits active jobs only.
+  await boss.createQueue(Q.daily, { policy: 'singleton', retryLimit: 0 })
+  await query('delete from pgboss.job where name = any($1)', [[...QUEUES, Q.daily]])
 })
 afterAll(async () => {
   await boss.stop({ graceful: false })
@@ -41,6 +43,29 @@ describe('ops job state', () => {
     expect(run?.last).toMatchObject({ state: 'completed', error: null })
     expect(run?.last?.completed_at).toBeInstanceOf(Date)
     expect(await runOpsJob('gift-collect', { send: (q) => boss.send(q, null) })).toBe(true)
+  })
+
+  it('concurrent run requests on a singleton queue send one job', async () => {
+    // The singleton policy only limits active jobs, so without the lock all three would queue.
+    // The pause between the busy check and the send makes every request read "not busy" first
+    // unless the lock serializes them.
+    const send = (q: string) => boss.send(q, null)
+    const runs = async (queues: string[]) => {
+      const read = await loadQueueRuns(queues)
+      await new Promise((r) => setTimeout(r, 200))
+      return read
+    }
+    const results = await Promise.all([
+      runOpsJob('threads-daily', { send, runs }),
+      runOpsJob('threads-daily', { send, runs }),
+      runOpsJob('threads-daily', { send, runs }),
+    ])
+    expect(results.filter(Boolean)).toHaveLength(1)
+    const [row] = await query<{ n: number }>(
+      'select count(*)::int as n from pgboss.job where name = $1',
+      [Q.daily],
+    )
+    expect(row?.n).toBe(1)
   })
 
   it('failed job keeps a short error without the stack', async () => {
