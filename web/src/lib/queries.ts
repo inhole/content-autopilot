@@ -14,6 +14,10 @@ import type {
   PostActionName,
   PostActionRequests,
   PostDetailResponse,
+  PublicationActionName,
+  PublicationActionRequests,
+  VideoActionName,
+  VideoActionRequests,
 } from './types.ts'
 
 export const REFRESH_MS = 60_000
@@ -300,4 +304,64 @@ export function endSession(client: QueryClient): void {
   setCsrfToken(null)
   client.removeQueries({ predicate: (q) => q.queryKey[0] !== SESSION_KEY[0] })
   client.setQueryData<AuthSessionResponse>(SESSION_KEY, { authenticated: false })
+}
+
+export const useVideos = (filter: 'active' | 'all') =>
+  useQuery({ queryKey: ['videos', filter], queryFn: () => api.videos(filter), ...live })
+
+/** While a video is being written or rendered, look again every few seconds. */
+export const VIDEO_POLL_MS = 5_000
+const VIDEO_BUSY = new Set(['SCRIPTING', 'RENDERING'])
+
+export const useVideo = (id: number) =>
+  useQuery({
+    queryKey: ['video', id],
+    queryFn: () => api.video(id),
+    ...live,
+    refetchInterval: (query) =>
+      query.state.data && VIDEO_BUSY.has(query.state.data.video.status) ? VIDEO_POLL_MS : REFRESH_MS,
+  })
+
+/** Everything a video operation can change. */
+export function refreshVideoData(client: QueryClient, id?: number) {
+  return Promise.all([
+    id === undefined
+      ? client.invalidateQueries({ queryKey: ['video'] })
+      : client.invalidateQueries({ queryKey: ['video', id] }),
+    client.invalidateQueries({ queryKey: ['videos'] }),
+  ])
+}
+
+export type VideoActionVars =
+  | {
+      [K in VideoActionName]: { kind: 'video'; name: K; body: VideoActionRequests[K] }
+    }[VideoActionName]
+  | {
+      [K in PublicationActionName]: {
+        kind: 'publication'
+        publicationId: number
+        name: K
+        body: PublicationActionRequests[K]
+      }
+    }[PublicationActionName]
+
+/**
+ * Runs one operation on a video or one of its publications. A 409 means the page was outdated:
+ * the video is refetched and the server's message stays on the mutation.
+ */
+export function useVideoAction(id: number) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: VideoActionVars) =>
+      vars.kind === 'video'
+        ? api.videoAction(id, vars.name, vars.body as never)
+        : api.publicationAction(vars.publicationId, vars.name, vars.body as never),
+    onSuccess: (res) => {
+      if (res.detail) client.setQueryData(['video', id], res.detail)
+      void refreshVideoData(client, id)
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) void refreshVideoData(client, id)
+    },
+  })
 }

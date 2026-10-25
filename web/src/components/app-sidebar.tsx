@@ -2,6 +2,7 @@ import {
   ActivityIcon,
   ArchiveRestoreIcon,
   BarChart3Icon,
+  FilmIcon,
   GiftIcon,
   LayoutDashboardIcon,
   MessageSquareTextIcon,
@@ -37,6 +38,12 @@ export const NAV = [
     label: 'Threads 글',
     icon: MessageSquareTextIcon,
     match: (p: string) => p.startsWith('/posts'),
+  },
+  {
+    to: '/videos',
+    label: '영상',
+    icon: FilmIcon,
+    match: (p: string) => p.startsWith('/videos'),
   },
   {
     to: '/expired',

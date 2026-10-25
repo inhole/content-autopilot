@@ -4,12 +4,22 @@ import {
   formatDday,
   ORIGIN_LABELS,
   PART_STATUS_LABELS,
+  PLATFORM_LABELS,
+  PUBLICATION_STATUS_LABELS,
   postStatusLabel,
   sourceLabel,
   statusLabel,
   VERDICT_LABELS,
+  videoStatusLabel,
 } from '@/lib/format.ts'
-import { type BadgeTone, campaignTone, deadlineTone, postTone } from '@/lib/status.ts'
+import {
+  type BadgeTone,
+  campaignTone,
+  deadlineTone,
+  postTone,
+  publicationTone,
+  videoTone,
+} from '@/lib/status.ts'
 import type { CampaignRow, PostItem } from '@/lib/types.ts'
 import { cn } from '@/lib/utils.ts'
 
@@ -79,3 +89,19 @@ export function DeadlineBadge({ row, now }: { row: CampaignRow; now?: Date }) {
     </span>
   )
 }
+
+export const VideoStatusBadge = ({ status }: { status: string }) => (
+  <Badge variant={videoTone(status)}>{videoStatusLabel(status)}</Badge>
+)
+
+/** `Reels 예약`: the platform and the publication's state in one badge. */
+export const PublicationBadge = ({ platform, status }: { platform: string; status: string }) => (
+  <Badge variant={publicationTone(status)}>
+    {PLATFORM_LABELS[platform] ?? platform} {PUBLICATION_STATUS_LABELS[status] ?? status}
+  </Badge>
+)
+
+/** Where a video came from: a generated one names its post, an upload says so. */
+export const VideoOriginBadge = ({ postId }: { postId: number | null }) => (
+  <Badge variant="outline">{postId === null ? '직접 올림' : `글 #${postId}`}</Badge>
+)

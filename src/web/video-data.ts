@@ -1,48 +1,23 @@
 import { query } from '../db/pool.ts'
 import { fullCaption, loadVideo } from '../video/store.ts'
-import {
-  LIMITS,
-  type Platform,
-  type PublicationStatus,
-  type Scene,
-  type VideoOrigin,
-  type VideoStatus,
-  YOUTUBE_TITLE_LIMIT,
-} from '../video/types.ts'
+import { LIMITS, YOUTUBE_TITLE_LIMIT } from '../video/types.ts'
 import { uploadMaxBytes } from '../video/upload.ts'
+import type {
+  VideoDetailData,
+  VideoListFilter,
+  VideoListRow,
+  VideoPublicationDetail,
+  VideoPublicationSummary,
+} from './video-types.ts'
 
-// Read side of the video pages (docs/plans/video-upload.md 6-7). Shapes are the contract in
-// api-types.ts; dates become ISO strings there.
-
-export type VideoListFilter = 'active' | 'all'
+// Read side of the video pages (docs/plans/video-upload.md 6-7). The shapes live in
+// video-types.ts (the contract in api-types.ts); dates become ISO strings there.
 
 const ACTIVE = `v.status in ('UPLOADING', 'SCRIPTING', 'RENDERING', 'PENDING_REVIEW', 'APPROVED')
   or v.updated_at > now() - interval '7 days'`
 
 export const parseVideoFilter = (raw: string | null): VideoListFilter =>
   raw === 'all' ? 'all' : 'active'
-
-export type VideoPublicationSummary = {
-  id: number
-  platform: Platform
-  status: PublicationStatus
-  scheduled_at: Date
-  published_at: Date | null
-}
-
-export type VideoListRow = {
-  id: number
-  origin: VideoOrigin
-  post_id: number | null
-  status: VideoStatus
-  title: string | null
-  duration_ms: number | null
-  width: number | null
-  height: number | null
-  created_at: Date
-  updated_at: Date
-  publications: VideoPublicationSummary[]
-}
 
 export async function loadVideoList(filter: VideoListFilter, limit = 100): Promise<VideoListRow[]> {
   const rows = await query<Omit<VideoListRow, 'publications'> & { publications: unknown }>(
@@ -73,52 +48,6 @@ export async function loadVideoList(filter: VideoListFilter, limit = 100): Promi
       published_at: p.published_at ? new Date(p.published_at) : null,
     })),
   }))
-}
-
-export type VideoPublicationDetail = VideoPublicationSummary & {
-  attempts: number
-  /** The latest attempt: the guard of retry and cancel. */
-  claim_seq: number
-  permalink: string | null
-  platform_media_id: string | null
-  last_error: string | null
-  error_kind: string | null
-}
-
-export type VideoDetailData = {
-  video: {
-    id: number
-    origin: VideoOrigin
-    post_id: number | null
-    status: VideoStatus
-    revision: number
-    title: string | null
-    caption: string | null
-    hashtags: string[]
-    source_url: string | null
-    scenes: Scene[] | null
-    /** The caption as published: caption + source line + hashtags. */
-    full_caption: string
-    video_url: string | null
-    duration_ms: number | null
-    size_bytes: number | null
-    width: number | null
-    height: number | null
-    original_name: string | null
-    last_error: string | null
-    created_at: Date
-    updated_at: Date
-    published_at: Date | null
-  }
-  post: { id: number; text: string } | null
-  publications: VideoPublicationDetail[]
-  limits: {
-    title: number
-    caption: number
-    hashtags: number
-    uploadMaxBytes: number
-    uploadTypes: string[]
-  }
 }
 
 /** Accepted request types of the file route. */

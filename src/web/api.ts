@@ -16,12 +16,8 @@ import {
   parsePostLimit,
   type RevivableData,
 } from './data.ts'
-import {
-  parseVideoFilter,
-  type VideoDetailData,
-  type VideoListFilter,
-  type VideoListRow,
-} from './video-data.ts'
+import { parseVideoFilter } from './video-data.ts'
+import type { VideoDetailData, VideoListFilter, VideoListRow } from './video-types.ts'
 
 /** Data access of the JSON API; the server wires the DB loaders, tests pass fakes. */
 export type ApiLoaders = {

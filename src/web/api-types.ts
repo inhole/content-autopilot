@@ -12,7 +12,7 @@ import type {
 } from '../campaigns/types.ts'
 import type { VideoStatus } from '../video/types.ts'
 import type { CampaignListRow, OverviewData, PostRow } from './data.ts'
-import type { VideoDetailData, VideoListFilter, VideoListRow } from './video-data.ts'
+import type { VideoDetailData, VideoListFilter, VideoListRow } from './video-types.ts'
 
 /** `Date` → ISO string, recursively; everything else as is. */
 export type Jsonify<T> = T extends Date

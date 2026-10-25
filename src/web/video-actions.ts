@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { VideoActionOutcome, VideoActions } from '../video/actions.ts'
 import type { PublicationActionName, VideoActionName } from './api-types.ts'
-import type { VideoDetailData } from './video-data.ts'
+import type { VideoDetailData } from './video-types.ts'
 
 /**
  * POST /api/videos, /api/videos/:id/<action> and /api/publications/:id/<action>

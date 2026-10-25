@@ -97,3 +97,38 @@ export type OpsJob = OpsResponse['jobs'][number]
 export type OpsSettings = OpsResponse['settings']
 export type OpsSchedule = OpsResponse['schedule']
 export type OpsProfile = NonNullable<OpsResponse['profile']>
+
+// Videos (docs/plans/video-upload.md): generated short videos and owner uploads.
+import type {
+  PublicationActionName,
+  PublicationActionRequests,
+  VideoActionConflict,
+  VideoActionName,
+  VideoActionRequests,
+  VideoActionResponse,
+  VideoCreateRequest,
+  VideoCreateResponse,
+  VideoDetailResponse,
+  VideoFileConflict,
+  VideoFileResponse,
+  VideoListResponse,
+} from '../../../src/web/api-types.ts'
+
+export type {
+  PublicationActionName,
+  PublicationActionRequests,
+  VideoActionConflict,
+  VideoActionName,
+  VideoActionRequests,
+  VideoActionResponse,
+  VideoCreateRequest,
+  VideoCreateResponse,
+  VideoDetailResponse,
+  VideoFileConflict,
+  VideoFileResponse,
+  VideoListResponse,
+}
+
+export type VideoRow = VideoListResponse['rows'][number]
+export type VideoDetail = VideoDetailResponse['video']
+export type VideoPublication = VideoDetailResponse['publications'][number]

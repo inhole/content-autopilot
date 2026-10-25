@@ -17,6 +17,9 @@ import { OpsPage } from '@/pages/ops.tsx'
 import { OverviewPage } from '@/pages/overview.tsx'
 import { PostDetailPage, PostSheet } from '@/pages/post-detail.tsx'
 import { PostsPage } from '@/pages/posts.tsx'
+import { VideoDetailPage, VideoSheet } from '@/pages/video-detail.tsx'
+import { VideoUploadPage } from '@/pages/video-upload.tsx'
+import { VideosPage } from '@/pages/videos.tsx'
 
 // recharts is heavy: the insights page (and the charts) load only when opened.
 const InsightsPage = lazy(() =>
@@ -72,6 +75,9 @@ export function AppRoutes() {
             <Route path="campaigns/:id" element={<CampaignDetailPage />} />
             <Route path="posts" element={<PostsPage />} />
             <Route path="posts/:id" element={<PostDetailPage />} />
+            <Route path="videos" element={<VideosPage />} />
+            <Route path="videos/new" element={<VideoUploadPage />} />
+            <Route path="videos/:id" element={<VideoDetailPage />} />
             <Route path="expired" element={<ExpiredPage />} />
             <Route path="ops" element={<OpsPage />} />
             <Route
@@ -99,6 +105,7 @@ export function AppRoutes() {
         <Routes>
           <Route path="campaigns/:id" element={<CampaignSheet />} />
           <Route path="posts/:id" element={<PostSheet />} />
+          <Route path="videos/:id" element={<VideoSheet />} />
         </Routes>
       )}
     </>

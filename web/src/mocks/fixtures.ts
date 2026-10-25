@@ -18,6 +18,11 @@ import type {
   PostListResponse,
   QueuedResponse,
   RevivableResponse,
+  VideoCreateRequest,
+  VideoCreateResponse,
+  VideoDetailResponse,
+  VideoFileResponse,
+  VideoListResponse,
 } from '../lib/types.ts'
 
 const hours = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString()
@@ -928,4 +933,257 @@ export function mockResetSchedule(req: OpsScheduleRequests['reset']) {
   if (req.revision !== mockScheduleState.revision) return 'stale' as const
   mockScheduleState = { ...envSchedule(), source: 'env', revision: req.revision + 1 }
   return { ok: true as const, schedule: mockScheduleState, applied: true }
+}
+
+// Videos (docs/plans/video-upload.md): a small mock store the video pages read and change.
+
+const VIDEO_LIMITS: VideoDetailResponse['limits'] = {
+  title: 100,
+  caption: 2200,
+  hashtags: 5,
+  uploadMaxBytes: 50 * 1024 * 1024,
+  uploadTypes: ['video/mp4', 'video/quicktime'],
+}
+
+type MockVideo = VideoDetailResponse
+
+function mockVideoBase(
+  id: number,
+  over: Partial<MockVideo['video']>,
+  publications: MockVideo['publications'] = [],
+): MockVideo {
+  const video: MockVideo['video'] = {
+    id,
+    origin: 'upload',
+    post_id: null,
+    status: 'PENDING_REVIEW',
+    revision: 1,
+    title: '직접 찍은 데모 영상',
+    caption: '새 기능을 직접 써 봤어.',
+    hashtags: ['개발', 'AI'],
+    source_url: null,
+    scenes: null,
+    full_caption: '',
+    video_url: null,
+    duration_ms: 24_000,
+    size_bytes: 12_300_000,
+    width: 1080,
+    height: 1920,
+    original_name: 'demo.mp4',
+    last_error: null,
+    created_at: hours(-3),
+    updated_at: hours(-1),
+    published_at: null,
+    ...over,
+  }
+  video.full_caption = [
+    video.caption ?? '',
+    video.source_url ? `출처: ${video.source_url}` : '',
+    video.hashtags.map((t) => `#${t}`).join(' '),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return { video, post: null, publications, limits: VIDEO_LIMITS }
+}
+
+const buildMockVideos = () =>
+  new Map<number, MockVideo>(
+    [
+      mockVideoBase(3, {}),
+      mockVideoBase(
+        2,
+        {
+          origin: 'generated',
+          post_id: 42,
+          status: 'APPROVED',
+          revision: 4,
+          title: 'Bun 1.2가 바꾼 것',
+          caption: 'Bun 1.2에서 달라진 점 정리.',
+          source_url: 'https://bun.sh/blog/bun-v1.2',
+          scenes: [
+            { heading: 'Bun 1.2', narration: '이번 버전에서 꽤 큰 변화가 있었어.' },
+            { heading: 'S3 내장', narration: 'S3 클라이언트가 기본으로 들어왔어.' },
+            { heading: '내 생각', narration: '작은 서비스엔 의존성이 확 줄겠어.' },
+          ],
+          original_name: null,
+        },
+        [
+          {
+            id: 21,
+            platform: 'REELS',
+            status: 'SCHEDULED',
+            scheduled_at: hours(8),
+            published_at: null,
+            attempts: 0,
+            claim_seq: 0,
+            permalink: null,
+            platform_media_id: null,
+            last_error: null,
+            error_kind: null,
+          },
+          {
+            id: 22,
+            platform: 'SHORTS',
+            status: 'FAILED',
+            scheduled_at: hours(-16),
+            published_at: null,
+            attempts: 3,
+            claim_seq: 3,
+            permalink: null,
+            platform_media_id: null,
+            last_error: '업로드 세션이 만료됐어요',
+            error_kind: 'session',
+          },
+        ],
+      ),
+      mockVideoBase(1, {
+        status: 'PUBLISHED',
+        title: '지난주 데모',
+        published_at: days(-2),
+        updated_at: days(-2),
+      }),
+    ].map((v) => [v.video.id, v]),
+  )
+
+let mockVideos = buildMockVideos()
+let nextVideoId = 10
+
+export const resetMockVideos = () => {
+  mockVideos = buildMockVideos()
+  nextVideoId = 10
+}
+
+export const mockVideoDetail = (id: number): MockVideo | null => {
+  const v = mockVideos.get(id)
+  return v ? structuredClone(v) : null
+}
+
+export const mockVideoList = (status: string | null): VideoListResponse => {
+  const filter = status === 'all' ? 'all' : 'active'
+  return {
+    filter,
+    rows: [...mockVideos.values()]
+      .filter((v) => filter === 'all' || v.video.status !== 'PUBLISHED')
+      .sort((a, b) => b.video.id - a.video.id)
+      .map(({ video: v, publications }) => ({
+        id: v.id,
+        origin: v.origin,
+        post_id: v.post_id,
+        status: v.status,
+        title: v.title,
+        duration_ms: v.duration_ms,
+        width: v.width,
+        height: v.height,
+        created_at: v.created_at,
+        updated_at: v.updated_at,
+        publications: publications.map((p) => ({
+          id: p.id,
+          platform: p.platform,
+          status: p.status,
+          scheduled_at: p.scheduled_at,
+          published_at: p.published_at,
+        })),
+      })),
+  }
+}
+
+export function mockCreateVideo(body: VideoCreateRequest): VideoCreateResponse {
+  const id = nextVideoId++
+  const v = mockVideoBase(id, {
+    status: 'UPLOADING',
+    title: body.title,
+    caption: body.caption,
+    hashtags: body.hashtags,
+    source_url: body.sourceUrl || null,
+    original_name: body.originalName ?? null,
+    duration_ms: null,
+    size_bytes: null,
+    width: null,
+    height: null,
+  })
+  mockVideos.set(id, v)
+  return { ok: true, id, revision: 1 }
+}
+
+export function mockUploadFile(id: number, file: File, approve: boolean): VideoFileResponse {
+  const v = mockVideos.get(id)
+  if (!v || v.video.status !== 'UPLOADING') throw new Error('이미 파일이 들어갔거나 만료된 영상이에요')
+  Object.assign(v.video, {
+    status: approve ? 'APPROVED' : 'PENDING_REVIEW',
+    size_bytes: file.size,
+    duration_ms: 20_000,
+    width: 1080,
+    height: 1920,
+  })
+  return {
+    ok: true,
+    approval: approve ? { ok: true, at: null, platforms: [] } : null,
+    telegramSynced: true,
+    detail: structuredClone(v),
+  }
+}
+
+/** Applies a video or publication action to the mock store; 'stale' when the guard is off. */
+export function mockVideoAction(
+  kind: 'videos' | 'publications',
+  id: number,
+  action: string,
+  body: unknown,
+): MockVideo | 'stale' | 'not_found' {
+  const b = (body ?? {}) as Record<string, unknown>
+  if (kind === 'publications') {
+    const v = [...mockVideos.values()].find((x) => x.publications.some((p) => p.id === id))
+    const p = v?.publications.find((x) => x.id === id)
+    if (!v || !p) return 'not_found'
+    if (action === 'publishNow') {
+      if (p.status !== 'SCHEDULED' || p.scheduled_at !== b.scheduledAt) return 'stale'
+      p.scheduled_at = new Date().toISOString()
+    } else {
+      if (p.status !== 'FAILED' || p.claim_seq !== b.claimSeq) return 'stale'
+      if (action === 'retry') {
+        Object.assign(p, { status: 'SCHEDULED', scheduled_at: days(1), attempts: 0 })
+      } else {
+        p.status = 'CANCELLED'
+      }
+    }
+    return structuredClone(v)
+  }
+  const v = mockVideos.get(id)
+  if (!v) return 'not_found'
+  const video = v.video
+  if (typeof b.revision === 'number' && b.revision !== video.revision) return 'stale'
+  switch (action) {
+    case 'approve':
+      if (video.status !== 'PENDING_REVIEW') return 'stale'
+      video.status = 'APPROVED'
+      break
+    case 'unapprove':
+      if (video.status !== 'APPROVED') return 'stale'
+      Object.assign(video, { status: 'PENDING_REVIEW', revision: video.revision + 1 })
+      v.publications = []
+      break
+    case 'reject':
+      if (video.status !== 'PENDING_REVIEW') return 'stale'
+      video.status = 'REJECTED'
+      break
+    case 'edit':
+      if (video.status !== 'PENDING_REVIEW') return 'stale'
+      Object.assign(video, {
+        title: b.title,
+        caption: b.caption,
+        hashtags: b.hashtags,
+        revision: video.revision + 1,
+      })
+      break
+    case 'rescript':
+      Object.assign(video, { status: 'SCRIPTING', revision: video.revision + 1 })
+      break
+    case 'manualDone':
+      if (video.status !== 'APPROVED') return 'stale'
+      Object.assign(video, { status: 'PUBLISHED', published_at: new Date().toISOString() })
+      break
+    default:
+      return 'not_found'
+  }
+  return structuredClone(v)
 }
