@@ -12,19 +12,34 @@ import { chars, disclosureReserve, MIN_BODY_MAX } from '../campaigns/review-draf
 import { config } from '../config.ts'
 import { type Query, query, transaction } from '../db/pool.ts'
 import { INSIGHTS_CRON, INSIGHTS_QUEUE, Q } from '../jobs.ts'
+import {
+  envRuntimeSettings,
+  loadRuntimeSettings,
+  parseDailyCron,
+  type RuntimeSettings,
+  resetRuntimeSettings,
+  saveRuntimeSettings,
+} from '../settings.ts'
 import type {
   OpsJobName,
   OpsJobState,
   OpsProfileFields,
   OpsProfileResponse,
   OpsResponse,
+  OpsScheduleFields,
+  OpsScheduleResponse,
+  OpsScheduleState,
+  OpsScheduleView,
 } from './api-types.ts'
 
 /** Jobs the operations page can start by hand: name -> pg-boss queue and schedule. */
-export const OPS_JOBS: Record<OpsJobName, { queue: string; cron: () => string | null }> = {
-  'threads-daily': { queue: Q.daily, cron: () => config.COLLECT_CRON },
-  'gift-collect': { queue: CQ.collect, cron: () => config.GIFT_COLLECT_CRON },
-  'musinsa-collect': { queue: CQ.musinsaCollect, cron: () => config.MUSINSA_COLLECT_CRON },
+export const OPS_JOBS: Record<
+  OpsJobName,
+  { queue: string; cron: (s: RuntimeSettings) => string | null }
+> = {
+  'threads-daily': { queue: Q.daily, cron: (s) => s.crons.threadsCollect },
+  'gift-collect': { queue: CQ.collect, cron: (s) => s.crons.giftCollect },
+  'musinsa-collect': { queue: CQ.musinsaCollect, cron: (s) => s.crons.musinsaCollect },
   'campaign-maintenance': { queue: CQ.maintenance, cron: () => MAINTENANCE_CRON },
   'collect-insights': { queue: INSIGHTS_QUEUE, cron: () => INSIGHTS_CRON },
 }
@@ -138,6 +153,62 @@ export async function loadProfileForOps(
   }
 }
 
+// ---------- schedule editing ----------
+
+const cronView = (cron: string) => ({ cron, daily: parseDailyCron(cron) })
+
+const viewOf = (s: RuntimeSettings): OpsScheduleView => ({
+  threadsCollect: cronView(s.crons.threadsCollect),
+  giftCollect: cronView(s.crons.giftCollect),
+  musinsaCollect: cronView(s.crons.musinsaCollect),
+  dailyPostCount: s.dailyPostCount,
+  publishSlots: s.publishSlots,
+  campaignDailyMax: s.campaignDailyMax,
+})
+
+/** The schedule block of GET /api/ops: values in effect, the env defaults, source and revision. */
+export function scheduleState(effective: RuntimeSettings): OpsScheduleState {
+  return {
+    current: viewOf(effective),
+    defaults: viewOf(envRuntimeSettings()),
+    source: effective.source,
+    revision: effective.revision,
+  }
+}
+
+export type ScheduleEdit = {
+  /** Saves an already validated schedule; null when `revision` is stale. */
+  save(schedule: OpsScheduleFields, revision: number): Promise<OpsScheduleResponse | null>
+  /** Drops the saved copy; null when `revision` is stale. */
+  reset(revision: number): Promise<OpsScheduleResponse | null>
+}
+
+/**
+ * Saves or resets in the database, then re-registers the collect schedules through `apply`
+ * (applySchedules, which reads the settings in effect itself). A failed re-registration is logged
+ * and reported as `applied: false`; the save stays, and the next worker start registers it.
+ */
+export function createScheduleEdit(apply: () => Promise<void>): ScheduleEdit {
+  const finish = async (): Promise<OpsScheduleResponse> => {
+    let applied = true
+    try {
+      await apply()
+    } catch (err) {
+      applied = false
+      console.error('[ops] schedules could not be re-registered:', (err as Error).message)
+    }
+    return { ok: true, schedule: scheduleState(await loadRuntimeSettings()), applied }
+  }
+  return {
+    async save(schedule, revision) {
+      return (await saveRuntimeSettings(schedule, revision)) === null ? null : finish()
+    },
+    async reset(revision) {
+      return (await resetRuntimeSettings(revision)) ? finish() : null
+    },
+  }
+}
+
 // ---------- profile editing ----------
 
 const ABOUT_MAX = 500
@@ -244,13 +315,13 @@ export const dbProfileEdit: ProfileEdit = {
 }
 
 /** Read-only settings that shape the pipelines (no secrets). */
-export function opsSettings(): OpsResponse['settings'] {
+export function opsSettings(s: RuntimeSettings): OpsResponse['settings'] {
   return {
-    dailyPostCount: config.DAILY_POST_COUNT,
-    publishSlots: config.PUBLISH_SLOTS,
+    dailyPostCount: s.dailyPostCount,
+    publishSlots: s.publishSlots,
     threadChainEnabled: config.THREAD_CHAIN_ENABLED,
     threadsDryRun: config.THREADS_DRY_RUN,
-    campaignDailyMax: config.CAMPAIGN_DAILY_MAX,
+    campaignDailyMax: s.campaignDailyMax,
     campaignRankMode: config.CAMPAIGN_RANK_MODE,
     timeZone: config.TZ_NAME,
   }
@@ -260,10 +331,12 @@ export async function loadOps(
   deps: {
     runs?: (queues: string[]) => Promise<Map<string, QueueRun>>
     profile?: () => Promise<ProfileInEffect>
+    settings?: () => Promise<RuntimeSettings>
   } = {},
 ): Promise<OpsResponse> {
   const names = Object.keys(OPS_JOBS) as OpsJobName[]
   const runs = await (deps.runs ?? loadQueueRuns)(names.map((n) => OPS_JOBS[n].queue))
+  const effective = await (deps.settings ?? loadRuntimeSettings)()
   return {
     jobs: names.map((name) => {
       const { queue, cron } = OPS_JOBS[name]
@@ -271,7 +344,7 @@ export async function loadOps(
       return {
         name,
         queue,
-        cron: cron(),
+        cron: cron(effective),
         last: run?.last
           ? {
               state: run.last.state,
@@ -284,7 +357,8 @@ export async function loadOps(
         busy: run?.busy ?? false,
       }
     }),
-    settings: opsSettings(),
+    settings: opsSettings(effective),
+    schedule: scheduleState(effective),
     profile: await loadProfileForOps(deps.profile),
   }
 }

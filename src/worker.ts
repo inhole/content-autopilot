@@ -1,8 +1,13 @@
-import { enqueueReviewDraft, registerCampaignBots, registerCampaignJobs } from './campaigns/jobs.ts'
+import {
+  CQ,
+  enqueueReviewDraft,
+  registerCampaignBots,
+  registerCampaignJobs,
+} from './campaigns/jobs.ts'
 import { config } from './config.ts'
 import { migrate } from './db/migrate.ts'
 import { pool } from './db/pool.ts'
-import { createBoss, enqueueGenerate, enqueueRegeneration, registerJobs } from './jobs.ts'
+import { createBoss, enqueueGenerate, enqueueRegeneration, Q, registerJobs } from './jobs.ts'
 import { enqueueDigest, registerDigestBot, registerDigestJobs } from './pipeline/digest-jobs.ts'
 import { registerReviveBot } from './pipeline/revive-bot.ts'
 import {
@@ -12,6 +17,8 @@ import {
   sendWithKeyboard,
 } from './pipeline/revive-jobs.ts'
 import { createReviewer } from './review/telegram.ts'
+import { applySchedules } from './schedules.ts'
+import { loadRuntimeSettings } from './settings.ts'
 import { runOpsJob } from './web/ops.ts'
 import { startDashboard } from './web/server.ts'
 
@@ -87,11 +94,19 @@ const dashboard = await startDashboard(
     reviewer,
   },
   (name) => runOpsJob(name, { send: (queue) => boss.send(queue, null) }),
+  () =>
+    applySchedules(boss, {
+      threadsCollect: Q.daily,
+      giftCollect: CQ.collect,
+      musinsaCollect: CQ.musinsaCollect,
+    }),
 )
 
+const effective = await loadRuntimeSettings()
 console.log(
-  `[worker] started · collect "${config.COLLECT_CRON}" ${config.TZ_NAME} · slots ${config.PUBLISH_SLOTS.join(', ')}` +
-    ` · gift-collect "${config.GIFT_COLLECT_CRON}" · musinsa-collect "${config.MUSINSA_COLLECT_CRON}"` +
+  `[worker] started · collect "${effective.crons.threadsCollect}" ${config.TZ_NAME} · slots ${effective.publishSlots.join(', ')}` +
+    ` · gift-collect "${effective.crons.giftCollect}" · musinsa-collect "${effective.crons.musinsaCollect}"` +
+    ` · ${effective.dailyPostCount} posts/day · ${effective.campaignDailyMax} cards/source/day (${effective.source})` +
     (config.THREADS_DRY_RUN ? ' · THREADS DRY-RUN' : ''),
 )
 onSignals(async () => {

@@ -3,6 +3,7 @@ import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
+import { loadRuntimeSettings } from '../settings.ts'
 import { type CampaignProfile, loadCampaignProfile } from './profile.ts'
 import { type RankCandidate, type RankHistory, rankSystem, rankUser } from './prompts.ts'
 import {
@@ -254,11 +255,12 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   // Each source has its own daily quota and its own LLM batches.
   const history = config.CAMPAIGN_RANK_MODE === 'llm' ? await loadHistory() : null
   const doneToday = await countShortlistedToday(now)
+  const dailyMax = (await loadRuntimeSettings()).campaignDailyMax
   const shortlisted: number[] = []
   for (const source of [...new Set(candidates.map((c) => c.source))]) {
     const ofSource = candidates.filter((c) => c.source === source)
     // Quota used up: leave the rest COLLECTED instead of burning LLM calls.
-    const quota = remainingQuota(config.CAMPAIGN_DAILY_MAX, doneToday.get(source) ?? 0)
+    const quota = remainingQuota(dailyMax, doneToday.get(source) ?? 0)
     if (quota === 0) continue
     shortlisted.push(...(await rankSource(source, ofSource, quota, history, profile)))
   }
