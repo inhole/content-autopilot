@@ -13,6 +13,8 @@ import {
   type PostActions,
 } from '../pipeline/post-actions.ts'
 import { parseScheduleInput } from '../settings.ts'
+import { createVideoActions, type VideoActionDeps, type VideoActions } from '../video/actions.ts'
+import { UploadBusyError, UploadTooLargeError, uploadMaxBytes } from '../video/upload.ts'
 import { type ApiLoaders, handleApi } from './api.ts'
 import type {
   AuthSessionResponse,
@@ -72,6 +74,15 @@ import {
   runPostCollectionAction,
 } from './post-actions.ts'
 import { defaultDistDir, hasBuild, lookupStatic } from './static.ts'
+import {
+  matchVideoRoute,
+  runPublicationAction,
+  runVideoAction,
+  runVideoCreate,
+  type VideoActionResult,
+  type VideoRoute,
+} from './video-actions.ts'
+import { loadVideoDetail, loadVideoList, UPLOAD_TYPES } from './video-data.ts'
 
 export type DashboardLoaders = ApiLoaders
 
@@ -99,6 +110,8 @@ export type DashboardDeps = {
   profileEdit: ProfileEdit
   /** Saves or resets the schedules and volumes and re-registers the cron jobs (ops.ts). */
   scheduleEdit: ScheduleEdit
+  /** Video operations and owner uploads (video/actions.ts); tests pass fakes. */
+  videoActions: VideoActions
   /** Sends a text to the owner's Telegram chat; rejects when it cannot. */
   notify: (text: string) => Promise<void>
   now?: () => Date
@@ -115,6 +128,8 @@ const dbLoaders: DashboardLoaders = {
   post: loadPostDetail,
   revivable: loadRevivableList,
   ops: () => loadOps(),
+  videos: (filter) => loadVideoList(filter),
+  video: loadVideoDetail,
 }
 
 const dbAuth: AdminAuth = {
@@ -137,8 +152,18 @@ export const IMAGE_HOSTS = [
 ] as const
 const IMG_HOSTS = IMAGE_HOSTS.map((h) => `https://${h}`).join(' ')
 
+/** Where the video player may load from: the dashboard and, when set, the Supabase project. */
+function mediaHosts(): string {
+  if (!config.SUPABASE_URL) return "'self'"
+  try {
+    return `'self' ${new URL(config.SUPABASE_URL).origin}`
+  } catch {
+    return "'self'"
+  }
+}
+
 /** CSP of the React app: same-origin scripts only. */
-export const APP_CSP = `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+export const APP_CSP = `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; media-src ${mediaHosts()}; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
 const API_CSP = "default-src 'none'; frame-ancestors 'none'"
 
 const SECURITY_HEADERS = {
@@ -204,13 +229,19 @@ export function clientIp(req: http.IncomingMessage): string | null {
   return (first || req.socket.remoteAddress) ?? null
 }
 
+const JSON_TYPES = ['application/json']
+
 /**
  * A state-changing request must come from the dashboard itself: a JSON body (cross-site forms
  * cannot send one without a CORS preflight, which is never answered), an Origin of this host,
  * and, when the browser sends it, Sec-Fetch-Site same-origin.
  */
-export function isSameOriginWrite(req: http.IncomingMessage): boolean {
-  if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) return false
+export function isSameOriginWrite(
+  req: http.IncomingMessage,
+  types: readonly string[] = JSON_TYPES,
+): boolean {
+  const type = req.headers['content-type']?.toLowerCase() ?? ''
+  if (!types.some((t) => type.startsWith(t))) return false
   const site = req.headers['sec-fetch-site']
   if (site !== undefined && site !== 'same-origin') return false
   const origin = req.headers.origin
@@ -321,8 +352,9 @@ export function createRequestHandler(deps: DashboardDeps) {
   async function authorizeWrite(
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    types: readonly string[] = JSON_TYPES,
   ): Promise<{ session: ActiveSession; ip: string | null } | null> {
-    if (!isSameOriginWrite(req)) {
+    if (!isSameOriginWrite(req, types)) {
       sendJson(req, res, 403, { error: '허용되지 않은 요청이에요' })
       return null
     }
@@ -403,6 +435,182 @@ export function createRequestHandler(deps: DashboardDeps) {
       sendJson(req, res, r.status, r.body)
     } catch (err) {
       await auth.record({ ...audit, result: 'error' }).catch(() => {})
+      throw err
+    }
+  }
+
+  const videoCtx = {
+    actions: deps.videoActions,
+    loadDetail: deps.loaders.video,
+    videoOfPublication: (id: number) => deps.videoActions.videoOfPublication(id),
+  }
+
+  /** POST /api/videos, /api/videos/:id/<action>, /api/publications/:id/<action>. */
+  async function handleVideoWrite(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    route: Exclude<VideoRoute, { kind: 'file' }>,
+  ): Promise<void> {
+    const authorized = await authorizeWrite(req, res)
+    if (!authorized) return
+    const { session, ip } = authorized
+    const audit = {
+      sessionId: session.id,
+      action:
+        route.kind === 'create'
+          ? 'video.create'
+          : route.kind === 'video'
+            ? `video.${route.action}`
+            : `publication.${route.action}`,
+      target:
+        route.kind === 'create' || route.id === null
+          ? null
+          : `${route.kind === 'video' ? 'video' : 'publication'}:${route.id}`,
+      ip,
+    }
+    let body: unknown
+    try {
+      body = await readJson(req, ACTION_BODY_LIMIT)
+    } catch (err) {
+      if (!(err instanceof BadBody)) throw err
+      await auth.record({ ...audit, result: 'invalid' })
+      sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+      return
+    }
+    try {
+      let r: VideoActionResult
+      if (route.kind === 'create') r = await runVideoCreate(deps.videoActions, body)
+      else if (route.kind === 'video')
+        r = await runVideoAction(videoCtx, route.action, route.id, body)
+      else r = await runPublicationAction(videoCtx, route.action, route.id, body)
+      await auth.record({ ...audit, result: r.result, detail: r.detail ?? null })
+      sendJson(req, res, r.status, r.body)
+    } catch (err) {
+      await auth.record({ ...audit, result: 'error' }).catch(() => {})
+      throw err
+    }
+  }
+
+  /**
+   * POST /api/videos/:id/file: the body is the video itself, streamed to disk by the upload step
+   * (docs/plans/video-upload.md 5). A body that is not read (refused before, or the row is not
+   * UPLOADING) closes the connection after the answer instead of draining up to 50MB.
+   */
+  async function handleVideoFile(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    id: number | null,
+    approve: boolean,
+  ): Promise<void> {
+    const closeAfterAnswer = () => {
+      if (res.writableFinished) req.destroy()
+      else res.once('finish', () => req.destroy())
+    }
+    const refuse = (status: number, body: unknown) => {
+      sendJson(req, res, status, body, { Connection: 'close' })
+      closeAfterAnswer()
+    }
+    // An authorized request within the size limit whose body was not read (the row is taken, or
+    // another upload runs): read the rest and drop it, so the browser gets the answer instead of
+    // a reset connection mid-upload.
+    const answerAfterDrain = (status: number, body: unknown) =>
+      new Promise<void>((resolve) => {
+        const answer = () => {
+          if (!res.headersSent) sendJson(req, res, status, body, { Connection: 'close' })
+          resolve()
+        }
+        if (req.readableEnded) answer()
+        else req.once('end', answer).once('error', answer).once('close', answer).resume()
+      })
+    const type = req.headers['content-type']?.toLowerCase() ?? ''
+    if (!UPLOAD_TYPES.some((t) => type.startsWith(t))) {
+      refuse(415, { error: 'mp4나 mov 파일만 올릴 수 있어요' })
+      return
+    }
+    const authorized = await authorizeWrite(req, res, UPLOAD_TYPES)
+    if (!authorized) {
+      closeAfterAnswer()
+      return
+    }
+    const audit = {
+      sessionId: authorized.session.id,
+      action: 'video.file',
+      target: id === null ? null : `video:${id}`,
+      ip: authorized.ip,
+    }
+    if (id === null) {
+      refuse(404, { error: 'not found' })
+      return
+    }
+    const length = Number(req.headers['content-length'])
+    if (!Number.isInteger(length) || length <= 0) {
+      await auth.record({ ...audit, result: 'invalid', detail: { reason: 'length' } })
+      refuse(411, { error: '파일 크기를 알 수 없어요' })
+      return
+    }
+    const detail = { sizeBytes: length, approve }
+    if (length > uploadMaxBytes()) {
+      await auth.record({ ...audit, result: 'invalid', detail: { ...detail, reason: 'too_large' } })
+      refuse(413, { error: `${Math.round(uploadMaxBytes() / 1024 / 1024)}MB를 넘어요` })
+      return
+    }
+    try {
+      const out = await deps.videoActions.receiveFile(id, req, { approve })
+      if (out.kind === 'not_uploading') {
+        await auth.record({ ...audit, result: 'stale', detail: { ...detail, status: out.status } })
+        await answerAfterDrain(409, {
+          error: '이미 파일이 들어갔거나 만료된 영상이에요',
+          status: out.status,
+        })
+        return
+      }
+      if (out.kind === 'rejected') {
+        await auth.record({
+          ...audit,
+          result: 'invalid',
+          detail: { ...detail, reason: out.message },
+        })
+        sendJson(req, res, 400, { error: out.message })
+        return
+      }
+      const approval = out.approval
+        ? out.approval.ok
+          ? {
+              ok: true,
+              at: out.approval.approval.at?.toISOString() ?? null,
+              platforms: out.approval.approval.platforms,
+            }
+          : { ok: false, error: out.approval.error }
+        : null
+      await auth.record({
+        ...audit,
+        result: 'ok',
+        detail: { ...detail, approved: approval?.ok ?? null, telegramSynced: out.telegramSynced },
+      })
+      sendJson(req, res, 200, {
+        ok: true,
+        approval,
+        telegramSynced: out.telegramSynced,
+        detail: await deps.loaders.video(id),
+      })
+    } catch (err) {
+      if (err instanceof UploadBusyError) {
+        await auth.record({ ...audit, result: 'busy', detail })
+        await answerAfterDrain(429, {
+          error: '다른 영상을 올리는 중이에요. 잠시 뒤에 다시 해 주세요',
+        })
+        return
+      }
+      if (err instanceof UploadTooLargeError) {
+        await auth.record({
+          ...audit,
+          result: 'invalid',
+          detail: { ...detail, reason: 'too_large' },
+        })
+        refuse(413, { error: `${Math.round(uploadMaxBytes() / 1024 / 1024)}MB를 넘어요` })
+        return
+      }
+      await auth.record({ ...audit, result: 'error', detail }).catch(() => {})
       throw err
     }
   }
@@ -785,6 +993,30 @@ export function createRequestHandler(deps: DashboardDeps) {
       }
       return
     }
+    // `/api/videos` is also the list (GET): only its POST is the create route.
+    const videoRoute = isApi ? matchVideoRoute(path) : null
+    if (videoRoute && !(videoRoute.kind === 'create' && isRead)) {
+      if (req.method !== 'POST') {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
+        return
+      }
+      try {
+        if (videoRoute.kind === 'file') {
+          await handleVideoFile(req, res, videoRoute.id, url.searchParams.get('approve') === '1')
+        } else {
+          await handleVideoWrite(req, res, videoRoute)
+        }
+      } catch (err) {
+        if (err instanceof BadBody) {
+          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
+          return
+        }
+        console.error('dashboard video action failed:', err)
+        if (!res.headersSent) sendJson(req, res, 500, { error: 'internal error' })
+        else res.end()
+      }
+      return
+    }
     const postRoute = isApi ? matchPostActionPath(path) : null
     const collectionRoute = isApi ? matchPostCollectionPath(path) : null
     if (postRoute || collectionRoute) {
@@ -915,6 +1147,7 @@ export async function startDashboard(
   postDeps: PostActionDeps,
   runOps: DashboardDeps['runOps'],
   applyNow: () => Promise<void>,
+  videoDeps: VideoActionDeps,
 ): Promise<{ close(): Promise<void> } | null> {
   if (!dashboardEnabled()) {
     console.log('dashboard disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are needed to log in')
@@ -928,6 +1161,7 @@ export async function startDashboard(
     runOps,
     profileEdit: dbProfileEdit,
     scheduleEdit: createScheduleEdit(applyNow),
+    videoActions: createVideoActions(videoDeps),
     notify: notifyOwner,
   })
   const port = config.PORT ?? 8080

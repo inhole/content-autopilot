@@ -1,7 +1,12 @@
-import { readdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
+import ffmpegPath from 'ffmpeg-static'
 import { describe, expect, it } from 'vitest'
 import { query } from '../../src/db/pool.ts'
+import { createVideoActions } from '../../src/video/actions.ts'
 import {
   approveVideo,
   cancelPublication,
@@ -12,6 +17,7 @@ import { reclaimUploadAttempts } from '../../src/video/cleanup.ts'
 import { videosThisWeek } from '../../src/video/pick.ts'
 import { type UploadInfo, UploadRejected } from '../../src/video/probe.ts'
 import { publishPublication } from '../../src/video/publish.ts'
+import { runFfmpeg } from '../../src/video/render.ts'
 import {
   applyEdit,
   applyMetaEdit,
@@ -31,6 +37,11 @@ import {
   UploadBusyError,
   UploadTooLargeError,
 } from '../../src/video/upload.ts'
+import { createDashboardServer } from '../../src/web/server.ts'
+import { loadVideoDetail, loadVideoList } from '../../src/web/video-data.ts'
+import { fakeActions } from '../fake-actions.ts'
+import { CSRF, fakeAuth, SESSION_HEADERS } from '../fake-auth.ts'
+import { fakePostActions } from '../fake-post-actions.ts'
 import { FakeInstagram, FakeStorage } from '../fake-video.ts'
 
 const INFO: UploadInfo = {
@@ -494,4 +505,96 @@ describe('unapprove, cancel and guards', () => {
     expect((await loadVideo(a.id))?.status).toBe('PUBLISHED')
     expect(ig.containers.get(ig.created[0] ?? '')?.caption).toBe('직접 찍었어.\n\n#AI')
   })
+})
+
+describe.skipIf(!ffmpegPath)('file route end to end (real HTTP, ffmpeg, DB)', () => {
+  it('uploads a generated mp4 through the dashboard and approves it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ca-upload-e2e-'))
+    const storage = new FakeStorage()
+    const reviews: number[] = []
+    const { auth } = fakeAuth()
+    const server = createDashboardServer({
+      auth,
+      actions: fakeActions().actions,
+      postActions: fakePostActions().actions,
+      videoActions: createVideoActions({
+        storage,
+        enqueueReview: async (id) => {
+          reviews.push(id)
+        },
+        enqueueScript: async () => {},
+      }),
+      runOps: async () => true,
+      profileEdit: { save: async () => null, reset: async () => null },
+      scheduleEdit: { save: async () => null, reset: async () => null },
+      notify: async () => {},
+      webDist: null,
+      loaders: {
+        overview: async () => {
+          throw new Error('not used')
+        },
+        campaigns: async () => [],
+        campaign: async () => null,
+        posts: async () => [],
+        insights: async (days) => ({ days, daily: [], top: [] }),
+        post: async () => null,
+        revivable: async () => ({ rows: [] }),
+        ops: async () => {
+          throw new Error('not used')
+        },
+        videos: (f) => loadVideoList(f),
+        video: loadVideoDetail,
+      },
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const headers = {
+      ...SESSION_HEADERS,
+      origin: base,
+      'sec-fetch-site': 'same-origin',
+      'x-csrf-token': CSRF,
+    }
+    try {
+      const file = join(dir, 'clip.mp4')
+      await runFfmpeg([
+        ...['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=720x1280:rate=30'],
+        ...['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100'],
+        ...['-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k'],
+        file,
+      ])
+      const created = await fetch(`${base}/api/videos`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...META, sourceUrl: '', originalName: 'clip.mp4' }),
+      })
+      const { id } = (await created.json()) as { id: number }
+      const res = await fetch(`${base}/api/videos/${id}/file?approve=1`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'video/mp4' },
+        body: new Uint8Array(await readFile(file)),
+      })
+      const json = (await res.json()) as {
+        approval: { ok: boolean }
+        detail: { video: { status: string; width: number; height: number } }
+      }
+      expect(res.status).toBe(200)
+      // No automatic platforms in tests: approved for a manual upload.
+      expect(json.approval).toEqual({ ok: true, at: null, platforms: [] })
+      expect(json.detail.video).toMatchObject({ status: 'APPROVED', width: 720, height: 1280 })
+      expect(storage.files.size).toBe(1)
+      expect(reviews).toEqual([])
+      expect(await attempts()).toEqual([])
+      // The same row cannot take a second file.
+      const again = await fetch(`${base}/api/videos/${id}/file`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'video/mp4' },
+        body: new Uint8Array(await readFile(file)),
+      })
+      expect(again.status).toBe(409)
+    } finally {
+      server.closeAllConnections()
+      await new Promise((r) => server.close(r))
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })
