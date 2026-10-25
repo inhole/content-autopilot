@@ -1,5 +1,5 @@
 import { ChevronRightIcon, CalendarCheck2Icon, InboxIcon } from 'lucide-react'
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, type ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, QueryBoundary } from '@/components/query-state.tsx'
 import { SourceDot } from '@/components/status-badge.tsx'
@@ -10,6 +10,7 @@ import {
   formatAge,
   formatDday,
   formatNumber,
+  formatShortDateTime,
   formatTime,
   kstDay,
   SOURCES,
@@ -216,7 +217,8 @@ export function DeadlineList({ rows, now }: { rows: CampaignRow[]; now?: Date })
 type Scheduled = OverviewResponse['posts']['scheduled'][number]
 
 type Entry =
-  | { kind: 'post'; time: string; post: Scheduled }
+  /** `due`: its time has passed and it has not gone out yet (the sweep runs every 5 minutes). */
+  | { kind: 'post'; time: string; post: Scheduled; due: boolean }
   | { kind: 'empty'; time: string }
 
 type ScheduleDay = { day: string; label: string; entries: Entry[] }
@@ -231,7 +233,8 @@ const dayLabelFormat = new Intl.DateTimeFormat('ko-KR', {
 /**
  * Today and tomorrow (KST): every publish slot still ahead, filled by the post scheduled at that
  * time or marked empty, plus posts scheduled off-slot (publish-now). Slots already past today are
- * left out: whether they went out is the posts list's business. `later` counts posts after tomorrow.
+ * left out: whether they went out is the posts list's business. Posts whose time has passed (from
+ * any day) open today's list as `due` and never fill a slot. `later` counts posts after tomorrow.
  */
 export function buildSchedule(
   scheduled: Scheduled[],
@@ -250,22 +253,33 @@ export function buildSchedule(
     },
   ]
   let later = 0
+  const due: Entry[] = []
   for (const post of scheduled) {
     const at = new Date(post.scheduled_at)
+    const time = formatTime(at)
+    if (at.getTime() <= now.getTime()) {
+      due.push({ kind: 'post', time, post, due: true })
+      continue
+    }
     const day = kstDay(at)
-    // A due post not yet picked up (or publishing) belongs to today.
-    const target = day <= today ? days[0] : day === tomorrow ? days[1] : null
+    const target = day === today ? days[0] : day === tomorrow ? days[1] : null
     if (!target) later++
-    else target.entries.push({ kind: 'post', time: formatTime(at), post })
+    else target.entries.push({ kind: 'post', time, post, due: false })
   }
   for (const d of days) {
     for (const slot of slots ?? []) {
-      if (d.entries.some((e) => e.kind === 'post' && e.time === slot)) continue
+      if (d.entries.some((e) => e.time === slot)) continue
       if (d.day === today && slot <= nowTime) continue
       d.entries.push({ kind: 'empty', time: slot })
     }
     d.entries.sort((a, b) => a.time.localeCompare(b.time))
   }
+  due.sort((a, b) =>
+    a.kind === 'post' && b.kind === 'post'
+      ? Date.parse(a.post.scheduled_at) - Date.parse(b.post.scheduled_at)
+      : 0,
+  )
+  days[0]?.entries.unshift(...due)
   return { days, later }
 }
 
@@ -283,27 +297,43 @@ function NowMarker({ time }: { time: string }) {
   )
 }
 
-function EntryRow({ entry }: { entry: Entry }) {
+/** A due post more than this late is flagged: publish-due should have picked it up by now. */
+const LATE_MS = 15 * 60_000
+
+function EntryRow({ entry, now }: { entry: Entry; now: Date }) {
   const postLink = usePostLink()
+  const late =
+    entry.kind === 'post' &&
+    entry.due &&
+    now.getTime() - Date.parse(entry.post.scheduled_at) > LATE_MS
   return (
     <li className="grid grid-cols-[4.25rem_minmax(0,1fr)] border-b border-grid/50">
       <time
         className={cn(
           'border-r border-grid/50 py-2.5 font-display text-lg leading-6 font-semibold tabular-nums',
-          entry.kind === 'empty' && 'text-muted-foreground',
+          (entry.kind === 'empty' || entry.due) && 'text-muted-foreground',
         )}
       >
         {entry.time}
       </time>
       <div className="min-w-0 py-2.5 pl-3 text-sm leading-6">
         {entry.kind === 'post' ? (
-          <Link
-            {...postLink(entry.post.id)}
-            className="line-clamp-2 underline-offset-4 hover:underline"
-            title={entry.post.text}
-          >
-            {truncate(entry.post.text, 90)}
-          </Link>
+          <>
+            {entry.due && (
+              <span className={cn('block text-xs', late ? 'text-warning' : 'text-muted-foreground')}>
+                {late
+                  ? `${formatShortDateTime(entry.post.scheduled_at)} 예정, 아직 나가지 않았어요`
+                  : '발행 차례를 기다리는 중'}
+              </span>
+            )}
+            <Link
+              {...postLink(entry.post.id)}
+              className="line-clamp-2 underline-offset-4 hover:underline"
+              title={entry.post.text}
+            >
+              {truncate(entry.post.text, 90)}
+            </Link>
+          </>
         ) : (
           <span className="text-muted-foreground">비어 있음</span>
         )}
@@ -335,8 +365,8 @@ export function ScheduleBoard({
   return (
     <div className="flex flex-col gap-5 rounded-xl border bg-card px-4 pt-3 pb-4">
       {days.map((d, i) => {
-        // The now line sits after the entries already past (today only).
-        const cut = i === 0 ? d.entries.filter((e) => e.time <= nowTime).length : -1
+        // The now line sits after the due posts (today only); everything else is still ahead.
+        const cut = i === 0 ? d.entries.filter((e) => e.kind === 'post' && e.due).length : -1
         return (
           <div key={d.day} className="flex flex-col gap-1.5">
             <h3 className="text-xs font-medium text-muted-foreground">{d.label}</h3>
@@ -349,7 +379,7 @@ export function ScheduleBoard({
                 {d.entries.map((e, j) => (
                   <Fragment key={`${e.time}-${e.kind === 'post' ? e.post.id : 'slot'}`}>
                     {j === cut && <NowMarker time={nowTime} />}
-                    <EntryRow entry={e} />
+                    <EntryRow entry={e} now={now} />
                   </Fragment>
                 ))}
                 {cut === d.entries.length && <NowMarker time={nowTime} />}
@@ -548,7 +578,18 @@ const dateFormat = new Intl.DateTimeFormat('ko-KR', {
   weekday: 'long',
 })
 
+/** The current time, moved on every 30 s: polling alone does not re-render unchanged data. */
+function useNow(intervalMs = 30_000) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return now
+}
+
 export function OverviewPage() {
+  const now = useNow()
   const q = useOverview()
   const campaigns = useCampaigns('active', null)
   const videos = useVideos('active')
@@ -560,11 +601,12 @@ export function OverviewPage() {
     : 0
   return (
     <>
-      <PageHeader title="현황" description={dateFormat.format(new Date())} />
+      <PageHeader title="현황" description={dateFormat.format(now)} />
       <QueryBoundary query={q} skeleton={<OverviewSkeleton />}>
         {(data) => (
           <OverviewView
             data={data}
+            now={now}
             slots={Array.isArray(slots) ? slots : null}
             videosWaiting={videosWaiting}
             deadlines={
@@ -572,7 +614,7 @@ export function OverviewPage() {
                 query={campaigns}
                 skeleton={<Skeleton className="h-36 rounded-xl" role="status" aria-label="불러오는 중" />}
               >
-                {(d) => <DeadlineList rows={Array.isArray(d.rows) ? d.rows : []} />}
+                {(d) => <DeadlineList rows={Array.isArray(d.rows) ? d.rows : []} now={now} />}
               </QueryBoundary>
             }
           />

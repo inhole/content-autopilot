@@ -97,10 +97,14 @@ describe('buildSchedule', () => {
     expect(later).toBe(1)
   })
 
-  it('puts a due post that has not gone out yet on today', () => {
-    const { days } = buildSchedule([post(9, '2026-10-24T23:00:00Z')], null, now)
-    expect(days[0]?.entries).toHaveLength(1)
-    expect(days[1]?.entries).toHaveLength(0)
+  it('opens today with due posts, which never fill a slot', () => {
+    // Yesterday 19:00 (KST), not out yet: first in today's list, today's 19:00 stays empty.
+    const { days } = buildSchedule([post(9, '2026-10-24T10:00:00Z')], ['19:00'], now)
+    expect(days[0]?.entries).toEqual([
+      expect.objectContaining({ kind: 'post', time: '19:00', due: true }),
+      { kind: 'empty', time: '19:00' },
+    ])
+    expect(days[1]?.entries).toEqual([{ kind: 'empty', time: '19:00' }])
   })
 })
 
