@@ -53,6 +53,41 @@ function ExternalLink({ href, children }: { href: string | null; children: React
   )
 }
 
+/**
+ * How full the part is, drawn as manuscript-paper rows of 100 characters each; red once over.
+ */
+export function CharMeter({ count, limit }: { count: number; limit: number }) {
+  const rows = Math.max(1, Math.ceil(limit / 100))
+  const over = count > limit
+  return (
+    <span
+      role="meter"
+      aria-label="글자 수"
+      aria-valuemin={0}
+      aria-valuemax={limit}
+      aria-valuenow={Math.min(count, limit)}
+      aria-valuetext={`${count}/${limit}자`}
+      className="inline-flex h-2 w-24 gap-px"
+    >
+      {Array.from({ length: rows }, (_, i) => {
+        const fill = Math.min(1, Math.max(0, (count - i * 100) / Math.min(100, limit - i * 100)))
+        return (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed cells
+            key={i}
+            className="relative flex-1 overflow-hidden rounded-[2px] border border-grid/70"
+          >
+            <span
+              className={cn('absolute inset-y-0 left-0', over ? 'bg-destructive' : 'bg-primary/80')}
+              style={{ width: `${fill * 100}%` }}
+            />
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 /** `[2/3] 답글 2 · 123/500자`: one block per part, with status and the editor when under review. */
 function PartBlock({
   label,
@@ -83,6 +118,7 @@ function PartBlock({
     <div className="flex flex-col gap-2" data-testid={`part-${idx}`}>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{label}</span>
+        <CharMeter count={count} limit={limit} />
         <span className={cn('tabular-nums', count > limit && 'text-destructive')}>
           {count}/{limit}자
         </span>
@@ -202,7 +238,7 @@ export function PostDetailView({
     <div className="flex flex-col gap-4">
       <div className="flex min-w-0 flex-col items-start gap-2">
         {heading && (
-          <h1 className="text-xl font-semibold tracking-tight break-words">{titleOf(post)}</h1>
+          <h1 className="font-display text-2xl font-semibold tracking-tight break-words">{titleOf(post)}</h1>
         )}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <PostStatusBadge status={post.status} />

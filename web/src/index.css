@@ -2,79 +2,86 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Palette: manuscript paper (원고지). Cool paper, ink, and the green of the ruled grid as the one
+ * brand colour. Status colours (amber waiting, blue scheduled, red failed) carry meaning only.
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(0.985 0.002 260);
-  --foreground: oklch(0.21 0.01 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 260);
-  --primary: oklch(0.27 0.02 260);
-  --primary-foreground: oklch(0.985 0.002 260);
-  --secondary: oklch(0.96 0.004 260);
-  --secondary-foreground: oklch(0.27 0.02 260);
-  --muted: oklch(0.96 0.004 260);
-  --muted-foreground: oklch(0.5 0.015 260);
-  --accent: oklch(0.955 0.006 260);
-  --accent-foreground: oklch(0.27 0.02 260);
-  --destructive: oklch(0.55 0.21 27);
-  --success: oklch(0.48 0.12 155);
-  --warning: oklch(0.52 0.12 65);
-  --info: oklch(0.5 0.16 255);
-  --border: oklch(0.92 0.005 260);
-  --input: oklch(0.9 0.006 260);
-  --ring: oklch(0.65 0.04 260);
-  --chart-1: oklch(0.58 0.17 255);
-  --chart-2: oklch(0.62 0.13 175);
-  --chart-3: oklch(0.7 0.15 70);
-  --chart-4: oklch(0.6 0.17 305);
-  --chart-5: oklch(0.65 0.18 20);
-  --sidebar: oklch(0.975 0.003 260);
-  --sidebar-foreground: oklch(0.32 0.015 260);
-  --sidebar-primary: oklch(0.27 0.02 260);
-  --sidebar-primary-foreground: oklch(0.985 0.002 260);
-  --sidebar-accent: oklch(0.94 0.006 260);
-  --sidebar-accent-foreground: oklch(0.21 0.01 260);
-  --sidebar-border: oklch(0.92 0.005 260);
-  --sidebar-ring: oklch(0.65 0.04 260);
+  --radius: 0.5rem;
+  --background: oklch(0.972 0.004 150);
+  --foreground: oklch(0.23 0.012 160);
+  --card: oklch(0.995 0.002 150);
+  --card-foreground: oklch(0.23 0.012 160);
+  --popover: oklch(0.995 0.002 150);
+  --popover-foreground: oklch(0.23 0.012 160);
+  --primary: oklch(0.46 0.08 160);
+  --primary-foreground: oklch(0.985 0.006 150);
+  --secondary: oklch(0.945 0.007 150);
+  --secondary-foreground: oklch(0.26 0.014 160);
+  --muted: oklch(0.945 0.007 150);
+  --muted-foreground: oklch(0.5 0.016 160);
+  --accent: oklch(0.935 0.014 155);
+  --accent-foreground: oklch(0.23 0.012 160);
+  --destructive: oklch(0.54 0.18 29);
+  --success: oklch(0.48 0.09 158);
+  --warning: oklch(0.55 0.12 68);
+  --info: oklch(0.5 0.13 255);
+  --border: oklch(0.9 0.008 150);
+  --input: oklch(0.87 0.01 150);
+  --ring: oklch(0.55 0.08 160);
+  /* The ruled lines of manuscript paper: character meters and the schedule. */
+  --grid: oklch(0.8 0.06 160);
+  --chart-1: oklch(0.52 0.09 160);
+  --chart-2: oklch(0.58 0.12 250);
+  --chart-3: oklch(0.72 0.13 75);
+  --chart-4: oklch(0.6 0.13 330);
+  --chart-5: oklch(0.62 0.16 30);
+  --sidebar: oklch(0.952 0.007 150);
+  --sidebar-foreground: oklch(0.33 0.014 160);
+  --sidebar-primary: oklch(0.46 0.08 160);
+  --sidebar-primary-foreground: oklch(0.985 0.006 150);
+  --sidebar-accent: oklch(0.915 0.016 155);
+  --sidebar-accent-foreground: oklch(0.2 0.012 160);
+  --sidebar-border: oklch(0.9 0.008 150);
+  --sidebar-ring: oklch(0.55 0.08 160);
 }
 
 .dark {
-  --background: oklch(0.16 0.008 260);
-  --foreground: oklch(0.95 0.004 260);
-  --card: oklch(0.2 0.01 260);
-  --card-foreground: oklch(0.95 0.004 260);
-  --popover: oklch(0.22 0.01 260);
-  --popover-foreground: oklch(0.95 0.004 260);
-  --primary: oklch(0.93 0.01 260);
-  --primary-foreground: oklch(0.2 0.01 260);
-  --secondary: oklch(0.27 0.012 260);
-  --secondary-foreground: oklch(0.95 0.004 260);
-  --muted: oklch(0.25 0.011 260);
-  --muted-foreground: oklch(0.72 0.015 260);
-  --accent: oklch(0.28 0.013 260);
-  --accent-foreground: oklch(0.95 0.004 260);
-  --destructive: oklch(0.68 0.19 25);
-  --success: oklch(0.77 0.15 155);
-  --warning: oklch(0.8 0.14 80);
-  --info: oklch(0.76 0.12 250);
-  --border: oklch(1 0 0 / 11%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.55 0.04 260);
-  --chart-1: oklch(0.7 0.15 255);
-  --chart-2: oklch(0.74 0.12 175);
-  --chart-3: oklch(0.8 0.14 75);
-  --chart-4: oklch(0.7 0.16 305);
-  --chart-5: oklch(0.72 0.17 20);
-  --sidebar: oklch(0.19 0.01 260);
-  --sidebar-foreground: oklch(0.88 0.008 260);
-  --sidebar-primary: oklch(0.93 0.01 260);
-  --sidebar-primary-foreground: oklch(0.2 0.01 260);
-  --sidebar-accent: oklch(0.27 0.012 260);
-  --sidebar-accent-foreground: oklch(0.95 0.004 260);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.55 0.04 260);
+  --background: oklch(0.17 0.01 160);
+  --foreground: oklch(0.94 0.006 150);
+  --card: oklch(0.205 0.011 160);
+  --card-foreground: oklch(0.94 0.006 150);
+  --popover: oklch(0.22 0.012 160);
+  --popover-foreground: oklch(0.94 0.006 150);
+  --primary: oklch(0.78 0.1 158);
+  --primary-foreground: oklch(0.2 0.02 160);
+  --secondary: oklch(0.26 0.012 160);
+  --secondary-foreground: oklch(0.94 0.006 150);
+  --muted: oklch(0.25 0.012 160);
+  --muted-foreground: oklch(0.72 0.016 155);
+  --accent: oklch(0.28 0.02 160);
+  --accent-foreground: oklch(0.94 0.006 150);
+  --destructive: oklch(0.68 0.18 28);
+  --success: oklch(0.77 0.11 158);
+  --warning: oklch(0.8 0.13 78);
+  --info: oklch(0.76 0.11 250);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.6 0.08 160);
+  --grid: oklch(0.45 0.06 160);
+  --chart-1: oklch(0.74 0.11 158);
+  --chart-2: oklch(0.72 0.12 250);
+  --chart-3: oklch(0.8 0.13 78);
+  --chart-4: oklch(0.72 0.13 330);
+  --chart-5: oklch(0.72 0.16 30);
+  --sidebar: oklch(0.15 0.01 160);
+  --sidebar-foreground: oklch(0.86 0.01 150);
+  --sidebar-primary: oklch(0.78 0.1 158);
+  --sidebar-primary-foreground: oklch(0.2 0.02 160);
+  --sidebar-accent: oklch(0.25 0.018 160);
+  --sidebar-accent-foreground: oklch(0.95 0.006 150);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.6 0.08 160);
 }
 
 @theme inline {
@@ -96,6 +103,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-grid: var(--grid);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -116,8 +124,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR",
-    "Malgun Gothic", sans-serif;
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* Page titles and the schedule's times only. */
+  --font-display: "Hahmlet Variable", "Pretendard Variable", "Apple SD Gothic Neo", serif;
 }
 
 @layer base {
@@ -135,5 +145,16 @@
     margin: 0;
     font-family: var(--font-sans);
     overflow-x: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

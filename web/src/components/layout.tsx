@@ -56,14 +56,9 @@ function Header() {
       <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
       <Breadcrumb>
         <BreadcrumbList>
-          <BreadcrumbItem className="hidden sm:block">
-            <BreadcrumbLink asChild>
-              <Link to="/">Content Autopilot</Link>
-            </BreadcrumbLink>
-          </BreadcrumbItem>
           {crumbs.map((c, i) => (
             <Fragment key={c.label}>
-              <BreadcrumbSeparator className="hidden sm:block" />
+              {i > 0 && <BreadcrumbSeparator />}
               <BreadcrumbItem>
                 {i === crumbs.length - 1 || !c.to ? (
                   <BreadcrumbPage>{c.label}</BreadcrumbPage>

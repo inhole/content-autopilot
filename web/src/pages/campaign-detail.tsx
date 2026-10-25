@@ -194,7 +194,7 @@ export function CampaignDetailView({
         )}
         <div className="flex min-w-0 flex-col items-start gap-2">
           {heading && (
-            <h1 className="text-xl font-semibold tracking-tight break-words">{titleOf(c)}</h1>
+            <h1 className="font-display text-2xl font-semibold tracking-tight break-words">{titleOf(c)}</h1>
           )}
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <CampaignStatusBadge status={c.status} />

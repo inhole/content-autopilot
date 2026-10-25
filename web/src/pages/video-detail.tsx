@@ -507,7 +507,7 @@ export function VideoDetailView({ data, heading = true }: { data: Detail; headin
     <div className="flex flex-col gap-4">
       <div className="flex min-w-0 flex-col items-start gap-2">
         {heading && (
-          <h1 className="text-xl font-semibold tracking-tight break-words">{titleOf(video)}</h1>
+          <h1 className="font-display text-2xl font-semibold tracking-tight break-words">{titleOf(video)}</h1>
         )}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <VideoStatusBadge status={video.status} />
