@@ -172,7 +172,8 @@
 | V2 | `VIDEO_PLATFORMS=reels`, `VIDEO_PUBLISH_DRY_RUN=false` | 코드 완료, 실제 Instagram 발행 미검증 |
 | V3 | `VIDEO_PLATFORMS=reels,shorts` | 코드 완료, 실제 YouTube 업로드 미검증 |
 | V4 | 영상 성과 수집과 `/report`의 🎬 구역 | 코드 완료 |
-| 다음 | 체험단 리뷰 릴스(사진 + 메모), 장면 전환 효과, 웹 대시보드 영상 화면 | 미착수 |
+| 웹 | 관리자 콘솔 영상 화면(목록·검수·발행 조작)과 직접 만든 영상 올리기 ([plans/video-upload.md](video-upload.md)) | 코드 완료, 실제 업로드·Reels 규격 통과 미검증 |
+| 다음 | 체험단 리뷰 릴스(사진 + 메모), 장면 전환 효과 | 미착수 |
 
 ### 리스크
 
