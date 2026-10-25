@@ -104,6 +104,15 @@ describe('buildSchedule', () => {
     expect(later).toBe(1)
   })
 
+  it('does not call slots empty past the end of a cut-short list', () => {
+    // 20 posts (the API limit), all due, the last at today 18:00 KST.
+    const full = Array.from({ length: 20 }, (_, i) => post(i + 1, '2026-10-25T09:00:00Z'))
+    const { days, cutAt } = buildSchedule(full, ['19:00'], now)
+    expect(cutAt).toBe('2026-10-25T09:00:00Z')
+    expect(days[0]?.entries.some((e) => e.kind === 'empty')).toBe(false)
+    expect(days[1]?.entries).toHaveLength(0)
+  })
+
   it('opens today with due posts, which never fill a slot', () => {
     // Yesterday 19:00 (KST), not out yet: first in today's list, today's 19:00 stays empty.
     const { days } = buildSchedule([post(9, '2026-10-24T10:00:00Z')], ['19:00'], now)

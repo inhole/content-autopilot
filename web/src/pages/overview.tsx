@@ -224,6 +224,9 @@ type Entry =
 
 type ScheduleDay = { day: string; label: string; entries: Entry[] }
 
+/** `loadOverview` (src/web/data.ts) returns at most this many scheduled posts, soonest first. */
+export const SCHEDULED_LIMIT = 20
+
 const dayLabelFormat = new Intl.DateTimeFormat('ko-KR', {
   timeZone: TZ,
   month: 'long',
@@ -236,12 +239,13 @@ const dayLabelFormat = new Intl.DateTimeFormat('ko-KR', {
  * time or marked empty, plus posts scheduled off-slot (publish-now). Slots already past today are
  * left out: whether they went out is the posts list's business. Posts whose time has passed (from
  * any day) open today's list as `due` and never fill a slot. `later` counts posts after tomorrow.
+ * A full list may be cut short: then slots after its last post are unknown, not empty (`cutAt`).
  */
 export function buildSchedule(
   scheduled: Scheduled[],
   slots: string[] | null,
   now: Date = new Date(),
-): { days: ScheduleDay[]; later: number } {
+): { days: ScheduleDay[]; later: number; cutAt: string | null } {
   const today = kstDay(now)
   const tomorrow = kstDay(new Date(now.getTime() + 86_400_000))
   const nowTime = formatTime(now)
@@ -254,6 +258,8 @@ export function buildSchedule(
     },
   ]
   let later = 0
+  const last = scheduled.at(-1)
+  const cutAt = scheduled.length >= SCHEDULED_LIMIT && last ? last.scheduled_at : null
   const due: Entry[] = []
   for (const post of scheduled) {
     const at = new Date(post.scheduled_at)
@@ -271,6 +277,7 @@ export function buildSchedule(
     for (const slot of slots ?? []) {
       if (d.entries.some((e) => e.time === slot)) continue
       if (d.day === today && slot <= nowTime) continue
+      if (cutAt && `${d.day} ${slot}` > `${kstDay(new Date(cutAt))} ${formatTime(cutAt)}`) continue
       d.entries.push({ kind: 'empty', time: slot })
     }
     d.entries.sort((a, b) => a.time.localeCompare(b.time))
@@ -281,7 +288,7 @@ export function buildSchedule(
       : 0,
   )
   days[0]?.entries.unshift(...due)
-  return { days, later }
+  return { days, later, cutAt }
 }
 
 function NowMarker({ time }: { time: string }) {
@@ -352,7 +359,7 @@ export function ScheduleBoard({
   slots: string[] | null
   now?: Date
 }) {
-  const { days, later } = buildSchedule(scheduled, slots, now)
+  const { days, later, cutAt } = buildSchedule(scheduled, slots, now)
   const nowTime = formatTime(now)
   if (days.every((d) => d.entries.length === 0) && later === 0) {
     return (
@@ -389,6 +396,12 @@ export function ScheduleBoard({
           </div>
         )
       })}
+      {cutAt && (
+        <p className="text-xs text-muted-foreground">
+          예약이 많아 앞의 {SCHEDULED_LIMIT}건만 받았어요. {formatShortDateTime(cutAt)} 이후 슬롯은
+          글 목록에서 확인해요.
+        </p>
+      )}
       {later > 0 && (
         <Link
           to="/posts?status=SCHEDULED"
