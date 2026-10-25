@@ -22,7 +22,7 @@ import type {
   OpsScheduleFields,
   OpsScheduleView,
 } from '@/lib/types.ts'
-import { EditSheet, SHEET_ACTIONS_CLASS } from '@/pages/ops-edit-sheet.tsx'
+import { EditSheet, SHEET_ACTIONS_CLASS, SheetFormError } from '@/pages/ops-edit-sheet.tsx'
 import { Confirm } from '@/pages/post-actions.tsx'
 
 type NoticeFn = (kind: 'ok' | 'error', text: string) => void
@@ -160,6 +160,8 @@ export function ScheduleForm({
     COLLECTS.filter(({ key }) => schedule.current[key].daily === null).map(({ key }) => key),
   )
   const [errors, setErrors] = useState<Errors>({})
+  // Other failures (network, 5xx) are shown in the sheet, not behind it on the page.
+  const [formError, setFormError] = useState<string | null>(null)
   const save = useSaveSchedule()
   const pending = save.isPending
 
@@ -182,6 +184,7 @@ export function ScheduleForm({
       return
     }
     setErrors({})
+    setFormError(null)
     save.mutate(
       { revision, schedule: built.schedule },
       {
@@ -209,7 +212,7 @@ export function ScheduleForm({
             onCancel()
             return
           }
-          onError(err.message)
+          setFormError(err.message)
         },
       },
     )
@@ -383,6 +386,7 @@ export function ScheduleForm({
         )}
       </fieldset>
 
+      <SheetFormError message={formError} />
       <div className={SHEET_ACTIONS_CLASS}>
         <Button type="submit" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}

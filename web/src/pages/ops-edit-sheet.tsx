@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import { TriangleAlertIcon } from 'lucide-react'
+import { type ReactNode, useRef } from 'react'
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
 import {
   Sheet,
   SheetContent,
@@ -24,9 +26,24 @@ export function EditSheet({
   description: string
   children: ReactNode
 }) {
+  // The edit button is not a SheetTrigger, so Radix cannot return focus to it on close by itself.
+  // When the sheet opens, focus is still on the element that opened it.
+  const opener = useRef<HTMLElement | null>(null)
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
-      <SheetContent className="w-full gap-0 sm:max-w-xl">
+      <SheetContent
+        className="w-full gap-0 sm:max-w-xl"
+        onOpenAutoFocus={() => {
+          opener.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null
+        }}
+        onCloseAutoFocus={(e) => {
+          if (opener.current?.isConnected) {
+            e.preventDefault()
+            opener.current.focus()
+          }
+        }}
+      >
         <SheetHeader className="border-b">
           <SheetTitle className="pr-8">{title}</SheetTitle>
           <SheetDescription>{description}</SheetDescription>
@@ -34,6 +51,20 @@ export function EditSheet({
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+/**
+ * A save failure shown inside the sheet: the sheet covers the page (fully on a phone) and hides
+ * the page's notices from assistive technology while it is open.
+ */
+export function SheetFormError({ message }: { message: string | null }) {
+  if (!message) return null
+  return (
+    <Alert variant="destructive">
+      <TriangleAlertIcon />
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
   )
 }
 

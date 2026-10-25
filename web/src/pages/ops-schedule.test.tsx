@@ -246,6 +246,16 @@ describe('schedule form', () => {
     expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('shows a save failure inside the sheet and keeps it open', async () => {
+    serve(() => json({ error: 'internal error' }, 500))
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '일정과 수량 편집' })
+    await user.click(within(sheet).getByRole('button', { name: 'Threads 뉴스 수집 3시' }))
+    await user.click(within(sheet).getByRole('button', { name: '저장' }))
+    expect(await within(sheet).findByRole('alert')).toHaveTextContent('internal error')
+    expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('edits in a side sheet; closing it discards the edits', async () => {
     const user = await openEditor()
     const sheet = screen.getByRole('dialog', { name: '일정과 수량 편집' })
@@ -253,7 +263,9 @@ describe('schedule form', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(posts()).toHaveLength(0)
-    await user.click(within(card()).getByRole('button', { name: '편집' }))
+    const edit = within(card()).getByRole('button', { name: '편집' })
+    await waitFor(() => expect(edit).toHaveFocus())
+    await user.click(edit)
     expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'false')
   })
 

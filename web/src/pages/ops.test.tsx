@@ -342,6 +342,19 @@ describe('profile editing', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(posts()).toHaveLength(0)
+    const edit = within(screen.getByTestId('profile-card')).getByRole('button', { name: '편집' })
+    await waitFor(() => expect(edit).toHaveFocus())
+  })
+
+  it('shows a save failure inside the sheet and keeps the edits', async () => {
+    serveProfile(() => json({ error: 'internal error' }, 500))
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '체험단 프로필 편집' })
+    await user.clear(within(sheet).getByLabelText(/^소개/))
+    await user.type(within(sheet).getByLabelText(/^소개/), '바뀐 소개')
+    await user.click(within(sheet).getByRole('button', { name: '저장' }))
+    expect(await within(sheet).findByRole('alert')).toHaveTextContent('internal error')
+    expect(within(sheet).getByLabelText(/^소개/)).toHaveValue('바뀐 소개')
   })
 
   it('resets after a confirmation with the displayed revision', async () => {

@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea.tsx'
 import { ApiError } from '@/lib/api.ts'
 import { useSaveProfile } from '@/lib/queries.ts'
 import type { OpsProfile, OpsProfileFields } from '@/lib/types.ts'
-import { SHEET_ACTIONS_CLASS } from '@/pages/ops-edit-sheet.tsx'
+import { SHEET_ACTIONS_CLASS, SheetFormError } from '@/pages/ops-edit-sheet.tsx'
 
 // Mirrors the limits in src/web/api-types.ts (the server stays authoritative).
 const LIST_MAX_ITEMS = 50
@@ -175,6 +175,8 @@ export function ProfileForm({
   // saving these values on that newer revision would overwrite it instead of answering 409.
   const [revision] = useState(profile.revision)
   const [errors, setErrors] = useState<Errors>({})
+  // Other failures (network, 5xx) are shown in the sheet, not behind it on the page.
+  const [formError, setFormError] = useState<string | null>(null)
   const save = useSaveProfile()
   const set = (k: keyof FormState) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
   const pending = save.isPending
@@ -187,6 +189,7 @@ export function ProfileForm({
       return
     }
     setErrors({})
+    setFormError(null)
     save.mutate(
       { revision, profile: built.profile },
       {
@@ -205,7 +208,7 @@ export function ProfileForm({
             onCancel()
             return
           }
-          onError(err.message)
+          setFormError(err.message)
         },
       },
     )
@@ -286,6 +289,7 @@ export function ProfileForm({
       </div>
       {list('review.points', 'points', '리뷰 포인트')}
       {text('disclosure', 'disclosure', '협찬 문구', '비우면 넣지 않아요. 모든 리뷰 초안 맨 앞에 붙어요')}
+      <SheetFormError message={formError} />
       <div className={SHEET_ACTIONS_CLASS}>
         <Button type="submit" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}
