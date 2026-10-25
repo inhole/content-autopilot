@@ -40,6 +40,7 @@ import {
   writeEnv,
 } from './threads/oauth.ts'
 import { formatProbe, runProbe } from './threads/probe.ts'
+import { runVideoCommand, VIDEO_USAGE } from './video/cli.ts'
 
 const USAGE = `usage: npm run cli -- <command>
 
@@ -76,7 +77,8 @@ const USAGE = `usage: npm run cli -- <command>
   review:draft <id> [feedback]  write (or rewrite) the gift review draft and send it
 
   aside:list                  list the Aside Browser scripts in aside/scripts
-  aside:run <name> [k=v ...]  run an aside/scripts script with \`aside repl\` and print its result`
+  aside:run <name> [k=v ...]  run an aside/scripts script with \`aside repl\` and print its result
+${VIDEO_USAGE}`
 
 // The CLI never polls Telegram (that is the worker's job); it only sends review messages.
 const reviewer = createReviewer({ onRegenerate: async () => {}, onAddTopic: async () => {} })
@@ -395,6 +397,7 @@ try {
       break
     }
     default:
+      if (await runVideoCommand(command, args)) break
       console.log(USAGE)
       process.exitCode = command ? 1 : 0
   }

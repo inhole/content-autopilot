@@ -19,12 +19,15 @@
   "type": "module",
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
+    "@resvg/resvg-js": "^2.6.2",
     "dotenv": "^18.0.5",
+    "ffmpeg-static": "^5.3.0",
     "grammy": "^1.46.0",
     "linkedom": "^0.18.13",
     "pg": "^8.23.1",
     "pg-boss": "^12.36.0",
     "rss-parser": "^3.13.0",
+    "satori": "^0.33.5",
     "tsx": "^4.23.15",
     "zod": "^4.6.5"
   },

@@ -20,6 +20,7 @@ import { REVIVE_BOT_COMMANDS, REVIVE_HELP_LINES } from '../pipeline/revive-bot.t
 import { formatStatus, loadStatus } from '../pipeline/status.ts'
 import { isRejectReason, REJECT_REASONS, type RejectReason } from '../pipeline/style.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
+import { VIDEO_BOT_COMMANDS, VIDEO_HELP_LINES } from '../video/telegram.ts'
 
 // `수정:` / `수정1:` edit the main text, `수정2:` / `수정3:` a follow-up; `삭제2` removes one.
 const EDIT_REPLY = /^수정\s*(\d*)\s*[:：]\s*/
@@ -85,6 +86,8 @@ export const HELP_TEXT = [
   ...REVIVE_HELP_LINES,
   ...DIGEST_HELP_LINES,
   '',
+  ...VIDEO_HELP_LINES,
+  '',
   ...CAMPAIGN_HELP_LINES,
   '',
   ...REVIEW_HELP_LINES,
@@ -97,6 +100,7 @@ const BOT_COMMANDS = [
   { command: 'report', description: '주간 성과 리포트 보기' },
   ...REVIVE_BOT_COMMANDS,
   ...DIGEST_BOT_COMMANDS,
+  ...VIDEO_BOT_COMMANDS,
   ...CAMPAIGN_BOT_COMMANDS,
 ]
 
