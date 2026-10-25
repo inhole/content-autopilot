@@ -24,6 +24,7 @@ import {
 import { OPS_POLL_MAX_MS, useOps, useResetProfile, useRunOps } from '@/lib/queries.ts'
 import type { OpsJob, OpsJobName, OpsProfile, OpsResponse, OpsSettings } from '@/lib/types.ts'
 import { ProfileForm } from '@/pages/ops-profile.tsx'
+import { ScheduleCard } from '@/pages/ops-schedule.tsx'
 import { Confirm } from '@/pages/post-actions.tsx'
 
 type Notice = { kind: 'ok' | 'error'; text: string }
@@ -121,14 +122,13 @@ export function SettingsCard({ settings }: { settings: OpsSettings }) {
     <Card>
       <CardHeader>
         <CardTitle>설정</CardTitle>
-        <CardDescription>환경 변수로 정해져요. 바꾸려면 값을 고치고 다시 배포해야 해요.</CardDescription>
+        <CardDescription>
+          환경 변수로 정해져요. 바꾸려면 값을 고치고 다시 배포해야 해요. (일정과 수량은 위 카드에서
+          고쳐요.)
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <dl className="flex flex-col gap-2 text-sm">
-          <Row label="하루 초안 수">{settings.dailyPostCount}개</Row>
-          <Row label="발행 시각">
-            {settings.publishSlots.length > 0 ? settings.publishSlots.join(' · ') : '-'}
-          </Row>
           <Row label="연결 글">{onOff(settings.threadChainEnabled)}</Row>
           <Row label="Threads dry-run">
             {settings.threadsDryRun ? (
@@ -137,10 +137,10 @@ export function SettingsCard({ settings }: { settings: OpsSettings }) {
               '꺼짐'
             )}
           </Row>
-          <Row label="체험단 하루 최대">출처별 {settings.campaignDailyMax}개</Row>
           <Row label="선별 방식">
             {RANK_MODES[settings.campaignRankMode]} ({settings.campaignRankMode})
           </Row>
+          <Row label="시간대">{settings.timeZone}</Row>
         </dl>
       </CardContent>
     </Card>
@@ -309,7 +309,10 @@ export function OpsView({
         ))}
       </div>
       <div className="grid items-start gap-3 lg:grid-cols-2">
-        <SettingsCard settings={data.settings} />
+        <div className="flex min-w-0 flex-col gap-3">
+          <ScheduleCard schedule={data.schedule} onNotice={onNotice} />
+          <SettingsCard settings={data.settings} />
+        </div>
         <ProfileCard profile={data.profile} onNotice={onNotice} />
       </div>
     </>
@@ -343,7 +346,7 @@ export function OpsPage() {
     <>
       <PageHeader
         title="운영"
-        description="예약 작업을 지금 실행하고, 파이프라인 설정을 확인하고 체험단 프로필을 고쳐요"
+        description="예약 작업을 지금 실행하고, 일정과 수량·체험단 프로필을 고쳐요"
       />
       {notice && (
         <Alert variant={notice.kind === 'error' ? 'destructive' : 'default'}>

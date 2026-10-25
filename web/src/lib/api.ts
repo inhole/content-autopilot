@@ -12,6 +12,8 @@ import type {
   OpsJobName,
   OpsProfileRequests,
   OpsProfileResponse,
+  OpsScheduleRequests,
+  OpsScheduleResponse,
   OpsResponse,
   OpsRunResponse,
   OverviewResponse,
@@ -117,6 +119,16 @@ async function mockPost(path: string, body: unknown): Promise<unknown> {
     if ('fields' in result) throw new ApiError(result.error, 400, null, result)
     return result
   }
+  if (path === '/api/ops/schedule' || path === '/api/ops/schedule/reset') {
+    const result =
+      path === '/api/ops/schedule'
+        ? f.mockSaveSchedule(body as OpsScheduleRequests['save'])
+        : f.mockResetSchedule(body as OpsScheduleRequests['reset'])
+    if (result === 'stale')
+      throw new ApiError('다른 곳에서 먼저 바뀌었어요. 새로 고침했어요', 409, null, { stale: true })
+    if ('fields' in result) throw new ApiError(result.error, 400, null, result)
+    return result
+  }
   const ops = path.match(/^\/api\/ops\/([a-z-]+)\/run$/)
   if (ops) {
     const result = f.mockRunOps(ops[1] as string)
@@ -202,6 +214,10 @@ export const api = {
   runOps: (name: OpsJobName) => post<OpsRunResponse>(`/api/ops/${name}/run`, {}),
   saveOpsProfile: (body: OpsProfileRequests['save']) =>
     post<OpsProfileResponse>('/api/ops/profile', body),
+  saveOpsSchedule: (body: OpsScheduleRequests['save']) =>
+    post<OpsScheduleResponse>('/api/ops/schedule', body),
+  resetOpsSchedule: (body: OpsScheduleRequests['reset']) =>
+    post<OpsScheduleResponse>('/api/ops/schedule/reset', body),
   resetOpsProfile: (body: OpsProfileRequests['reset']) =>
     post<OpsProfileResponse>('/api/ops/profile/reset', body),
   session: () => get<AuthSessionResponse>('/api/auth/session'),

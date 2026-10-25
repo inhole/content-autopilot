@@ -9,6 +9,10 @@ import type {
   OpsProfileRequests,
   OpsResponse,
   OpsRunResponse,
+  OpsScheduleFields,
+  OpsScheduleRequests,
+  OpsScheduleState,
+  OpsScheduleView,
   OverviewResponse,
   PostDetailResponse,
   PostListResponse,
@@ -758,6 +762,7 @@ let mockOpsState = opsJobs()
 export const resetMockOps = () => {
   mockOpsState = opsJobs()
   mockProfileState = { ...fileProfile(), source: 'file', revision: 0 }
+  mockScheduleState = { ...envSchedule(), source: 'env', revision: 0 }
 }
 
 const fileProfile = (): OpsProfileFields => ({
@@ -783,19 +788,49 @@ let mockProfileState: NonNullable<OpsResponse['profile']> = {
   revision: 0,
 }
 
-export const mockOps = (): OpsResponse => ({
-  jobs: mockOpsState,
-  settings: {
-    dailyPostCount: 3,
-    publishSlots: ['09:00', '13:00', '19:00'],
-    threadChainEnabled: true,
-    threadsDryRun: false,
-    campaignDailyMax: 5,
-    campaignRankMode: 'rule',
-    timeZone: 'Asia/Seoul',
-  },
-  profile: mockProfileState,
+const cronOf = (d: { minute: number; hours: number[] }) => `${d.minute} ${d.hours.join(',')} * * *`
+const view = (f: OpsScheduleFields): OpsScheduleView => ({
+  ...f,
+  threadsCollect: { cron: cronOf(f.threadsCollect), daily: f.threadsCollect },
+  giftCollect: { cron: cronOf(f.giftCollect), daily: f.giftCollect },
+  musinsaCollect: { cron: cronOf(f.musinsaCollect), daily: f.musinsaCollect },
 })
+const envFields = (): OpsScheduleFields => ({
+  threadsCollect: { minute: 0, hours: [7] },
+  giftCollect: { minute: 0, hours: [9, 15, 21] },
+  musinsaCollect: { minute: 0, hours: [10, 16, 22] },
+  dailyPostCount: 3,
+  publishSlots: ['09:00', '13:00', '19:00'],
+  campaignDailyMax: 5,
+})
+const envSchedule = (): Pick<OpsScheduleState, 'current' | 'defaults'> => ({
+  current: view(envFields()),
+  defaults: view(envFields()),
+})
+let mockScheduleState: OpsScheduleState = { ...envSchedule(), source: 'env', revision: 0 }
+
+export const mockOps = (): OpsResponse => {
+  const cur = mockScheduleState.current
+  const cronFor: Record<string, string> = {
+    'threads-daily': cur.threadsCollect.cron,
+    'gift-collect': cur.giftCollect.cron,
+    'musinsa-collect': cur.musinsaCollect.cron,
+  }
+  return {
+    jobs: mockOpsState.map((j) => ({ ...j, cron: cronFor[j.name] ?? j.cron })),
+    settings: {
+      dailyPostCount: cur.dailyPostCount,
+      publishSlots: cur.publishSlots,
+      threadChainEnabled: true,
+      threadsDryRun: false,
+      campaignDailyMax: cur.campaignDailyMax,
+      campaignRankMode: 'rule',
+      timeZone: 'Asia/Seoul',
+    },
+    schedule: mockScheduleState,
+    profile: mockProfileState,
+  }
+}
 
 /** Queues a job like the server: a busy job answers `queued: false` and changes nothing. */
 export function mockRunOps(name: string): OpsRunResponse | 'not_found' {
@@ -844,4 +879,53 @@ export function mockResetProfile(req: OpsProfileRequests['reset']) {
   // Like the server: the revision keeps growing across a reset.
   mockProfileState = { ...fileProfile(), source: 'file', revision: req.revision + 1 }
   return { ok: true as const, profile: mockProfileState }
+}
+
+const SLOT = /^([01]d|2[0-3]):[0-5]d$/
+const isInt = (n: unknown, lo: number, hi: number) =>
+  typeof n === 'number' && Number.isInteger(n) && n >= lo && n <= hi
+const sortedUnique = <T extends string | number>(list: T[]) => [...new Set(list)].sort()
+const normDaily = (d: { minute: number; hours: number[] }) => ({
+  minute: d.minute,
+  hours: [...new Set(d.hours)].sort((a, b) => a - b),
+})
+
+/** Saves like the server: stale -> 'stale', bad values -> 400 body, else sorts, dedupes, bumps revision. */
+export function mockSaveSchedule(req: OpsScheduleRequests['save']) {
+  if (req.revision !== mockScheduleState.revision) return 'stale' as const
+  const sc = req.schedule
+  const fields: string[] = []
+  for (const k of ['threadsCollect', 'giftCollect', 'musinsaCollect'] as const) {
+    if (!isInt(sc[k].minute, 0, 59)) fields.push(`${k}.minute`)
+    if (sc[k].hours.length < 1 || sc[k].hours.length > 24 || !sc[k].hours.every((h) => isInt(h, 0, 23)))
+      fields.push(`${k}.hours`)
+  }
+  if (!isInt(sc.dailyPostCount, 1, 10)) fields.push('dailyPostCount')
+  if (!isInt(sc.campaignDailyMax, 1, 20)) fields.push('campaignDailyMax')
+  if (sc.publishSlots.length < 1 || sc.publishSlots.length > 10) fields.push('publishSlots')
+  sc.publishSlots.forEach((t, i) => {
+    if (!SLOT.test(t)) fields.push(`publishSlots.${i}`)
+  })
+  if (fields.length > 0) return { error: '입력값을 확인해 주세요', fields }
+  const next: OpsScheduleFields = {
+    threadsCollect: normDaily(sc.threadsCollect),
+    giftCollect: normDaily(sc.giftCollect),
+    musinsaCollect: normDaily(sc.musinsaCollect),
+    dailyPostCount: sc.dailyPostCount,
+    publishSlots: sortedUnique(sc.publishSlots),
+    campaignDailyMax: sc.campaignDailyMax,
+  }
+  mockScheduleState = {
+    ...mockScheduleState,
+    current: view(next),
+    source: 'db',
+    revision: mockScheduleState.revision + 1,
+  }
+  return { ok: true as const, schedule: mockScheduleState, applied: true }
+}
+
+export function mockResetSchedule(req: OpsScheduleRequests['reset']) {
+  if (req.revision !== mockScheduleState.revision) return 'stale' as const
+  mockScheduleState = { ...envSchedule(), source: 'env', revision: req.revision + 1 }
+  return { ok: true as const, schedule: mockScheduleState, applied: true }
 }
