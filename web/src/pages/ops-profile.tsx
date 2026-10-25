@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea.tsx'
 import { ApiError } from '@/lib/api.ts'
 import { useSaveProfile } from '@/lib/queries.ts'
 import type { OpsProfile, OpsProfileFields } from '@/lib/types.ts'
+import { SHEET_ACTIONS_CLASS } from '@/pages/ops-edit-sheet.tsx'
 
 // Mirrors the limits in src/web/api-types.ts (the server stays authoritative).
 const LIST_MAX_ITEMS = 50
@@ -285,7 +286,7 @@ export function ProfileForm({
       </div>
       {list('review.points', 'points', '리뷰 포인트')}
       {text('disclosure', 'disclosure', '협찬 문구', '비우면 넣지 않아요. 모든 리뷰 초안 맨 앞에 붙어요')}
-      <div className="flex flex-wrap gap-2">
+      <div className={SHEET_ACTIONS_CLASS}>
         <Button type="submit" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}
           저장

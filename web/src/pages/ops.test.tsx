@@ -335,6 +335,15 @@ describe('profile editing', () => {
     expect(screen.getByLabelText(/^소개/)).toHaveValue('개발자이고 키보드·주변기기와 생활용품에 관심이 많아요.')
   })
 
+  it('edits in a side sheet that Escape closes without saving', async () => {
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '체험단 프로필 편집' })
+    expect(within(sheet).getByLabelText(/^소개/)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(posts()).toHaveLength(0)
+  })
+
   it('resets after a confirmation with the displayed revision', async () => {
     ops = { ...mockOps(), profile: dbProfile() }
     serveProfile(() => ok({ ...dbProfile(), source: 'file', revision: 0 }))

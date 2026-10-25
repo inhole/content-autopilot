@@ -246,6 +246,17 @@ describe('schedule form', () => {
     expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('edits in a side sheet; closing it discards the edits', async () => {
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '일정과 수량 편집' })
+    await user.click(within(sheet).getByRole('button', { name: 'Threads 뉴스 수집 3시' }))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(posts()).toHaveLength(0)
+    await user.click(within(card()).getByRole('button', { name: '편집' }))
+    expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('starts a custom cron from the default and says it will be replaced', async () => {
     const s = mockOps().schedule
     ops = {
