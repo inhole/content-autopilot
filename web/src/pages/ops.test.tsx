@@ -192,7 +192,7 @@ describe('profile editing', () => {
     const user = userEvent.setup()
     renderPage()
     await screen.findByText('설정')
-    await user.click(screen.getByRole('button', { name: '편집' }))
+    await user.click(within(screen.getByTestId('profile-card')).getByRole('button', { name: '편집' }))
     return user
   }
 
@@ -249,7 +249,7 @@ describe('profile editing', () => {
     const user = userEvent.setup()
     renderPage(client)
     await screen.findByText('설정')
-    await user.click(screen.getByRole('button', { name: '편집' }))
+    await user.click(within(screen.getByTestId('profile-card')).getByRole('button', { name: '편집' }))
     // Another tab saved meanwhile: polling brings revision 5 while this form shows revision 4.
     ops = { ...mockOps(), profile: { ...dbProfile(), revision: 5 } }
     const gets = () => fetchMock.mock.calls.filter(([, init]) => init?.method !== 'POST').length
@@ -331,7 +331,7 @@ describe('profile editing', () => {
     await user.click(screen.getByRole('button', { name: '취소' }))
     expect(posts()).toHaveLength(0)
     expect(screen.queryByText('바뀐 소개')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '편집' }))
+    await user.click(within(screen.getByTestId('profile-card')).getByRole('button', { name: '편집' }))
     expect(screen.getByLabelText(/^소개/)).toHaveValue('개발자이고 키보드·주변기기와 생활용품에 관심이 많아요.')
   })
 

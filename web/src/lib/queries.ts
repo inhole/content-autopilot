@@ -8,6 +8,8 @@ import type {
   OpsJobName,
   OpsProfileRequests,
   OpsProfileResponse,
+  OpsScheduleRequests,
+  OpsScheduleResponse,
   OpsResponse,
   PostActionName,
   PostActionRequests,
@@ -251,6 +253,33 @@ export const useSaveProfile = () =>
 /** Drops the saved copy so the bundled file is in effect again. */
 export const useResetProfile = () =>
   useProfileMutation((v: OpsProfileRequests['reset']) => api.resetOpsProfile(v))
+
+function useScheduleMutation<V>(fn: (v: V) => Promise<OpsScheduleResponse>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (res) => {
+      client.setQueryData<OpsResponse>(['ops'], (old) =>
+        old ? { ...old, schedule: res.schedule } : old,
+      )
+      // The jobs' cron and the settings values follow the saved copy.
+      void client.invalidateQueries({ queryKey: ['ops'] })
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        void client.invalidateQueries({ queryKey: ['ops'] })
+      }
+    },
+  })
+}
+
+/** Saves the edited schedules and volumes on the displayed revision. A 400 carries `body.fields`. */
+export const useSaveSchedule = () =>
+  useScheduleMutation((v: OpsScheduleRequests['save']) => api.saveOpsSchedule(v))
+
+/** Drops the saved copy so the env values are in effect again. */
+export const useResetSchedule = () =>
+  useScheduleMutation((v: OpsScheduleRequests['reset']) => api.resetOpsSchedule(v))
 
 export const SESSION_KEY = ['session'] as const
 
