@@ -15,6 +15,34 @@ let failNotify = false
 const profileCalls: string[] = []
 let profileStale = false
 let profileThrows = false
+const scheduleCalls: string[] = []
+let scheduleStale = false
+let scheduleThrows = false
+let scheduleApplied = true
+const scheduleResponse = () => ({
+  ok: true as const,
+  applied: scheduleApplied,
+  schedule: {
+    current: {
+      threadsCollect: { cron: '0 6 * * *', daily: { minute: 0, hours: [6] } },
+      giftCollect: { cron: '0 9 * * *', daily: { minute: 0, hours: [9] } },
+      musinsaCollect: { cron: '*/5 * * * *', daily: null },
+      dailyPostCount: 3,
+      publishSlots: ['08:00'],
+      campaignDailyMax: 5,
+    },
+    defaults: {
+      threadsCollect: { cron: '0 6 * * *', daily: { minute: 0, hours: [6] } },
+      giftCollect: { cron: '0 9 * * *', daily: { minute: 0, hours: [9] } },
+      musinsaCollect: { cron: '*/5 * * * *', daily: null },
+      dailyPostCount: 3,
+      publishSlots: ['08:00'],
+      campaignDailyMax: 5,
+    },
+    source: 'db' as const,
+    revision: 7,
+  },
+})
 const profileResponse = {
   ok: true as const,
   profile: {
@@ -51,6 +79,18 @@ const server = createDashboardServer({
       profileCalls.push(`reset:${revision}`)
       if (profileThrows) throw new Error('db down')
       return profileStale ? null : profileResponse
+    },
+  },
+  scheduleEdit: {
+    save: async (schedule, revision) => {
+      scheduleCalls.push(`save:${revision}:${schedule.giftCollect.hours.join(',')}`)
+      if (scheduleThrows) throw new Error('db down')
+      return scheduleStale ? null : scheduleResponse()
+    },
+    reset: async (revision) => {
+      scheduleCalls.push(`reset:${revision}`)
+      if (scheduleThrows) throw new Error('db down')
+      return scheduleStale ? null : scheduleResponse()
     },
   },
   notify: async (text) => {
@@ -899,6 +939,135 @@ describe('ops profile', () => {
     expect(res.status).toBe(500)
     expect(await res.text()).not.toContain('db down')
     expect(state.actions.at(-1)).toMatchObject({ action: 'ops.profile', result: 'error' })
+  })
+})
+
+describe('ops schedule', () => {
+  const auth_ = { ...SESSION_HEADERS, 'x-csrf-token': CSRF }
+  const daily = (hours: number[]) => ({ minute: 0, hours })
+  const fields = {
+    threadsCollect: daily([6]),
+    giftCollect: daily([15, 9, 9]),
+    musinsaCollect: daily([10]),
+    dailyPostCount: 3,
+    publishSlots: ['8:00', '12:30'],
+    campaignDailyMax: 5,
+  }
+  const paths = ['/api/ops/schedule', '/api/ops/schedule/reset']
+
+  beforeEach(() => {
+    scheduleCalls.length = 0
+    scheduleStale = false
+    scheduleThrows = false
+    scheduleApplied = true
+  })
+
+  it.each(paths)('%s needs same-origin JSON, a session and the CSRF token', async (path) => {
+    const body = { revision: 0, schedule: fields }
+    const noOrigin = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth_ },
+      body: JSON.stringify(body),
+    })
+    expect(noOrigin.status).toBe(403)
+    expect((await post(path, body, {})).status).toBe(401)
+    expect((await post(path, body, SESSION_HEADERS)).status).toBe(403)
+    expect(scheduleCalls).toEqual([])
+    expect(state.actions).toEqual([])
+  })
+
+  it('405 for GET', async () => {
+    for (const path of paths) {
+      const get = await fetch(`${base}${path}`, { headers: SESSION_HEADERS })
+      expect(get.status).toBe(405)
+      expect(get.headers.get('allow')).toBe('POST')
+    }
+  })
+
+  it('save: 200 with the normalized schedule passed on and an audit row with applied', async () => {
+    const res = await post('/api/ops/schedule', { revision: 3, schedule: fields }, auth_)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(scheduleResponse())
+    expect(scheduleCalls).toEqual(['save:3:9,15'])
+    expect(state.actions.at(-1)).toMatchObject({
+      action: 'ops.schedule',
+      result: 'ok',
+      detail: { revision: 3, applied: true },
+    })
+  })
+
+  it('applied false still answers 200 and is audited', async () => {
+    scheduleApplied = false
+    const res = await post('/api/ops/schedule/reset', { revision: 3 }, auth_)
+    expect(res.status).toBe(200)
+    expect((await res.json()).applied).toBe(false)
+    expect(state.actions.at(-1)).toMatchObject({
+      action: 'ops.schedule.reset',
+      result: 'ok',
+      detail: { revision: 3, applied: false },
+    })
+  })
+
+  it('save: 400 with dotted paths and nothing saved', async () => {
+    const bad = { ...fields, giftCollect: daily([]), publishSlots: ['08:00', 'x', '25:00'] }
+    const res = await post('/api/ops/schedule', { revision: 1, schedule: bad }, auth_)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.fields).toEqual(
+      expect.arrayContaining(['giftCollect.hours', 'publishSlots.1', 'publishSlots.2']),
+    )
+    expect(scheduleCalls).toEqual([])
+    expect(state.actions.at(-1)).toMatchObject({
+      action: 'ops.schedule',
+      result: 'invalid',
+      detail: { revision: 1 },
+    })
+  })
+
+  it.each([
+    [{ schedule: fields }],
+    [{ revision: -1, schedule: fields }],
+    [{ revision: 1.5, schedule: fields }],
+    [{ revision: '1', schedule: fields }],
+  ])('400 for a bad revision %j', async (body) => {
+    for (const path of paths) {
+      expect((await post(path, body, auth_)).status).toBe(400)
+    }
+    expect(scheduleCalls).toEqual([])
+  })
+
+  it('save: 400 when the schedule is missing', async () => {
+    const res = await post('/api/ops/schedule', { revision: 0 }, auth_)
+    expect(res.status).toBe(400)
+    expect(scheduleCalls).toEqual([])
+  })
+
+  it('409 stale on save and reset', async () => {
+    scheduleStale = true
+    const save = await post('/api/ops/schedule', { revision: 2, schedule: fields }, auth_)
+    expect(save.status).toBe(409)
+    expect(await save.json()).toMatchObject({ stale: true, error: expect.any(String) })
+    expect(state.actions.at(-1)).toMatchObject({ action: 'ops.schedule', result: 'stale' })
+    const reset = await post('/api/ops/schedule/reset', { revision: 2 }, auth_)
+    expect(reset.status).toBe(409)
+    expect(state.actions.at(-1)).toMatchObject({
+      action: 'ops.schedule.reset',
+      result: 'stale',
+    })
+  })
+
+  it('reset: 200', async () => {
+    const res = await post('/api/ops/schedule/reset', { revision: 4 }, auth_)
+    expect(res.status).toBe(200)
+    expect(scheduleCalls).toEqual(['reset:4'])
+  })
+
+  it('500 and an error audit row when the store throws', async () => {
+    scheduleThrows = true
+    const res = await post('/api/ops/schedule', { revision: 1, schedule: fields }, auth_)
+    expect(res.status).toBe(500)
+    expect(await res.text()).not.toContain('db down')
+    expect(state.actions.at(-1)).toMatchObject({ action: 'ops.schedule', result: 'error' })
   })
 })
 

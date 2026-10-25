@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
+import { loadRuntimeSettings } from '../settings.ts'
 import { expireStaleTopics } from './collect.ts'
 import { RANK_SYSTEM } from './prompts.ts'
 
@@ -105,7 +106,8 @@ export function pickTop(scores: Score[], candidateIds: Set<number>, count: numbe
   return picked
 }
 
-export async function rankCollected(count = config.DAILY_POST_COUNT): Promise<number[]> {
+export async function rankCollected(count?: number): Promise<number[]> {
+  const take = count ?? (await loadRuntimeSettings()).dailyPostCount
   await expireStaleTopics()
   const candidates = await query<Candidate>(
     `select t.id, t.title, t.feed_summary, s.name as source
@@ -150,7 +152,7 @@ export async function rankCollected(count = config.DAILY_POST_COUNT): Promise<nu
       [s.id, s.score, s.reason, s.duplicate_of],
     )
   }
-  const picked = pickTop(scores, ids, count)
+  const picked = pickTop(scores, ids, take)
   await query(
     `update topics set status = case when id = any($1::bigint[]) then 'SHORTLISTED' else 'SKIPPED' end,
        updated_at = now()

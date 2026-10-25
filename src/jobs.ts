@@ -30,6 +30,7 @@ import { duePostIds, publishPost } from './pipeline/publish.ts'
 import { rankCollected } from './pipeline/rank.ts'
 import { pollReplies } from './pipeline/replies.ts'
 import type { Reviewer } from './review/telegram.ts'
+import { applySchedules } from './schedules.ts'
 import { refreshThreadsTokenIfNeeded, threadsTokenExpiry } from './threads/account.ts'
 
 export const Q = {
@@ -157,7 +158,7 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
   await boss.createQueue(Q.refreshToken, { retryLimit: 2, retryDelay: 3600 })
 
   const tz = config.TZ_NAME
-  await boss.schedule(Q.daily, config.COLLECT_CRON, null, { tz })
+  await applySchedules(boss, { threadsCollect: Q.daily })
   await boss.schedule(Q.publishDue, '*/5 * * * *', null, { tz })
   await boss.schedule(Q.refreshToken, '0 4 * * *', null, { tz })
 
