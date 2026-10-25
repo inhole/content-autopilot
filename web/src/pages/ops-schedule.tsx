@@ -1,5 +1,5 @@
 import { PencilIcon, PlusIcon, RotateCcwIcon, SaveIcon, Trash2Icon } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import {
@@ -144,11 +144,14 @@ export function ScheduleForm({
   onCancel,
   onSaved,
   onError,
+  onBusyChange,
 }: {
   schedule: OpsSchedule
   onCancel: () => void
   onSaved: (applied: boolean) => void
   onError: (message: string) => void
+  /** Tells the sheet a save is in flight, so it cannot be dismissed and lose the result. */
+  onBusyChange?: (busy: boolean) => void
 }) {
   const id = useId()
   const [form, setForm] = useState<ScheduleFormState>(() => toScheduleForm(schedule))
@@ -164,6 +167,7 @@ export function ScheduleForm({
   const [formError, setFormError] = useState<string | null>(null)
   const save = useSaveSchedule()
   const pending = save.isPending
+  useEffect(() => onBusyChange?.(pending), [pending, onBusyChange])
 
   const setCollect = (key: CollectKey, patch: Partial<CollectForm>) =>
     setForm((f) => ({ ...f, collects: { ...f.collects, [key]: { ...f.collects[key], ...patch } } }))
@@ -459,6 +463,7 @@ export function ScheduleCard({
   onNotice?: NoticeFn
 }) {
   const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
   const reset = useResetSchedule()
   const say: NoticeFn = (kind, text) => onNotice?.(kind, text)
   // The revision shown when the confirmation opened: polling may bring a newer copy while it is
@@ -504,12 +509,14 @@ export function ScheduleCard({
             values (and revision) shown at that moment. */}
         <EditSheet
           open={editing}
+          busy={busy}
           onClose={() => setEditing(false)}
           title="일정과 수량 편집"
           description="시각은 한국 시간이에요. 수집 일정은 저장하는 즉시 바뀌어요."
         >
           <ScheduleForm
             schedule={schedule}
+            onBusyChange={setBusy}
             onCancel={() => setEditing(false)}
             onSaved={(applied) => {
               setEditing(false)

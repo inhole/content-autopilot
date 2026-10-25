@@ -11,16 +11,20 @@ import {
 
 /**
  * Right-side sheet for the operations page's edit forms (full width on a phone). Closing it the
- * way any sheet closes (X, Escape, outside click) is the same as the form's cancel.
+ * way any sheet closes (X, Escape, outside click) is the same as the form's cancel, except while
+ * a save is in flight: the form would unmount and its result (an error, `applied: false`) be lost.
  */
 export function EditSheet({
   open,
+  busy = false,
   onClose,
   title,
   description,
   children,
 }: {
   open: boolean
+  /** A save is in flight: the sheet stays open until it answers. */
+  busy?: boolean
   onClose: () => void
   title: string
   description: string
@@ -30,7 +34,7 @@ export function EditSheet({
   // When the sheet opens, focus is still on the element that opened it.
   const opener = useRef<HTMLElement | null>(null)
   return (
-    <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
+    <Sheet open={open} onOpenChange={(next) => !next && !busy && onClose()}>
       <SheetContent
         className="w-full gap-0 sm:max-w-xl"
         onOpenAutoFocus={() => {

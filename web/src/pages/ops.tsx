@@ -169,6 +169,7 @@ export function ProfileCard({
   onNotice?: (kind: Notice['kind'], text: string) => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
   const reset = useResetProfile()
   const say = (kind: Notice['kind'], text: string) => onNotice?.(kind, text)
   // The revision shown when the confirmation opened: polling may bring a newer copy while it is
@@ -214,12 +215,14 @@ export function ProfileCard({
                 profile (and revision) shown at that moment. */}
             <EditSheet
               open={editing}
+              busy={busy}
               onClose={() => setEditing(false)}
               title="체험단 프로필 편집"
               description="저장하면 다음 수집·선별과 리뷰 초안부터 반영돼요."
             >
               <ProfileForm
                 profile={profile}
+                onBusyChange={setBusy}
                 onCancel={() => setEditing(false)}
                 onSaved={() => {
                   setEditing(false)

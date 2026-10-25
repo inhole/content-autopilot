@@ -1,5 +1,5 @@
 import { SaveIcon } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Button } from '@/components/ui/button.tsx'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field.tsx'
 import { Input } from '@/components/ui/input.tsx'
@@ -163,11 +163,14 @@ export function ProfileForm({
   onCancel,
   onSaved,
   onError,
+  onBusyChange,
 }: {
   profile: OpsProfile
   onCancel: () => void
   onSaved: () => void
   onError: (message: string) => void
+  /** Tells the sheet a save is in flight, so it cannot be dismissed and lose the result. */
+  onBusyChange?: (busy: boolean) => void
 }) {
   const id = useId()
   const [form, setForm] = useState<FormState>(() => toForm(profile))
@@ -180,6 +183,7 @@ export function ProfileForm({
   const save = useSaveProfile()
   const set = (k: keyof FormState) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
   const pending = save.isPending
+  useEffect(() => onBusyChange?.(pending), [pending, onBusyChange])
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
