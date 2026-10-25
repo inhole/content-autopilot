@@ -1,9 +1,10 @@
-import { ChevronRightIcon, CalendarCheck2Icon, InboxIcon } from 'lucide-react'
+import { CalendarCheck2Icon, ChevronRightIcon, InboxIcon, TriangleAlertIcon } from 'lucide-react'
 import { Fragment, type ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, QueryBoundary } from '@/components/query-state.tsx'
 import { SourceDot } from '@/components/status-badge.tsx'
 import { Badge } from '@/components/ui/badge.tsx'
+import { Button } from '@/components/ui/button.tsx'
 import { Skeleton } from '@/components/ui/skeleton.tsx'
 import {
   daysUntil,
@@ -516,6 +517,7 @@ export function OverviewView({
   now = new Date(),
   slots = null,
   videosWaiting = 0,
+  onRetryVideos,
   deadlines,
 }: {
   data: OverviewResponse
@@ -523,6 +525,8 @@ export function OverviewView({
   /** PUBLISH_SLOTS in effect; null when unknown (only scheduled posts are shown). */
   slots?: string[] | null
   videosWaiting?: number
+  /** Set when the video list failed: its count is unknown, not zero. */
+  onRetryVideos?: () => void
   /** Body of the deadline section (the campaign list loads separately); omitted when absent. */
   deadlines?: ReactNode
 }) {
@@ -534,6 +538,18 @@ export function OverviewView({
           title="결정할 일"
           aside={tasks.length > 0 ? `${tasks.reduce((a, t) => a + t.count, 0)}건` : undefined}
         >
+          {onRetryVideos && (
+            <p
+              role="alert"
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning"
+            >
+              <TriangleAlertIcon className="size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1">영상 검수 건수를 불러오지 못해 목록에서 빠졌어요.</span>
+              <Button type="button" size="sm" variant="outline" onClick={onRetryVideos}>
+                다시 시도
+              </Button>
+            </p>
+          )}
           <TaskList tasks={tasks} />
         </Section>
         {deadlines !== undefined && (
@@ -612,6 +628,7 @@ export function OverviewPage() {
             now={now}
             slots={Array.isArray(slots) ? slots : null}
             videosWaiting={videosWaiting}
+            onRetryVideos={videos.isError ? () => void videos.refetch() : undefined}
             deadlines={
               <QueryBoundary
                 query={campaigns}

@@ -72,6 +72,13 @@ describe('OverviewView', () => {
     expect(screen.getByText('발행 예정인 글이 없어요.')).toBeInTheDocument()
     expect(screen.getByText('아직 수집한 체험단이 없어요.')).toBeInTheDocument()
   })
+  it('says when the video count is unknown instead of showing none', async () => {
+    const retry = vi.fn()
+    render(wrap(<OverviewView data={overviewFixture} onRetryVideos={retry} />))
+    expect(screen.getByRole('alert')).toHaveTextContent('영상 검수 건수를 불러오지 못해')
+    await userEvent.setup().click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(retry).toHaveBeenCalled()
+  })
 })
 
 describe('buildSchedule', () => {
