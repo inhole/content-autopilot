@@ -19,6 +19,7 @@ import {
 import { createReviewer } from './review/telegram.ts'
 import { applySchedules } from './schedules.ts'
 import { loadRuntimeSettings } from './settings.ts'
+import { registerVideoBots, registerVideoJobs } from './video/jobs.ts'
 import { runOpsJob } from './web/ops.ts'
 import { startDashboard } from './web/server.ts'
 
@@ -65,12 +66,14 @@ const reviewer = createReviewer({
         await enqueueDigest(boss)
       },
     })
+    registerVideoBots(boss, bot)
   },
 })
 await registerJobs(boss, reviewer)
 await registerCampaignJobs(boss)
 await registerReviveJobs(boss, reviewer, sendWithKeyboard)
 await registerDigestJobs(boss)
+await registerVideoJobs(boss)
 reviewer.start()
 // Null when Telegram is not configured (login codes go there).
 const dashboard = await startDashboard(
@@ -107,7 +110,9 @@ console.log(
   `[worker] started · collect "${effective.crons.threadsCollect}" ${config.TZ_NAME} · slots ${effective.publishSlots.join(', ')}` +
     ` · gift-collect "${effective.crons.giftCollect}" · musinsa-collect "${effective.crons.musinsaCollect}"` +
     ` · ${effective.dailyPostCount} posts/day · ${effective.campaignDailyMax} cards/source/day (${effective.source})` +
-    (config.THREADS_DRY_RUN ? ' · THREADS DRY-RUN' : ''),
+    (config.THREADS_DRY_RUN ? ' · THREADS DRY-RUN' : '') +
+    (config.VIDEO_ENABLED ? ` · video-pick "${config.VIDEO_CRON}"` : '') +
+    (config.VIDEO_PUBLISH_DRY_RUN ? ' · VIDEO DRY-RUN' : ''),
 )
 onSignals(async () => {
   await reviewer.stop()

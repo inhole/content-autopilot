@@ -257,3 +257,41 @@ COLLECTED ──▶ SKIPPED            (규칙 또는 선별 탈락)
 | `campaign_reminders` | 보낸 리마인더. `(campaign_id, kind)`가 primary key |
 
 웹 대시보드가 같은 데이터를 보여준다([dashboard.md](dashboard.md)). 로그인은 Telegram 1회용 코드이고, 그 기록은 `admin_login_codes`, `admin_sessions`, `admin_actions`(감사 기록) 테이블에 있다(`019`). 체험단은 상세 화면에서 신청·결과·기한·리뷰 초안까지 웹으로도 처리하고(`campaigns.draft_seq`, `020`), 같은 조건부 전환 함수를 부른다.
+
+## 숏폼 영상 파이프라인
+
+발행된 Threads 글을 30~45초 세로 영상으로 만들어 Reels와 Shorts에 올린다. 설계와 결정 이유는 [plans/video.md](plans/video.md)와 [결정 15](decisions.md#15-숏폼-영상은-발행된-글로-만들고-클라우드에서-렌더한다)에 있다. 코드는 `src/video/`, 마이그레이션은 `022`이다. 같은 워커가 같은 pg-boss로 처리한다.
+
+```
+video-pick (VIDEO_CRON) / /video [글 번호]   → videos SCRIPTING
+video-script {videoId, seq}   LLM 장면 원고 → RENDERING
+video-render {videoId}        문장별 TTS → satori+resvg 프레임 → ffmpeg mp4 → 저장소 → PENDING_REVIEW
+video-review {videoId}        원고 메시지 + sendVideo(버튼) → 두 메시지를 한 revision으로 등록
+  ✅ → (트랜잭션) 슬롯 + 플랫폼별 video_publications → APPROVED
+video-publish-due (*/5)       기한·멈춘 발행 → video-publish, 늦은 예약 옮기기, Shorts 처리 확인, 실패 알림
+video-publish {publicationId} Reels 컨테이너 / Shorts resumable 업로드 → 모두 끝나면 PUBLISHED
+video-maintenance (매시)      72h 만료, 안 간 검수 재전송, 멈춘 원고·렌더 재투입
+video-insights (05:30) · video-cleanup (04:30) · video-refresh-token (04:10)
+```
+
+### 상태
+
+`videos.status`: `SCRIPTING` → `RENDERING` → `PENDING_REVIEW` → `APPROVED` → `PUBLISHED`, 그리고 `REJECTED`, `EXPIRED`, `FAILED`. 원고를 바꾸는 모든 경로는 `PENDING_REVIEW`에서만 동작하고 `revision`을 올린다. 장면이 바뀌면 같은 UPDATE에서 `RENDERING`으로 간다. 그래서 `PENDING_REVIEW`인 영상의 파일은 항상 지금 장면으로 만든 것이다.
+
+`video_publications.status`: `SCHEDULED` → `PUBLISHING` → `PUBLISHED` / `FAILED`. 글 발행과 같은 claim 모델(`claim_seq` 토큰, 15분 지난 `PUBLISHING`은 재개, 3회 실패 뒤 `FAILED`)이다. 인증 오류, 승인 때와 다른 계정, 만료된 업로드 세션은 바로 `FAILED`다.
+
+### 중복 발행 방지
+
+- **원고:** 재생성 요청이 `regen_seq`와 피드백을 함께 저장하고, 원고 작업은 `status='SCRIPTING' and regen_seq = seq`일 때만 쓴다.
+- **렌더:** 시작할 때 읽은 `revision`이 그대로일 때만 결과를 쓴다. 아니면 자기가 올린 파일만 지운다(저장 키는 렌더 실행마다 다르다). 렌더 입력 해시(장면, 출처, 브랜드, 음성, 템플릿, 배경음악)가 같으면 다시 렌더하지 않는다.
+- **Reels:** 컨테이너 id를 먼저 저장하고, 다시 시도할 때 재사용한다. 컨테이너가 `PUBLISHED`면 끝난 것이다. 응답이 유실되면 이번 시도 이후 올라온 Reel 중 캡션이 정확히 같은 것 하나만 media id로 쓴다. 처리 중(`IN_PROGRESS`)은 시도 횟수에 넣지 않는다.
+- **Shorts:** 업로드 세션 URL을 먼저 저장하고, 다시 시도할 때 세션에 받은 바이트를 묻는다(200/201 완료, 308 이어 올리기). 세션이 404/410이면 새로 올리지 않고 채널 최근 업로드에서 태그 `capub<id>`를 찾는다. 없으면 `FAILED` 알림을 보내고, 사람이 확인하고 누른 `🔁` 만 새 업로드를 시작한다.
+
+### 영상 데이터
+
+| 테이블 | 내용 |
+|---|---|
+| `videos` | 원본 글(`post_id`, unique), 원고(`title`, `caption`, `hashtags`, `scenes`), 경합 컬럼(`revision`, `regen_seq`, `regen_feedback`, `stage_recoveries`), 렌더 결과(`render_hash`, `video_url`, `storage_key`, `duration_ms`), 검수 메시지(`script_message_id`, `review_message_id`, `review_revision`) |
+| `video_publications` | 플랫폼별 발행. `(video_id, platform)`과 `(platform, scheduled_at)`이 unique. `account_user_id`, `claim_seq`, `container_id`, `upload_url`, `platform_media_id`, `verified_at`(Shorts 처리 확인), `error_kind`, `alerted_at` |
+| `video_insights` | 발행 행별 성과 스냅숏. 리포트는 최신 행만 쓴다 |
+| `platform_accounts` | `INSTAGRAM`, `YOUTUBE` 행이 추가된다. YouTube는 `refresh_token`을 쓴다 |

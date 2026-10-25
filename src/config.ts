@@ -80,14 +80,81 @@ export const schema = z.object({
     .refine((v) => /^https:\/\/[^/?#\s]+\/?$/.test(v), 'must be an https origin without a path')
     .transform((v) => v.replace(/\/$/, ''))
     .optional(),
+
+  // Short-form videos (docs/plans/video.md). VIDEO_ENABLED only schedules the automatic pick;
+  // /video and the CLI work either way.
+  VIDEO_ENABLED: bool,
+  VIDEO_CRON: z.string().default('0 7 * * 2,4,6'),
+  VIDEO_WEEKLY_MAX: z.coerce.number().int().min(1).max(14).default(3),
+  // One local time per day, so one video per platform per day.
+  VIDEO_PUBLISH_SLOT: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM')
+    .default('19:00'),
+  // Platforms published automatically after approval; empty = the owner uploads by hand.
+  VIDEO_PLATFORMS: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.enum(['reels', 'shorts']))),
+  VIDEO_PUBLISH_DRY_RUN: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  VIDEO_BRAND: z.string().max(40).optional(),
+  VIDEO_TTS_PROVIDER: z.enum(['silent', 'google', 'openai', 'elevenlabs']).default('silent'),
+  VIDEO_TTS_VOICE: z.string().optional(),
+  GOOGLE_TTS_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  ELEVENLABS_API_KEY: z.string().optional(),
+  VIDEO_BGM_PATH: z.string().optional(),
+  VIDEO_STORAGE: z.enum(['local', 'supabase']).default('local'),
+  VIDEO_LOCAL_DIR: z.string().default('data/videos'),
+  SUPABASE_URL: z
+    .string()
+    .refine((v) => /^https:\/\/[^/?#\s]+\/?$/.test(v), 'must be an https origin without a path')
+    .transform((v) => v.replace(/\/$/, ''))
+    .optional(),
+  SUPABASE_SERVICE_KEY: z.string().optional(),
+  VIDEO_STORAGE_BUCKET: z.string().default('videos'),
+  INSTAGRAM_API_BASE: z.string().default('https://graph.instagram.com/v24.0'),
+  INSTAGRAM_USER_ID: z.string().optional(),
+  INSTAGRAM_ACCESS_TOKEN: z.string().optional(),
+  YOUTUBE_CLIENT_ID: z.string().optional(),
+  YOUTUBE_CLIENT_SECRET: z.string().optional(),
+  YOUTUBE_PRIVACY: z.enum(['public', 'unlisted', 'private']).default('public'),
 })
 
 export type Config = z.infer<typeof schema>
+
+/**
+ * Cross-field checks that would otherwise only fail at publish time. Reels fetches the video from
+ * a public https URL, which only the Supabase storage provides.
+ */
+export function videoConfigErrors(c: Config): string[] {
+  const errors: string[] = []
+  if (c.VIDEO_PLATFORMS.includes('reels') && c.VIDEO_STORAGE !== 'supabase') {
+    errors.push('VIDEO_PLATFORMS includes reels but VIDEO_STORAGE is not supabase')
+  }
+  if (c.VIDEO_STORAGE === 'supabase' && (!c.SUPABASE_URL || !c.SUPABASE_SERVICE_KEY)) {
+    errors.push('VIDEO_STORAGE=supabase needs SUPABASE_URL and SUPABASE_SERVICE_KEY')
+  }
+  return errors
+}
 
 // `KEY=` lines in .env mean "not set", not an empty value.
 export const config: Config = schema.parse(
   Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== '')),
 )
+{
+  const errors = videoConfigErrors(config)
+  if (errors.length) throw new Error(`invalid video config: ${errors.join('; ')}`)
+}
 
 /** The dashboard runs only where its login codes can reach the owner's Telegram chat. */
 export function dashboardEnabled(): boolean {

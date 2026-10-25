@@ -7,7 +7,7 @@
 | 1 | [만료된 초안 다시 쓰기](#1-만료된-초안-다시-쓰기) | 1~3일 | A·B 코드 완료 (결정 14). 실제 품질 확인 남음 |
 | 2 | [체험단 남은 일](#2-체험단-남은-일) | 운영 확인 + 2~3일 | 일부는 사용자 행동이 먼저 |
 | 3 | [대시보드 React + Vite + shadcn/ui 전환](#3-대시보드-react--vite--shadcnui-전환) → [관리자 콘솔](#관리자-콘솔-후속-작업) | 읽기 전용 완료, 관리자 콘솔 5~7일 | 읽기 전용 대시보드와 shadcn 재설계 완료. 관리자 콘솔은 1단계(Telegram 코드 로그인, Basic 인증 교체) 완료, 2단계(웹에서 체험단 조작), 3단계(Threads 조작), 4단계(운영 화면) 모두 완료 |
-| 4 | [YouTube Shorts / Instagram Reels 확장](#4-youtube-shorts--instagram-reels-확장) | 2~3주 | 미착수, 계정·API 확인부터 |
+| 4 | [YouTube Shorts / Instagram Reels 확장](#4-youtube-shorts--instagram-reels-확장) | 2~3주 | V1~V4 코드 완료 (결정 15). 계정 준비(V0)와 실제 발행 검증 남음 |
 
 ## 1. 만료된 초안 다시 쓰기
 
@@ -145,57 +145,37 @@
 1. 로그인(Telegram 코드, 세션, CSRF, 감사 기록)과 Basic 인증 교체. 아직 쓰기 기능 없이 배포해 로그인만 검증한다. **(완료, 2026-10-24, migration `019`. 서버 렌더링 페이지도 이때 지웠다. 자세한 동작은 `docs/dashboard.md`)**
 2. 체험단 조작(위험이 낮음): 신청함·패스·선정·미선정·기한·리뷰 초안. **(완료, 2026-10-24, migration `020`. 체험단 상세 화면의 작업 패널과 `POST /api/campaigns/:id/<조작>`. 자세한 동작은 `docs/dashboard.md`)**
 3. Threads 초안·예약 조작과 만료 초안·주간 묶음. **(완료, 2026-10-24. 글 상세 시트의 작업 패널, `만료 초안` 페이지, `POST /api/posts/:id/<조작>`. 마이그레이션은 없다. 자세한 동작은 `docs/dashboard.md`)**
-4. 운영 버튼(지금 수집 등). **(완료, 2026-10-24. `운영` 페이지에서 작업 5개 지금 실행과 마지막 실행 상태, 설정·프로필 보기. 마이그레이션은 없다. 2026-10-25 프로필 편집을 더했다: DB 사본(migration `021`)이 파일보다 우선하고 재시작 없이 반영된다. 같은 날 수집 일정 3개·하루 초안 수·발행 시각·체험단 하루 카드 수 편집도 더했다(migration `022`, 저장하면 pg-boss 일정을 바로 다시 등록). 자세한 동작은 `docs/dashboard.md`)**
+4. 운영 버튼(지금 수집 등). **(완료, 2026-10-24. `운영` 페이지에서 작업 5개 지금 실행과 마지막 실행 상태, 설정·프로필 보기. 마이그레이션은 없다. 2026-10-25 프로필 편집을 더했다: DB 사본(migration `021`)이 파일보다 우선하고 재시작 없이 반영된다. 같은 날 수집 일정 3개·하루 초안 수·발행 시각·체험단 하루 카드 수 편집도 더했다(migration `023`, 저장하면 pg-boss 일정을 바로 다시 등록). 자세한 동작은 `docs/dashboard.md`)**
 
 **테스트:** 로그인 흐름(만료·재사용·시도 제한·요청 제한), CSRF·Origin 거부, revision 충돌 시 거절, Telegram 버튼 정리, 감사 기록을 통합 테스트로 확인한다. 화면은 Testing Library로 확인한다.
 
 ## 4. YouTube Shorts / Instagram Reels 확장
 
-결정 1에서 미뤘던 영상 확장이다. 다시 볼 조건은 "Threads 발행이 안정적으로 돌고, 반응 좋은 주제 데이터가 쌓였을 때"였다. 발행 11건이 쌓였고 성과 수집도 돌기 시작했으므로 준비 단계부터 시작할 수 있다.
+결정 1에서 미뤘던 영상 확장이다. 설계는 [video.md](video.md), 결정은 [decisions.md](../decisions.md) 15에 있다. 2026-10-24에 V1~V4 코드를 만들었다(`feat/video-shorts`, 마이그레이션 `021`, `src/video/`).
 
-### 무엇을 영상으로 만드나
+### 처음 계획에서 바뀐 것
 
-- **1순위:** 성과가 좋았던 Threads 글(`post_insights` 조회 상위)과 1번의 상록 초안. 30~45초 세로 영상으로 만든다. 구성은 제목 카드, 핵심 문장 3~4장면, 마지막 출처 장면이다.
-- **2순위:** 체험단 리뷰 릴스. 선정된 체험단의 사진과 메모로 15~30초 리뷰 영상을 만든다. 사진·영상 소재는 사용자가 찍은 것만 쓴다.
-
-### 파이프라인
-
-```
-원고(LLM, 장면 JSON) → TTS 내레이션 → 렌더(자막·장면·BGM) → 저장소 업로드 → Telegram 미리보기 검수 → 발행
-```
-
-| 단계 | 선택지 | 메모 |
+| 처음 계획 | 바뀐 결정 | 이유 |
 |---|---|---|
-| 원고 | `chatJson`으로 장면 배열 `{ 화면 문구, 내레이션, 길이 }` | 원글의 사실만 쓰고 말투 규칙을 지킨다 |
-| TTS | OpenAI TTS, ElevenLabs, Google Cloud TTS | 한국어 품질과 단가를 샘플 3개로 비교해서 고른다 |
-| 렌더 | Remotion(React) 또는 ffmpeg | 대시보드와 같은 React라 Remotion을 우선 검토한다. Railway Hobby는 CPU가 약하므로 렌더는 이 PC에서 따로 돌리는 워커에서 한다(필요해지면 워커 역할 구분을 다시 도입한다) |
-| 저장소 | Supabase Storage(공개 URL) | Instagram 컨테이너가 `video_url`을 요구한다 |
-| 검수 | Telegram `sendVideo` + 승인·재생성 버튼 | Threads 검수와 같은 revision 규칙을 쓴다 |
+| `posts.platform`으로 구분 | `videos` + `video_publications` 테이블 | 검수는 한 번, 발행은 플랫폼마다라서 단위가 다르다 |
+| Remotion, 로컬 PC 렌더 워커 | satori + resvg + ffmpeg-static, 클라우드 워커 | 문구 카드 + 자막이면 충분하고, 로컬 워커 역할을 되살리지 않아도 된다 |
+| 타임스탬프가 있는 TTS 또는 Whisper 재정렬 | 문장마다 따로 합성해서 길이로 자막을 맞춤 | 어떤 TTS든 자막이 정확히 맞는다 |
+| YouTube 감사 통과 뒤에 Shorts | 감사를 기다리지 않음 | 2026-10-24 `videos.insert` 문서에 미검증 프로젝트 업로드가 비공개로 잠기지 않는다고 나온다. OAuth 동의 화면만 프로덕션으로 바꾼다 |
+| 1순위에 상록 만료 초안 포함 | 발행된 단일 출처 글만 | 만료 초안은 사람이 승인한 적이 없고, 묶음 글은 출처가 여럿이다 |
 
-### 플랫폼별 발행
+### 남은 일
 
-- **Instagram Reels**
-  - Instagram 프로페셔널 계정(크리에이터 또는 비즈니스)과 `instagram_content_publish` 권한이 필요하다.
-  - Threads용 Meta 앱에 Instagram 제품을 추가할 수 있는지부터 확인한다. 개발 모드에서 본인을 테스터로 쓰는 방식이 될 가능성이 있다.
-  - 발행은 `media_type=REELS` 컨테이너를 만들고 `FINISHED`를 기다린 뒤 `media_publish`하는 흐름이라 Threads와 같다. 지금의 claim 모델과 `driveContainer` 패턴을 그대로 쓴다. 저장은 `posts.platform`으로 구분한다.
-- **YouTube Shorts**
-  - YouTube Data API v3 `videos.insert`(resumable upload)를 쓴다.
-  - 검증되지 않은 API 프로젝트로 올린 영상은 비공개로 고정되므로 감사(audit) 신청을 제일 먼저 한다.
-  - OAuth 동의 화면이 Testing이면 refresh token이 7일 만에 만료되고, `youtube.upload`는 민감 범위라 앱 검증이 필요하다.
-  - 감사를 통과하기 전에는 Telegram으로 받은 영상 파일을 사람이 직접 올린다.
-
-### 단계
-
-| 단계 | 내용 | 끝났다고 보는 기준 |
+| 단계 | 내용 | 상태 |
 |---|---|---|
-| V0 | 계정·API 확인: Instagram 프로페셔널 계정 전환, Meta 앱 권한, Google Cloud 프로젝트와 YouTube 감사 신청, TTS 샘플 비교 | 각 API로 테스트 업로드 1건 |
-| V1 | 원고 + TTS + 렌더를 로컬 PC에서 돌리고, Telegram으로 미리보기를 받아 직접 올린다 | 주 3편을 손으로 올릴 수 있음 |
-| V2 | Reels 자동 발행 (컨테이너 claim 모델) | 승인한 영상이 정해진 시간에 올라감 |
-| V3 | Shorts 자동 발행 (감사 통과 뒤) | 공개 업로드 성공 |
-| V4 | 영상 성과 수집과 주간 리포트 통합 | `/report`에 영상 줄 추가 |
+| V0 | Instagram 프로페셔널 계정, Meta 앱에 Instagram 제품, Google OAuth 클라이언트(프로덕션), TTS 키, Supabase 공개 버킷 ([setup.md](../setup.md) 6절) | 사람이 할 일 |
+| V1 | `video:tts-sample`로 음성 고르기 → `/video <글 번호>`로 첫 영상 → 손으로 올리기 | 코드 완료, 실제 TTS·LLM 원고 품질 미검증 |
+| V2 | `VIDEO_PLATFORMS=reels`, `VIDEO_PUBLISH_DRY_RUN=false` | 코드 완료, 실제 Instagram 발행 미검증 |
+| V3 | `VIDEO_PLATFORMS=reels,shorts` | 코드 완료, 실제 YouTube 업로드 미검증 |
+| V4 | 영상 성과 수집과 `/report`의 🎬 구역 | 코드 완료 |
+| 다음 | 체험단 리뷰 릴스(사진 + 메모), 장면 전환 효과, 웹 대시보드 영상 화면 | 미착수 |
 
 ### 리스크
 
-- 남의 글을 재가공한 영상은 노출이 줄 수 있다. YouTube는 대량 생산한 콘텐츠의 수익화를 제한한다(결정 3). 원고에 개발자 관점 해석 한 줄을 반드시 넣고, 같은 틀의 영상을 하루 1편 이상 올리지 않는다.
-- 렌더와 TTS 비용, 로컬 PC가 꺼져 있을 때의 지연이 생긴다. 렌더 대기열은 PC가 켜지면 처리한다.
-- 영상 검수는 글보다 오래 걸린다. 미리보기는 짧은 저해상도 버전으로 먼저 보낸다.
+- 남의 글을 재가공한 영상은 노출이 줄 수 있다. YouTube는 대량 생산한 콘텐츠의 수익화를 제한한다(결정 3). 원고에 개발자 관점 해석을 반드시 넣고, 영상은 하루 1편(슬롯 하나), 자동 선택은 주 3편까지만 만든다.
+- Railway에서의 렌더 시간과 메모리는 첫 배포 때 잰다(이 PC에서는 28초 영상이 17초).
+
