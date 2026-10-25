@@ -246,6 +246,50 @@ describe('schedule form', () => {
     expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('cannot be dismissed while saving, so the applied=false warning still shows', async () => {
+    let answer: (r: Response) => void = () => {}
+    fetchMock = vi.fn((_path: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? new Promise<Response>((resolve) => {
+            answer = resolve
+          })
+        : Promise.resolve(json(ops)),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '일정과 수량 편집' })
+    await user.click(within(sheet).getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: '일정과 수량 편집' })).toBeInTheDocument()
+    answer(ok(dbSchedule(), false))
+    expect(await screen.findByText(/워커를 다시 시작하면 적용돼요/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('shows a save failure inside the sheet and keeps it open', async () => {
+    serve(() => json({ error: 'internal error' }, 500))
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '일정과 수량 편집' })
+    await user.click(within(sheet).getByRole('button', { name: 'Threads 뉴스 수집 3시' }))
+    await user.click(within(sheet).getByRole('button', { name: '저장' }))
+    expect(await within(sheet).findByRole('alert')).toHaveTextContent('internal error')
+    expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('edits in a side sheet; closing it discards the edits', async () => {
+    const user = await openEditor()
+    const sheet = screen.getByRole('dialog', { name: '일정과 수량 편집' })
+    await user.click(within(sheet).getByRole('button', { name: 'Threads 뉴스 수집 3시' }))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(posts()).toHaveLength(0)
+    const edit = within(card()).getByRole('button', { name: '편집' })
+    await waitFor(() => expect(edit).toHaveFocus())
+    await user.click(edit)
+    expect(hour('Threads 뉴스 수집', 3)).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('starts a custom cron from the default and says it will be replaced', async () => {
     const s = mockOps().schedule
     ops = {

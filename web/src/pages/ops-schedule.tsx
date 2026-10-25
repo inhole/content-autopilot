@@ -1,5 +1,5 @@
 import { PencilIcon, PlusIcon, RotateCcwIcon, SaveIcon, Trash2Icon } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import {
@@ -22,6 +22,7 @@ import type {
   OpsScheduleFields,
   OpsScheduleView,
 } from '@/lib/types.ts'
+import { EditSheet, SHEET_ACTIONS_CLASS, SheetFormError } from '@/pages/ops-edit-sheet.tsx'
 import { Confirm } from '@/pages/post-actions.tsx'
 
 type NoticeFn = (kind: 'ok' | 'error', text: string) => void
@@ -143,11 +144,14 @@ export function ScheduleForm({
   onCancel,
   onSaved,
   onError,
+  onBusyChange,
 }: {
   schedule: OpsSchedule
   onCancel: () => void
   onSaved: (applied: boolean) => void
   onError: (message: string) => void
+  /** Tells the sheet a save is in flight, so it cannot be dismissed and lose the result. */
+  onBusyChange?: (busy: boolean) => void
 }) {
   const id = useId()
   const [form, setForm] = useState<ScheduleFormState>(() => toScheduleForm(schedule))
@@ -159,8 +163,11 @@ export function ScheduleForm({
     COLLECTS.filter(({ key }) => schedule.current[key].daily === null).map(({ key }) => key),
   )
   const [errors, setErrors] = useState<Errors>({})
+  // Other failures (network, 5xx) are shown in the sheet, not behind it on the page.
+  const [formError, setFormError] = useState<string | null>(null)
   const save = useSaveSchedule()
   const pending = save.isPending
+  useEffect(() => onBusyChange?.(pending), [pending, onBusyChange])
 
   const setCollect = (key: CollectKey, patch: Partial<CollectForm>) =>
     setForm((f) => ({ ...f, collects: { ...f.collects, [key]: { ...f.collects[key], ...patch } } }))
@@ -181,6 +188,7 @@ export function ScheduleForm({
       return
     }
     setErrors({})
+    setFormError(null)
     save.mutate(
       { revision, schedule: built.schedule },
       {
@@ -208,7 +216,7 @@ export function ScheduleForm({
             onCancel()
             return
           }
-          onError(err.message)
+          setFormError(err.message)
         },
       },
     )
@@ -382,7 +390,8 @@ export function ScheduleForm({
         )}
       </fieldset>
 
-      <div className="flex flex-wrap gap-2">
+      <SheetFormError message={formError} />
+      <div className={SHEET_ACTIONS_CLASS}>
         <Button type="submit" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : <SaveIcon data-icon="inline-start" />}
           저장
@@ -454,6 +463,7 @@ export function ScheduleCard({
   onNotice?: NoticeFn
 }) {
   const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
   const reset = useResetSchedule()
   const say: NoticeFn = (kind, text) => onNotice?.(kind, text)
   // The revision shown when the confirmation opened: polling may bring a newer copy while it is
@@ -495,9 +505,18 @@ export function ScheduleCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {editing ? (
+        {/* The sheet mounts the form only while open, so each opening starts from the
+            values (and revision) shown at that moment. */}
+        <EditSheet
+          open={editing}
+          busy={busy}
+          onClose={() => setEditing(false)}
+          title="일정과 수량 편집"
+          description="시각은 한국 시간이에요. 수집 일정은 저장하는 즉시 바뀌어요."
+        >
           <ScheduleForm
             schedule={schedule}
+            onBusyChange={setBusy}
             onCancel={() => setEditing(false)}
             onSaved={(applied) => {
               setEditing(false)
@@ -510,43 +529,40 @@ export function ScheduleCard({
             }}
             onError={(m) => say('error', m)}
           />
-        ) : (
-          <>
-            <ScheduleRows cur={schedule.current} def={schedule.defaults} />
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
-                <PencilIcon data-icon="inline-start" />
-                편집
-              </Button>
-              {schedule.source === 'db' && (
-                <Confirm
-                  trigger={
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={reset.isPending}
-                      onClick={() => {
-                        resetRevision.current = schedule.revision
-                      }}
-                    >
-                      {reset.isPending ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : (
-                        <RotateCcwIcon data-icon="inline-start" />
-                      )}
-                      기본값으로 되돌리기
-                    </Button>
-                  }
-                  title="기본값으로 되돌릴까요?"
-                  description="페이지에서 고친 일정과 수량이 사라지고 환경 변수 값이 다시 쓰여요. 수집 일정은 바로 바뀌어요."
-                  action="되돌리기"
-                  onConfirm={doReset}
-                />
-              )}
-            </div>
-          </>
-        )}
+        </EditSheet>
+        <ScheduleRows cur={schedule.current} def={schedule.defaults} />
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <PencilIcon data-icon="inline-start" />
+            편집
+          </Button>
+          {schedule.source === 'db' && (
+            <Confirm
+              trigger={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={reset.isPending}
+                  onClick={() => {
+                    resetRevision.current = schedule.revision
+                  }}
+                >
+                  {reset.isPending ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <RotateCcwIcon data-icon="inline-start" />
+                  )}
+                  기본값으로 되돌리기
+                </Button>
+              }
+              title="기본값으로 되돌릴까요?"
+              description="페이지에서 고친 일정과 수량이 사라지고 환경 변수 값이 다시 쓰여요. 수집 일정은 바로 바뀌어요."
+              action="되돌리기"
+              onConfirm={doReset}
+            />
+          )}
+        </div>
       </CardContent>
     </Card>
   )
