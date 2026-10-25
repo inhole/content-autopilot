@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { z } from 'zod'
 import { config } from '../config.ts'
+import { query } from '../db/pool.ts'
 
 /**
  * The owner's campaign preferences (config/campaign-profile.json). Rule fields (excludeKeywords,
@@ -32,17 +33,100 @@ export const campaignProfileSchema = z.object({
 })
 export type CampaignProfile = z.infer<typeof campaignProfileSchema>
 
-let cached: CampaignProfile | undefined
+let cachedFile: CampaignProfile | undefined
 
 export function parseCampaignProfile(json: unknown): CampaignProfile {
   return campaignProfileSchema.parse(json)
 }
 
+async function loadFileProfile(path: string): Promise<CampaignProfile> {
+  if (cachedFile) return cachedFile
+  const text = await readFile(resolve(path), 'utf8')
+  cachedFile = parseCampaignProfile(JSON.parse(text))
+  return cachedFile
+}
+
+export type ProfileInEffect = {
+  profile: CampaignProfile
+  source: 'db' | 'file'
+  /** Edit guard: the row's revision, 0 until the first save. */
+  revision: number
+}
+
+/**
+ * The profile in effect. The saved copy (table `campaign_profile`) is re-read on every call, so an
+ * edit applies from the next ranking run or review draft without a restart; the file is read once
+ * per process. A reset copy (null) or one that no longer matches the schema (logged) leaves the
+ * file in effect, with the row's revision so the page can save over it.
+ */
+export async function loadProfileInEffect(
+  path = config.CAMPAIGN_PROFILE_PATH,
+): Promise<ProfileInEffect> {
+  const [row] = await query<{ profile: unknown; revision: number }>(
+    'select profile, revision from campaign_profile where id = 1',
+  )
+  if (row && row.profile === null) {
+    return { profile: await loadFileProfile(path), source: 'file', revision: row.revision }
+  }
+  if (row) {
+    const parsed = campaignProfileSchema.safeParse(row.profile)
+    if (parsed.success) return { profile: parsed.data, source: 'db', revision: row.revision }
+    console.error(
+      '[profile] saved campaign profile is invalid; using the file:',
+      parsed.error.message,
+    )
+    return { profile: await loadFileProfile(path), source: 'file', revision: row.revision }
+  }
+  return { profile: await loadFileProfile(path), source: 'file', revision: 0 }
+}
+
 export async function loadCampaignProfile(
   path = config.CAMPAIGN_PROFILE_PATH,
 ): Promise<CampaignProfile> {
-  if (cached) return cached
-  const text = await readFile(resolve(path), 'utf8')
-  cached = parseCampaignProfile(JSON.parse(text))
-  return cached
+  return (await loadProfileInEffect(path)).profile
+}
+
+/**
+ * Saves the profile if `revision` is the one the caller saw: 0 = never saved (inserts only while
+ * no row exists, giving revision 1), n > 0 = updates the row at revision n to n + 1 (also after a
+ * reset, which keeps the row).
+ * Returns the new revision, or null when the revision is stale.
+ */
+export async function saveCampaignProfile(
+  profile: CampaignProfile,
+  revision: number,
+): Promise<number | null> {
+  const json = JSON.stringify(profile)
+  const rows =
+    revision === 0
+      ? await query<{ revision: number }>(
+          `insert into campaign_profile (id, profile, revision) values (1, $1::jsonb, 1)
+           on conflict (id) do nothing returning revision`,
+          [json],
+        )
+      : await query<{ revision: number }>(
+          `update campaign_profile set profile = $1::jsonb, revision = revision + 1, updated_at = now()
+            where id = 1 and revision = $2 returning revision`,
+          [json, revision],
+        )
+  return rows[0]?.revision ?? null
+}
+
+/**
+ * Clears the saved copy so the file applies again. The row stays and its revision still grows, so
+ * a page holding an older revision cannot later match a copy saved after the reset. True when
+ * done; false when `revision` is stale. Revision 0 means the page never saw a saved copy: nothing
+ * to clear, so true while there still is no row, false if someone saved one meanwhile.
+ */
+export async function resetCampaignProfile(revision: number): Promise<boolean> {
+  if (revision === 0) {
+    const rows = await query('select 1 from campaign_profile where id = 1')
+    return rows.length === 0
+  }
+  const rows = await query(
+    `update campaign_profile set profile = null, revision = revision + 1, updated_at = now()
+      where id = 1 and revision = $1 returning id`,
+    [revision],
+  )
+  return rows.length > 0
 }

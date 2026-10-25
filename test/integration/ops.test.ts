@@ -105,18 +105,24 @@ describe('ops job state', () => {
 
   it('profile: parsed fields, null on load failure', async () => {
     const p = await loadProfileForOps(async () => ({
-      about: 'a',
-      interests: ['i'],
-      preferKeywords: [],
-      excludeKeywords: ['x'],
-      excludeBrands: [],
-      review: { tone: 't', minChars: 100, maxChars: 500, points: [] },
+      source: 'file',
+      revision: 0,
+      profile: {
+        about: 'a',
+        interests: ['i'],
+        preferKeywords: [],
+        excludeKeywords: ['x'],
+        excludeBrands: [],
+        review: { tone: 't', minChars: 100, maxChars: 500, points: [] },
+      },
     }))
     expect(p).toMatchObject({
       about: 'a',
       maxCompetition: null,
       minPriceWon: null,
       disclosure: null,
+      source: 'file',
+      revision: 0,
       review: { minChars: 100 },
     })
     expect(

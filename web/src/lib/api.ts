@@ -10,6 +10,8 @@ import type {
   CampaignListResponse,
   InsightsResponse,
   OpsJobName,
+  OpsProfileRequests,
+  OpsProfileResponse,
   OpsResponse,
   OpsRunResponse,
   OverviewResponse,
@@ -105,6 +107,16 @@ async function mockPost(path: string, body: unknown): Promise<unknown> {
       throw new ApiError('이미 다룬 기사예요', 409, null, { postId: result.postId })
     return result
   }
+  if (path === '/api/ops/profile' || path === '/api/ops/profile/reset') {
+    const result =
+      path === '/api/ops/profile'
+        ? f.mockSaveProfile(body as OpsProfileRequests['save'])
+        : f.mockResetProfile(body as OpsProfileRequests['reset'])
+    if (result === 'stale')
+      throw new ApiError('다른 곳에서 먼저 바뀌었어요. 새로 고침했어요', 409, null, { stale: true })
+    if ('fields' in result) throw new ApiError(result.error, 400, null, result)
+    return result
+  }
   const ops = path.match(/^\/api\/ops\/([a-z-]+)\/run$/)
   if (ops) {
     const result = f.mockRunOps(ops[1] as string)
@@ -188,6 +200,10 @@ export const api = {
   ) => post<CampaignActionResponse>(`/api/campaigns/${id}/${name}`, body),
   ops: () => get<OpsResponse>('/api/ops'),
   runOps: (name: OpsJobName) => post<OpsRunResponse>(`/api/ops/${name}/run`, {}),
+  saveOpsProfile: (body: OpsProfileRequests['save']) =>
+    post<OpsProfileResponse>('/api/ops/profile', body),
+  resetOpsProfile: (body: OpsProfileRequests['reset']) =>
+    post<OpsProfileResponse>('/api/ops/profile/reset', body),
   session: () => get<AuthSessionResponse>('/api/auth/session'),
   requestCode: () => post<AuthCodeResponse>('/api/auth/code'),
   login: (code: string) => post<AuthSessionResponse>('/api/auth/login', { code }),
