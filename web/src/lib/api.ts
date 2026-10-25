@@ -22,8 +22,18 @@ import type {
   PostActionResponse,
   PostDetailResponse,
   PostListResponse,
+  PublicationActionName,
+  PublicationActionRequests,
   QueuedResponse,
   RevivableResponse,
+  VideoActionName,
+  VideoActionRequests,
+  VideoActionResponse,
+  VideoCreateRequest,
+  VideoCreateResponse,
+  VideoDetailResponse,
+  VideoFileResponse,
+  VideoListResponse,
 } from './types.ts'
 
 export class ApiError extends Error {
@@ -81,6 +91,13 @@ async function mockGet(path: string): Promise<unknown> {
   }
   if (p === '/api/insights') return f.insightsFixture(Number(url.searchParams.get('days') ?? 30))
   if (p === '/api/ops') return f.mockOps()
+  if (p === '/api/videos') return f.mockVideoList(url.searchParams.get('status'))
+  const vm = p.match(/^\/api\/videos\/(\d+)$/)
+  if (vm) {
+    const d = f.mockVideoDetail(Number(vm[1]))
+    if (!d) throw new ApiError('찾을 수 없어요', 404)
+    return d
+  }
   if (p === '/api/auth/session') return f.sessionFixture
   throw new ApiError('찾을 수 없어요', 404)
 }
@@ -135,6 +152,20 @@ async function mockPost(path: string, body: unknown): Promise<unknown> {
     if (result === 'not_found') throw new ApiError('알 수 없는 작업이에요', 404)
     return result
   }
+  if (path === '/api/videos') return f.mockCreateVideo(body as VideoCreateRequest)
+  const videoAction = path.match(/^\/api\/(videos|publications)\/(\d+)\/([a-zA-Z]+)$/)
+  if (videoAction) {
+    const result = f.mockVideoAction(
+      videoAction[1] as 'videos' | 'publications',
+      Number(videoAction[2]),
+      videoAction[3] as string,
+      body,
+    )
+    if (result === 'stale')
+      throw new ApiError('이미 처리됐거나 내용이 바뀌었어요. 새로 고침했어요', 409, null, { stale: true })
+    if (result === 'not_found') throw new ApiError('찾을 수 없어요', 404)
+    return { ok: true, telegramSynced: true, detail: result }
+  }
   if (path === '/api/revivable/check') return f.mockReviveCheck()
   if (path === '/api/digest') return { ok: true }
   if (path === '/api/auth/code') return { expiresAt: new Date(Date.now() + 300_000).toISOString() }
@@ -184,6 +215,57 @@ async function post<T>(path: string, body: unknown = {}): Promise<T> {
   return parse<T>(res)
 }
 
+/** The upload type the file route accepts: by MIME type, else by the file name. */
+export const uploadContentType = (file: Pick<File, 'type' | 'name'>) =>
+  file.type === 'video/quicktime' || /\.mov$/i.test(file.name) ? 'video/quicktime' : 'video/mp4'
+
+/**
+ * POST /api/videos/:id/file with the file as the body. XMLHttpRequest, not fetch: only XHR
+ * reports upload progress. A dropped connection rejects with status 0, so the caller re-reads
+ * the video before deciding what to do (docs/plans/video-upload.md 2).
+ */
+export function uploadVideoFile(
+  id: number,
+  file: File,
+  approve: boolean,
+  onProgress: (loaded: number, total: number) => void = () => {},
+): Promise<VideoFileResponse> {
+  if (MOCK) {
+    return import('../mocks/fixtures.ts').then((f) => {
+      onProgress(file.size, file.size)
+      return f.mockUploadFile(id, file, approve)
+    })
+  }
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `/api/videos/${id}/file?approve=${approve ? 1 : 0}`)
+    xhr.setRequestHeader('accept', 'application/json')
+    xhr.setRequestHeader('content-type', uploadContentType(file))
+    if (csrfToken) xhr.setRequestHeader('x-csrf-token', csrfToken)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded, e.total)
+    }
+    xhr.onload = () => {
+      let body: Record<string, unknown> = {}
+      try {
+        body = JSON.parse(xhr.responseText) as Record<string, unknown>
+      } catch {
+        // keep the generic message
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as unknown as VideoFileResponse)
+        return
+      }
+      const message =
+        typeof body.error === 'string' ? body.error : `요청에 실패했어요 (${xhr.status})`
+      reject(new ApiError(message, xhr.status, null, body))
+    }
+    xhr.onerror = () => reject(new ApiError('연결이 끊겼어요', 0))
+    xhr.onabort = () => reject(new ApiError('올리기를 멈췄어요', 0))
+    xhr.send(file)
+  })
+}
+
 const qs = (params: Record<string, string | number | null | undefined>) => {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v != null && v !== '') q.set(k, String(v))
@@ -210,6 +292,16 @@ export const api = {
     name: K,
     body: CampaignActionRequests[K],
   ) => post<CampaignActionResponse>(`/api/campaigns/${id}/${name}`, body),
+  videos: (status: 'active' | 'all') => get<VideoListResponse>(`/api/videos${qs({ status })}`),
+  video: (id: number) => get<VideoDetailResponse>(`/api/videos/${id}`),
+  createVideo: (body: VideoCreateRequest) => post<VideoCreateResponse>('/api/videos', body),
+  videoAction: <K extends VideoActionName>(id: number, name: K, body: VideoActionRequests[K]) =>
+    post<VideoActionResponse>(`/api/videos/${id}/${name}`, body),
+  publicationAction: <K extends PublicationActionName>(
+    id: number,
+    name: K,
+    body: PublicationActionRequests[K],
+  ) => post<VideoActionResponse>(`/api/publications/${id}/${name}`, body),
   ops: () => get<OpsResponse>('/api/ops'),
   runOps: (name: OpsJobName) => post<OpsRunResponse>(`/api/ops/${name}/run`, {}),
   saveOpsProfile: (body: OpsProfileRequests['save']) =>

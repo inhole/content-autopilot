@@ -192,6 +192,7 @@
 | V2 Reels | Instagram 프로페셔널 계정, Meta 앱의 Instagram 제품, 장기 토큰 | `INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN`, `VIDEO_PLATFORMS=reels` |
 | V3 Shorts | Google Cloud OAuth 클라이언트(데스크톱), `youtube:auth` | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `VIDEO_PLATFORMS=reels,shorts` |
 | 자동 선택 | 위가 다 돌면 | `VIDEO_ENABLED=true` (화·목·토 07:00, 주 3편까지) |
+| 직접 올리기 | 관리자 콘솔(대시보드)이 켜져 있으면 바로 된다. 미리보기와 Reels 발행에는 Supabase 저장소가 필요하다 | `VIDEO_UPLOAD_MAX_MB`(기본 50) |
 
 실제 발행은 `VIDEO_PUBLISH_DRY_RUN=false`로 바꿔야 나간다(기본 true, 로그만 남김).
 
@@ -205,7 +206,7 @@
 
 1. Supabase 대시보드 → Storage → New bucket, 이름 `videos`, **Public bucket** 켜기.
 2. Project Settings → API의 `service_role` 키를 `SUPABASE_SERVICE_KEY`에, 프로젝트 URL(`https://<ref>.supabase.co`)을 `SUPABASE_URL`에 넣는다. service_role 키는 서버에만 둔다.
-3. `VIDEO_STORAGE=supabase`. 무료 플랜 용량(1GB)은 `video-cleanup`이 끝난 영상을 지워서 지킨다.
+3. `VIDEO_STORAGE=supabase`. 무료 플랜 용량(1GB)은 `video-cleanup`이 끝난 영상을 지워서 지킨다. 무료 플랜의 파일당 한도(50MB)가 직접 올리기 한도(`VIDEO_UPLOAD_MAX_MB`)와 같다.
 
 ### 6-3. Instagram (Reels)
 

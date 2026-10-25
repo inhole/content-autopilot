@@ -3,10 +3,13 @@ import type { Script, ScriptSource, StoredVideoGeneration } from './script.ts'
 import {
   captionProblems,
   charCount,
+  cleanHashtags,
   composeCaption,
+  LIMITS,
   type Scene,
   sceneEditProblem,
   sourceLabel,
+  type VideoOrigin,
   type VideoStatus,
   YOUTUBE_TITLE_LIMIT,
 } from './types.ts'
@@ -17,7 +20,9 @@ import {
 
 export type VideoRow = {
   id: number
-  post_id: number
+  /** Null for an owner upload. */
+  post_id: number | null
+  origin: VideoOrigin
   status: VideoStatus
   title: string | null
   caption: string | null
@@ -41,6 +46,10 @@ export type VideoRow = {
   review_revision: number | null
   last_error: string | null
   published_at: Date | null
+  upload_started_at: Date | null
+  original_name: string | null
+  width: number | null
+  height: number | null
   created_at: Date
   updated_at: Date
 }
@@ -214,23 +223,35 @@ export async function requestRescript(
   const [row] = await query<{ regen_seq: number }>(
     `update videos set status = 'SCRIPTING', regen_seq = regen_seq + 1, regen_feedback = $2,
        revision = revision + 1, stage_recoveries = 0, last_error = null, updated_at = now()
-     where id = $1 and status = 'PENDING_REVIEW' and ${g.sql}
+     where id = $1 and status = 'PENDING_REVIEW' and origin = 'generated' and ${g.sql}
      returning regen_seq`,
     [videoId, feedback, ...g.params],
   )
   return row?.regen_seq ?? null
 }
 
-/** Starts a FAILED or EXPIRED video over from the script (`/video <postId>` on an old row). */
+/**
+ * Starts a FAILED or EXPIRED generated video over from the script (`/video <postId>` on an old
+ * row). A video that failed because every publication was cancelled loses those rows, so the next
+ * approval can create them again.
+ */
 export async function restartVideo(videoId: number): Promise<number | null> {
-  const [row] = await query<{ regen_seq: number }>(
-    `update videos set status = 'SCRIPTING', regen_seq = regen_seq + 1, regen_feedback = null,
-       revision = revision + 1, stage_recoveries = 0, last_error = null, updated_at = now()
-     where id = $1 and status in ('FAILED', 'EXPIRED')
-     returning regen_seq`,
-    [videoId],
-  )
-  return row?.regen_seq ?? null
+  return transaction(async (q) => {
+    const [row] = await q<{ regen_seq: number }>(
+      `update videos set status = 'SCRIPTING', regen_seq = regen_seq + 1, regen_feedback = null,
+         revision = revision + 1, stage_recoveries = 0, last_error = null, updated_at = now()
+       where id = $1 and status in ('FAILED', 'EXPIRED') and origin = 'generated'
+         and not exists (
+           select 1 from video_publications p where p.video_id = videos.id
+             and p.status <> 'CANCELLED'
+         )
+       returning regen_seq`,
+      [videoId],
+    )
+    if (!row) return null
+    await q('delete from video_publications where video_id = $1', [videoId])
+    return row.regen_seq
+  })
 }
 
 export type RenderJob = {
@@ -368,7 +389,7 @@ export async function applyEdit(
       `select * from videos where id = $1 and status = 'PENDING_REVIEW' and ${g.sql} for update`,
       [videoId, ...g.params],
     )
-    if (!v?.scenes) return { ok: false, message: STALE }
+    if (!v) return { ok: false, message: STALE }
     if (op.kind === 'title') {
       const text = op.text.trim()
       if (!text) return { ok: false, message: '바꿀 내용이 비어 있어요.' }
@@ -394,6 +415,7 @@ export async function applyEdit(
       )
       return { ok: true, rerender: false }
     }
+    if (!v.scenes) return { ok: false, message: '직접 올린 영상은 장면을 고칠 수 없어요.' }
     const { kind, idx } = op as Extract<EditOp, { idx: number }>
     const text = op.text.trim()
     const problem = sceneEditProblem(kind, text, v.scenes, idx)
@@ -409,6 +431,55 @@ export async function applyEdit(
   })
 }
 
+export type MetaEdit = { title: string; caption: string; hashtags: string[] }
+
+/** Why title, caption and hashtags cannot be used together, or null. */
+export function metaProblem(edit: MetaEdit, sourceUrl: string | null): string | null {
+  const title = edit.title.trim()
+  if (!title) return '제목을 넣어 주세요.'
+  if (charCount(title) > YOUTUBE_TITLE_LIMIT) {
+    return `제목은 ${YOUTUBE_TITLE_LIMIT}자를 넘을 수 없어요.`
+  }
+  // cleanHashtags cuts to the limit (fine for the LLM); an owner's extra tags are refused instead.
+  const distinct = new Set(
+    edit.hashtags.map((t) => t.replace(/^#+/, '').replace(/\s+/g, '')).filter(Boolean),
+  )
+  if (distinct.size > LIMITS.hashtags) return `해시태그는 ${LIMITS.hashtags}개까지예요.`
+  const hashtags = cleanHashtags(edit.hashtags)
+  const problems = captionProblems(
+    composeCaption({ caption: edit.caption.trim(), sourceUrl, hashtags }),
+  )
+  return problems.length ? problems.join(', ') : null
+}
+
+/**
+ * Replaces title, caption and hashtags together (the admin console): the final values are checked
+ * as one, and the revision moves once. Under review only; the video file stays.
+ */
+export async function applyMetaEdit(
+  videoId: number,
+  guard: ReviewGuard,
+  edit: MetaEdit,
+): Promise<{ ok: true } | { ok: false; message: string; stale?: true }> {
+  return transaction(async (q) => {
+    const g = guardSql(guard, 2)
+    const [v] = await q<VideoRow>(
+      `select * from videos where id = $1 and status = 'PENDING_REVIEW' and ${g.sql} for update`,
+      [videoId, ...g.params],
+    )
+    if (!v) return { ok: false, message: STALE, stale: true }
+    const problem = metaProblem(edit, v.source_url)
+    if (problem) return { ok: false, message: problem }
+    await q(
+      `update videos set title = $2, caption = $3, hashtags = $4, revision = revision + 1,
+         updated_at = now()
+       where id = $1`,
+      [videoId, edit.title.trim(), edit.caption.trim(), cleanHashtags(edit.hashtags)],
+    )
+    return { ok: true }
+  })
+}
+
 export async function rejectVideo(videoId: number, guard: ReviewGuard): Promise<boolean> {
   const g = guardSql(guard, 2)
   const rows = await query(
@@ -419,50 +490,92 @@ export async function rejectVideo(videoId: number, guard: ReviewGuard): Promise<
   return rows.length > 0
 }
 
-/** `📤 직접 올림`: an approved video without automatic publications was uploaded by hand. */
-export async function markManualPublished(videoId: number): Promise<boolean> {
+/**
+ * `📤 직접 올림`: an approved video without automatic publications was uploaded by hand. Bound to
+ * the approved revision, so a button or page from before an unapprove/re-approve does nothing.
+ */
+export async function markManualPublished(videoId: number, revision: number): Promise<boolean> {
   const rows = await query(
     `update videos set status = 'PUBLISHED', published_at = now(), updated_at = now()
-     where id = $1 and status = 'APPROVED'
+     where id = $1 and status = 'APPROVED' and revision = $2
        and not exists (select 1 from video_publications p where p.video_id = videos.id)
      returning id`,
-    [videoId],
+    [videoId, revision],
   )
   return rows.length > 0
 }
 
-/** Marks an approved video PUBLISHED once every publication is. */
-export async function completeIfAllPublished(videoId: number): Promise<boolean> {
-  const rows = await query(
-    `update videos set status = 'PUBLISHED', published_at = now(), updated_at = now()
-     where id = $1 and status = 'APPROVED'
-       and exists (select 1 from video_publications p where p.video_id = videos.id)
+// An APPROVED video is finished once every publication is PUBLISHED or CANCELLED: PUBLISHED when
+// at least one went out, FAILED when the owner cancelled them all (docs/plans/video-upload.md 4).
+const FINISH_SET = `status = case when exists (
+         select 1 from video_publications p where p.video_id = v.id and p.status = 'PUBLISHED'
+       ) then 'PUBLISHED' else 'FAILED' end,
+       published_at = (select max(p.published_at) from video_publications p
+                       where p.video_id = v.id and p.status = 'PUBLISHED'),
+       updated_at = now()`
+const FINISHABLE = `v.status = 'APPROVED'
+       and exists (select 1 from video_publications p where p.video_id = v.id)
        and not exists (
-         select 1 from video_publications p where p.video_id = videos.id and p.status <> 'PUBLISHED'
-       )
-     returning id`,
+         select 1 from video_publications p where p.video_id = v.id
+           and p.status not in ('PUBLISHED', 'CANCELLED')
+       )`
+
+/** Finishes an approved video once every publication is done; returns the new status. */
+export async function completeIfAllPublished(
+  videoId: number,
+  q: Query = query,
+): Promise<'PUBLISHED' | 'FAILED' | null> {
+  const [row] = await q<{ status: 'PUBLISHED' | 'FAILED' }>(
+    `update videos v set ${FINISH_SET} where v.id = $1 and ${FINISHABLE} returning v.status`,
     [videoId],
   )
-  return rows.length > 0
+  return row?.status ?? null
 }
 
 /**
- * Completes APPROVED videos whose publications all went out but whose own completion was lost
+ * Finishes APPROVED videos whose publications are all done but whose own completion was lost
  * (the worker stopped between the two updates). Run with every publish-due sweep.
  */
 export async function completePublishedVideos(): Promise<number[]> {
   const rows = await query<{ id: number }>(
-    `update videos v set status = 'PUBLISHED', updated_at = now(),
-       published_at = coalesce(
-         (select max(p.published_at) from video_publications p where p.video_id = v.id), now())
-     where v.status = 'APPROVED'
-       and exists (select 1 from video_publications p where p.video_id = v.id)
-       and not exists (
-         select 1 from video_publications p where p.video_id = v.id and p.status <> 'PUBLISHED'
-       )
-     returning v.id`,
+    `update videos v set ${FINISH_SET} where ${FINISHABLE} returning v.id`,
   )
   return rows.map((r) => r.id)
+}
+
+/**
+ * Takes an approval back (the admin console): only while every publication is SCHEDULED and was
+ * never claimed. A row back in SCHEDULED after an attempt may already exist on the platform (a
+ * Reels container, a Shorts session), so it is not cancelled this way. The claim of a publish job
+ * waits on the row lock and then finds nothing.
+ */
+export async function unapproveVideo(
+  videoId: number,
+  revision: number,
+): Promise<{ ok: true } | { ok: false; message: string; stale?: true }> {
+  return transaction(async (q) => {
+    const [v] = await q<{ id: number }>(
+      "select id from videos where id = $1 and status = 'APPROVED' and revision = $2 for update",
+      [videoId, revision],
+    )
+    if (!v) return { ok: false, message: STALE, stale: true }
+    const pubs = await q<{ status: string; claim_seq: number }>(
+      'select status, claim_seq from video_publications where video_id = $1 for update',
+      [videoId],
+    )
+    if (pubs.some((p) => p.status !== 'SCHEDULED' || Number(p.claim_seq) > 0)) {
+      return { ok: false, message: '이미 발행을 시작해서 승인을 취소할 수 없어요.' }
+    }
+    await q('delete from video_publications where video_id = $1', [videoId])
+    await q(
+      `update videos set status = 'PENDING_REVIEW', revision = revision + 1,
+         review_message_id = null, script_message_id = null, review_revision = null,
+         updated_at = now()
+       where id = $1`,
+      [videoId],
+    )
+    return { ok: true }
+  })
 }
 
 // Maintenance
@@ -471,6 +584,24 @@ export const REVIEW_EXPIRE_HOURS = 72
 export const UNSENT_REVIEW_MINUTES = 10
 export const STUCK_STAGE_MINUTES = 45
 export const MAX_STAGE_RECOVERIES = 2
+
+export const UPLOAD_EXPIRE_HOURS = 1
+
+/**
+ * Expires upload rows whose file never arrived. Counted from the latest file request, so a
+ * request in progress (minutes long at most) is never expired under it.
+ */
+export async function expireUploads(now = new Date()): Promise<number[]> {
+  const rows = await query<{ id: number }>(
+    `update videos set status = 'EXPIRED', updated_at = now()
+     where status = 'UPLOADING'
+       and greatest(created_at, coalesce(upload_started_at, created_at))
+         < $1::timestamptz - make_interval(hours => $2)
+     returning id`,
+    [now, UPLOAD_EXPIRE_HOURS],
+  )
+  return rows.map((r) => r.id)
+}
 
 /** Expires reviews left untouched; returns their message ids so the buttons can be removed. */
 export async function expireVideos(
@@ -548,7 +679,8 @@ export async function recoverStuckStages(
 export async function listVideos(limit = 15): Promise<
   {
     id: number
-    post_id: number
+    post_id: number | null
+    origin: VideoOrigin
     status: VideoStatus
     title: string | null
     duration_ms: number | null
@@ -556,7 +688,7 @@ export async function listVideos(limit = 15): Promise<
   }[]
 > {
   return query(
-    `select v.id, v.post_id, v.status, v.title, v.duration_ms,
+    `select v.id, v.post_id, v.origin, v.status, v.title, v.duration_ms,
             (select min(p.scheduled_at) from video_publications p where p.video_id = v.id
                and p.status in ('SCHEDULED', 'PUBLISHING')) as scheduled_at
      from videos v order by v.id desc limit $1`,

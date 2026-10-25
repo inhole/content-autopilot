@@ -10,7 +10,9 @@ import type {
   CampaignSource,
   CampaignStatus,
 } from '../campaigns/types.ts'
+import type { VideoStatus } from '../video/types.ts'
 import type { CampaignListRow, OverviewData, PostRow } from './data.ts'
+import type { VideoDetailData, VideoListFilter, VideoListRow } from './video-types.ts'
 
 /** `Date` → ISO string, recursively; everything else as is. */
 export type Jsonify<T> = T extends Date
@@ -450,3 +452,96 @@ export type OpsScheduleInvalid = { error: string; fields: string[] }
  * 404 for an unknown name.
  */
 export type OpsRunResponse = { ok: true; queued: boolean }
+
+/**
+ * Videos (docs/plans/video-upload.md 6): generated short videos and owner uploads.
+ * GET /api/videos?status=active|all — active = still in progress (UPLOADING … APPROVED) or changed
+ * in the last 7 days.
+ */
+export type VideoListResponse = {
+  filter: VideoListFilter
+  rows: Jsonify<VideoListRow>[]
+  /** The same limits as the detail, for the upload form (VIDEO_UPLOAD_MAX_MB). */
+  limits: VideoDetailData['limits']
+}
+
+/** GET /api/videos/:id (404 `{ error }` when unknown) */
+export type VideoDetailResponse = Jsonify<VideoDetailData>
+
+export type VideoStatusName = VideoStatus
+
+/**
+ * POST /api/videos: creates an UPLOADING row for an owner upload. Checked like an edit (title
+ * up to 100 characters, caption as published up to 2200, up to 5 hashtags). 200 `{ id, revision }`,
+ * 400 `{ error }`.
+ */
+export type VideoCreateRequest = {
+  title: string
+  caption: string
+  hashtags: string[]
+  sourceUrl?: string | null
+  originalName?: string | null
+}
+export type VideoCreateResponse = { ok: true; id: number; revision: number }
+
+/**
+ * POST /api/videos/:id/file?approve=0|1 — the body is the file itself (`Content-Type` video/mp4
+ * or video/quicktime, `Content-Length` required, same-origin and `X-CSRF-Token` as every write).
+ * 200 `VideoFileResponse`: the file is stored and checked; `approval` is the result of approving
+ * in the same request (null when not asked). 400 `{ error }` the file breaks a rule (the row stays
+ * UPLOADING, another file may follow), 409 `{ error, status }` the row is not UPLOADING any more
+ * (re-read it: PENDING_REVIEW means the file is in), 413 too large, 415 wrong type, 429 another
+ * upload is being processed.
+ */
+export type VideoFileResponse = {
+  ok: true
+  approval:
+    | { ok: true; at: string | null; platforms: string[] }
+    | { ok: false; error: string }
+    | null
+  telegramSynced: boolean
+  detail: VideoDetailResponse | null
+}
+export type VideoFileConflict = ApiError & { status: VideoStatus | null }
+
+/**
+ * POST /api/videos/:id/<action>, on the revision the page displayed:
+ * - approve: next video slot for VIDEO_PLATFORMS (none: the manual-upload handoff)
+ * - unapprove: back to review, only while no publication was attempted
+ * - reject: under review only
+ * - edit: title, caption and hashtags together (under review)
+ * - rescript: a new script (generated videos only), optional feedback
+ * - manualDone: an approved video without publications was uploaded by hand
+ */
+export type VideoActionRequests = {
+  approve: { revision: number }
+  unapprove: { revision: number }
+  reject: { revision: number }
+  edit: { revision: number; title: string; caption: string; hashtags: string[] }
+  rescript: { revision: number; feedback?: string }
+  manualDone: { revision: number }
+}
+export type VideoActionName = keyof VideoActionRequests
+
+/**
+ * POST /api/publications/:id/<action>:
+ * - publishNow `{ scheduledAt }`: only from the slot the page showed
+ * - retry / cancel `{ claimSeq, confirmedNotOnChannel? }`: a FAILED publication, only for the
+ *   attempt the page showed; an unknown Shorts outcome (`error_kind` session) needs the channel
+ *   check (`confirmedNotOnChannel: true`), else 400 `{ error, confirm: true }`
+ */
+export type PublicationActionRequests = {
+  publishNow: { scheduledAt: string }
+  retry: { claimSeq: number; confirmedNotOnChannel?: boolean }
+  cancel: { claimSeq: number; confirmedNotOnChannel?: boolean }
+}
+export type PublicationActionName = keyof PublicationActionRequests
+
+/** 200 for both action families: `detail` is the video as it is now. */
+export type VideoActionResponse = {
+  ok: true
+  telegramSynced: boolean
+  detail: VideoDetailResponse | null
+}
+/** 409: the video or publication changed since the page showed it. */
+export type VideoActionConflict = ApiError & { stale: true }

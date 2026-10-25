@@ -34,7 +34,30 @@ const POST_TONES: Record<string, BadgeTone> = {
   EXPIRED: 'muted',
 }
 
+const VIDEO_TONES: Record<string, BadgeTone> = {
+  UPLOADING: 'outline',
+  SCRIPTING: 'info',
+  RENDERING: 'info',
+  PENDING_REVIEW: 'warning',
+  APPROVED: 'info',
+  PUBLISHED: 'success',
+  REJECTED: 'muted',
+  EXPIRED: 'muted',
+  FAILED: 'destructive',
+}
+
+const PUBLICATION_TONES: Record<string, BadgeTone> = {
+  SCHEDULED: 'info',
+  PUBLISHING: 'info',
+  PUBLISHED: 'success',
+  FAILED: 'destructive',
+  CANCELLED: 'muted',
+}
+
 export const campaignTone = (status: string): BadgeTone => CAMPAIGN_TONES[status] ?? 'outline'
+export const videoTone = (status: string): BadgeTone => VIDEO_TONES[status] ?? 'outline'
+export const publicationTone = (status: string): BadgeTone =>
+  PUBLICATION_TONES[status] ?? 'outline'
 export const postTone = (status: string): BadgeTone => POST_TONES[status] ?? 'outline'
 
 /** D-n tone: past is muted, today and the next 2 days stand out. */

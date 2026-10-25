@@ -260,7 +260,7 @@ COLLECTED ──▶ SKIPPED            (규칙 또는 선별 탈락)
 
 ## 숏폼 영상 파이프라인
 
-발행된 Threads 글을 30~45초 세로 영상으로 만들어 Reels와 Shorts에 올린다. 설계와 결정 이유는 [plans/video.md](plans/video.md)와 [결정 15](decisions.md#15-숏폼-영상은-발행된-글로-만들고-클라우드에서-렌더한다)에 있다. 코드는 `src/video/`, 마이그레이션은 `022`이다. 같은 워커가 같은 pg-boss로 처리한다.
+발행된 Threads 글을 30~45초 세로 영상으로 만들어 Reels와 Shorts에 올린다. 설계와 결정 이유는 [plans/video.md](plans/video.md)와 [결정 15](decisions.md#15-숏폼-영상은-발행된-글로-만들고-클라우드에서-렌더한다)에 있다. 코드는 `src/video/`, 마이그레이션은 `022`와 `024`(직접 올린 영상)이다. 같은 워커가 같은 pg-boss로 처리한다. 관리자 콘솔에서 직접 만든 영상도 올릴 수 있다(아래 「직접 올린 영상」).
 
 ```
 video-pick (VIDEO_CRON) / /video [글 번호]   → videos SCRIPTING
@@ -276,9 +276,9 @@ video-insights (05:30) · video-cleanup (04:30) · video-refresh-token (04:10)
 
 ### 상태
 
-`videos.status`: `SCRIPTING` → `RENDERING` → `PENDING_REVIEW` → `APPROVED` → `PUBLISHED`, 그리고 `REJECTED`, `EXPIRED`, `FAILED`. 원고를 바꾸는 모든 경로는 `PENDING_REVIEW`에서만 동작하고 `revision`을 올린다. 장면이 바뀌면 같은 UPDATE에서 `RENDERING`으로 간다. 그래서 `PENDING_REVIEW`인 영상의 파일은 항상 지금 장면으로 만든 것이다.
+`videos.status`: `SCRIPTING` → `RENDERING` → `PENDING_REVIEW` → `APPROVED` → `PUBLISHED`, 그리고 `REJECTED`, `EXPIRED`, `FAILED`. 직접 올린 영상은 `UPLOADING` → `PENDING_REVIEW`로 들어온다. 승인 취소(발행을 한 번도 시도하지 않았을 때)는 `APPROVED` → `PENDING_REVIEW`다. 원고를 바꾸는 모든 경로는 `PENDING_REVIEW`에서만 동작하고 `revision`을 올린다. 장면이 바뀌면 같은 UPDATE에서 `RENDERING`으로 간다. 그래서 `PENDING_REVIEW`인 영상의 파일은 항상 지금 장면으로 만든 것이다.
 
-`video_publications.status`: `SCHEDULED` → `PUBLISHING` → `PUBLISHED` / `FAILED`. 글 발행과 같은 claim 모델(`claim_seq` 토큰, 15분 지난 `PUBLISHING`은 재개, 3회 실패 뒤 `FAILED`)이다. 인증 오류, 승인 때와 다른 계정, 만료된 업로드 세션은 바로 `FAILED`다.
+`video_publications.status`: `SCHEDULED` → `PUBLISHING` → `PUBLISHED` / `FAILED`, 포기한 실패는 `CANCELLED`. 발행 행이 모두 `PUBLISHED`나 `CANCELLED`가 되면 영상이 끝난다(하나라도 나갔으면 `PUBLISHED`, 아니면 `FAILED`). 글 발행과 같은 claim 모델(`claim_seq` 토큰, 15분 지난 `PUBLISHING`은 재개, 3회 실패 뒤 `FAILED`)이다. 인증 오류, 승인 때와 다른 계정, 만료된 업로드 세션은 바로 `FAILED`다.
 
 ### 중복 발행 방지
 
@@ -286,6 +286,22 @@ video-insights (05:30) · video-cleanup (04:30) · video-refresh-token (04:10)
 - **렌더:** 시작할 때 읽은 `revision`이 그대로일 때만 결과를 쓴다. 아니면 자기가 올린 파일만 지운다(저장 키는 렌더 실행마다 다르다). 렌더 입력 해시(장면, 출처, 브랜드, 음성, 템플릿, 배경음악)가 같으면 다시 렌더하지 않는다.
 - **Reels:** 컨테이너 id를 먼저 저장하고, 다시 시도할 때 재사용한다. 컨테이너가 `PUBLISHED`면 끝난 것이다. 응답이 유실되면 이번 시도 이후 올라온 Reel 중 캡션이 정확히 같은 것 하나만 media id로 쓴다. 처리 중(`IN_PROGRESS`)은 시도 횟수에 넣지 않는다.
 - **Shorts:** 업로드 세션 URL을 먼저 저장하고, 다시 시도할 때 세션에 받은 바이트를 묻는다(200/201 완료, 308 이어 올리기). 세션이 404/410이면 새로 올리지 않고 채널 최근 업로드에서 태그 `capub<id>`를 찾는다. 없으면 `FAILED` 알림을 보내고, 사람이 확인하고 누른 `🔁` 만 새 업로드를 시작한다.
+
+### 직접 올린 영상
+
+관리자 콘솔 `/videos/new`에서 올린다([plans/video-upload.md](plans/video-upload.md)). `POST /api/videos`가 `UPLOADING` 행(`origin 'upload'`, 글 없음)을 만들고, `POST /api/videos/:id/file`이 파일을 받는다.
+
+```
+파일 요청 → upload_started_at 기록(만료 기준) → 임시 폴더로 스트리밍(상한, sha256)
+  → ffprobe 검사(Reels·Shorts 규격) → MP4로 다시 묶기(-c copy, faststart, edit list 없음) → 다시 검사
+  → video_upload_attempts에 키 기록 → 저장소 업로드
+  → 트랜잭션: 시도 행 삭제(회수 표시가 없을 때만) + UPLOADING이면 파일 반영 → PENDING_REVIEW
+  → (선택) 같은 요청에서 승인, 아니면 Telegram 검수
+```
+
+- 반영 조건이 안 맞는 것이 확실하면(행 0개) 자기 파일을 지운다. 결과를 모르면 지우지 않고 시도 행을 남겨 `video-cleanup`이 회수한다(참조가 없을 때만 삭제).
+- 업로드 처리는 한 번에 하나다. ffprobe·ffmpeg는 서버가 만든 임시 경로만, `file` 프로토콜과 `mov` demuxer로만 연다.
+- 원고 재작성·다시 시작·장면 수정은 생성 영상에만 된다. 자동 선택의 주간 한도도 생성 영상만 센다.
 
 ### 영상 데이터
 

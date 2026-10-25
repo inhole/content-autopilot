@@ -1,6 +1,6 @@
 # 웹 대시보드
 
-Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험단 진행, 최근 Threads 글과 성과를 보는 화면이다. 관리자 콘솔로 넓히는 중이다(roadmap.md 3절). 1단계(Telegram 1회용 코드 로그인), 2단계(체험단 조작), 3단계(Threads 글 검수·예약과 만료 초안), 4단계(운영: 작업 지금 실행, 설정·프로필 보기)까지 있다.
+Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험단 진행, 최근 Threads 글과 성과를 보는 화면이다. 관리자 콘솔로 넓히는 중이다(roadmap.md 3절). 1단계(Telegram 1회용 코드 로그인), 2단계(체험단 조작), 3단계(Threads 글 검수·예약과 만료 초안), 4단계(운영: 작업 지금 실행, 설정·프로필 보기)와 영상(숏폼 목록·검수·발행, 직접 만든 영상 올리기)까지 있다.
 
 워커 안에서 뜬다. 별도 프로세스 없이 `node:http`로 같은 워커 안에서 돈다 (`src/web/`).
 
@@ -58,7 +58,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 - 빌드 폴더 위치는 기본 `<repo>/web/dist`이고, 환경 변수 `WEB_DIST_DIR`로 바꿀 수 있다.
 - Railway는 배포 때 빌드 스크립트(`npm run build`)를 실행해야 한다. Railpack이 `build` 스크립트를 자동으로 돌리는지는 배포해서 확인해야 한다 (미검증). 돌리지 않으면 Settings에서 Build Command를 `npm run build`로 지정한다.
 - 화면 파일(`index.html`, `/assets/*` 등)은 데이터가 없으므로 로그인 없이 내려준다. 앱이 `/api/auth/session`으로 세션을 확인하고 없으면 로그인 화면을 띄운다. `/api/*` 데이터는 세션이 있어야 하고 없으면 JSON 401이다. 경로에 `..`나 `%2e%2e`, 역슬래시, NUL이 있으면 400으로 막고 `web/dist` 밖의 파일은 읽지 않는다.
-- CSP: React 앱 응답은 `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: <이미지 호스트>; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. API와 그 밖의 응답은 `default-src 'none'; frame-ancestors 'none'`이다.
+- CSP: React 앱 응답은 `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: <이미지 호스트>; media-src 'self' <SUPABASE_URL 출처> blob:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. API와 그 밖의 응답은 `default-src 'none'; frame-ancestors 'none'`이다.
 
 ### 개발
 
@@ -80,6 +80,8 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 | `/api/posts/<id>` | Threads 글 상세: 본 글과 답글 조각(`post_parts`의 상태·시도·오류·조각 링크), 주제, 확인 필요, `revision`·`regen_seq`, 재활용 판정과 살리기 전 원문, 묶음 글 id, 글자 수 한도(`limits`: 500, 마지막 답글은 CTA 자리를 뺀 값). 숫자가 아니거나 없는 id는 404 |
 | `/api/revivable` | 다시 살릴 수 있는 만료 초안(`/revive` 목록과 같다: 30일 안의 `EXPIRED` 뉴스 초안 중 살리지도 묶지도 않은 것, 최신순 20개)과 저장된 판정 |
 | `/api/ops` | 운영 화면: 작업 5개의 큐·일정(cron)·마지막 실행(상태, 시각, 실패 오류 300자)·`busy`, 파이프라인 설정(하루 초안 수, 발행 시각, 연결 글, dry-run, 체험단 하루 최대, 선별 방식, 시간대), 체험단 프로필(읽지 못하면 null). 비밀값은 담지 않는다 |
+| `/api/videos?status=active\|all` | 숏폼 영상 목록. active는 진행 중(`UPLOADING`~`APPROVED`)이거나 최근 7일에 바뀐 영상. 행마다 출처(`post_id`, 직접 올림이면 null), 길이, 해상도, 발행 행 요약 |
+| `/api/videos/<id>` | 영상 상세: 제목·캡션·해시태그·발행 캡션(`full_caption`), 원고(생성 영상), 파일 정보와 `video_url`, 발행 행(상태, 시각, 시도, `claim_seq`, 오류, 링크), 원본 글, 한도. 숫자가 아니거나 없는 id는 404 |
 | `/api/insights?days=30` | 최근 `days`일(7~90) 안에 발행한 글의 반응. `daily`는 글마다 가장 최근 스냅샷을 KST 발행일별로 합산(오래된 날부터, 글이 있는 날만), `top`은 조회수 상위 10개 |
 
 인증 API (`src/web/server.ts`, 모양은 `api-types.ts`의 `AuthSessionResponse`, `AuthCodeResponse`):
@@ -177,6 +179,30 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 - **Telegram과 맞추기** (best effort, `telegramSynced`): `approve`는 검수 메시지 키보드를 지우고, 봇과 같은 `✅ 승인 · 발행 예정` 메시지를 `⏪ 예약 취소` / `🚀 지금 발행` 버튼과 함께 보낸다(`Reviewer.notifyApproved`). `reject`와 `regenerate`는 검수 메시지 키보드를 지우고 봇과 같은 문구를 보낸다(재생성 결과는 새 검수 메시지로 온다). `edit`·`deletePart`는 답장했을 때처럼 새 검수 메시지를 보낸다. `unschedule`은 안내와 새 검수 메시지를, `publishNow`·`retryParts`는 안내를 보낸다. `revive`는 작업이 검수 메시지를 보낸다. 웹에서 예약을 바꾸면 Telegram의 예전 `⏪`/`🚀` 버튼은 남지만, 시각이 달라져 누르면 `이미 처리된 예약이에요`로 끝난다. 메시지 문구는 봇과 같은 함수(`approvedText` 등)를 쓴다.
 - 세션·같은 출처·`X-CSRF-Token` 검사와 16KB 본문 한도는 체험단 조작과 같다. 감사 기록은 `post.<조작>`(`post:<id>`), `post.add`, `revive.check`, `digest.build`이다. 본문·피드백·의견은 남기지 않고 글자 수, 조각 번호, 사유, 예약 시각만 남긴다.
 
+## 영상
+
+사이드바의 `영상`은 숏폼 영상(Reels·Shorts)의 목록·상세와 직접 만든 영상 올리기다. 설계는 [plans/video-upload.md](plans/video-upload.md)다. 목록 행을 누르면 상세 시트가 열리고, `https` 저장소(Supabase)에 있는 파일은 미리보기가 나온다.
+
+**올리기** (`/videos/new`): 파일(mp4·mov, 3초~3분, `VIDEO_UPLOAD_MAX_MB` 기본 50MB), 제목(필수, 100자), 캡션, 해시태그(5개), 출처 주소(선택), `올리면서 바로 승인`(기본 켬). 파일을 고르면 브라우저가 크기·방향·길이를 먼저 보고 경고한다.
+
+1. `POST /api/videos` `{ title, caption, hashtags, sourceUrl?, originalName? }` → `videos` 행(`origin 'upload'`, `UPLOADING`). 200 `{ id, revision }`.
+2. `POST /api/videos/<id>/file?approve=0|1`, 본문은 파일 자체(`Content-Type: video/mp4` 또는 `video/quicktime`, `Content-Length` 필수, 세션·같은 출처·`X-CSRF-Token`). 서버가 임시 폴더로 받아 ffprobe로 Reels·Shorts 규격(H.264/HEVC 4:2:0, 세로, 가로 1920px 이하, 23~60fps, 25Mbps, AAC 48kHz·128kbps·2채널)을 검사하고, 다시 인코딩하지 않고 MP4로 다시 묶어(faststart, edit list 없음) 저장한다. 200 `{ approval, telegramSynced, detail }`(`approval`은 같은 요청에서 한 승인의 결과, 실패해도 파일은 들어가 검수 대기로 남는다), 400 규칙 위반(행은 `UPLOADING`에 남아 다른 파일을 다시 보낼 수 있다), 409 이미 파일이 있거나 만료(`status` 포함), 411/413/415, 429 다른 업로드 처리 중(한 번에 하나).
+3. 화면은 XHR 진행률을 보여 주고, 연결이 끊기면 행을 다시 읽어 `UPLOADING`이면 같은 행으로 다시 보내고, 검수 대기·승인이면 완료로, 만료면 새 행으로 시작한다. 파일이 오지 않은 `UPLOADING` 행은 마지막 시도부터 1시간 뒤 만료된다.
+
+**상세의 조작** (화면이 본 `revision`·시도·예약 시각에 묶인다. 맞지 않으면 409 `{ error, stale: true }`):
+
+| 상태 | 조작 | API |
+|---|---|---|
+| `PENDING_REVIEW` | `승인`(다음 빈 영상 슬롯), `폐기`, `다시 만들기`(생성 영상만, 피드백 선택), 제목·캡션·해시태그 저장(한 번에, revision 한 번) | `POST /api/videos/<id>/<approve\|reject\|rescript\|edit>` `{ revision, … }` |
+| `APPROVED` | `승인 취소`(발행 행이 모두 한 번도 시도되지 않았을 때만), `직접 올림 완료`(발행 행이 없을 때) | `unapprove`, `manualDone` `{ revision }` |
+| `UPLOADING` | 파일 다시 올리기 | `POST /api/videos/<id>/file` |
+| 발행 행 `SCHEDULED` | `지금 발행`(그 예약 시각일 때만, 5분 주기 확인 때 나간다) | `POST /api/publications/<id>/publishNow` `{ scheduledAt }` |
+| 발행 행 `FAILED` | `다시 시도`(다음 빈 슬롯), `중단`(`CANCELLED`; 발행 행이 모두 끝나면 하나라도 나갔으면 영상 `PUBLISHED`, 아니면 `FAILED`) | `retry`, `cancel` `{ claimSeq, confirmedNotOnChannel? }` |
+
+- 결과를 모르는 Shorts 실패(업로드 세션 만료)는 "채널에 올라가지 않은 것을 확인했어요"를 체크해야 다시 시도·중단할 수 있다(`confirmedNotOnChannel`, 없으면 400 `{ confirm: true }`). Telegram 실패 알림의 버튼도 같은 시도(`claim_seq`)에 묶인다.
+- Telegram과 맞추기(최선 노력, `telegramSynced`): 승인은 검수 버튼을 지우고 봇과 같은 승인 안내(자동 플랫폼이 없으면 직접 올리기 안내)를 보낸다. 폐기·다시 만들기는 버튼을 지우고 알린다. 수정과 승인 취소는 새 검수 메시지를 보낸다. 다시 시도·중단·직접 올림은 알린다.
+- 감사 기록은 `video.create`, `video.file`(크기, 결과, 거절 사유), `video.<조작>`(`video:<id>`), `publication.<조작>`(`publication:<id>`)이다. 제목·캡션·피드백 원문은 남기지 않는다.
+
 ## 운영
 
 사이드바 `운영` 페이지(`/ops`)에서 정해진 시각에 도는 작업을 지금 한 번 돌리고, 수집 일정·발행 시각·하루 수량과 체험단 프로필을 고친다. 그 밖의 설정(연결 글, dry-run, 선별 방식, 시간대)은 읽기 전용이다(`.env`를 고쳐 재배포한다). 편집은 아래 「일정과 수량 편집」, 「체험단 프로필 편집」을 본다. 카드의 `편집`은 오른쪽 시트(폰에서는 전체 폭)를 열고, 저장·취소 버튼은 시트 아래에 고정된다. 시트를 닫으면(X, Esc, 바깥 클릭) 취소와 같고, 다시 열 때마다 그 순간 화면의 값과 `revision`으로 폼을 채운다.
@@ -237,10 +263,11 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 
 ## 보안
 
-- 데이터 조회 API는 GET/HEAD만 허용하고 나머지는 405를 돌려준다. 쓰기는 인증 API 다섯 개, 체험단 조작 여덟 개(`POST /api/campaigns/:id/<조작>`), Threads 조작 아홉 개(`POST /api/posts/:id/<조작>`)와 `POST /api/posts/add`, `/api/revivable/check`, `/api/digest`, 운영 작업 실행(`POST /api/ops/<name>/run`), 프로필 저장·되돌리기(`POST /api/ops/profile`, `/api/ops/profile/reset`), 일정·수량 저장·되돌리기(`POST /api/ops/schedule`, `/api/ops/schedule/reset`)뿐이고, 모두 같은 출처 JSON + 세션 + CSRF 토큰을 요구한다.
+- 데이터 조회 API는 GET/HEAD만 허용하고 나머지는 405를 돌려준다. 쓰기는 인증 API 다섯 개, 체험단 조작 여덟 개(`POST /api/campaigns/:id/<조작>`), Threads 조작 아홉 개(`POST /api/posts/:id/<조작>`)와 `POST /api/posts/add`, `/api/revivable/check`, `/api/digest`, 운영 작업 실행(`POST /api/ops/<name>/run`), 프로필 저장·되돌리기(`POST /api/ops/profile`, `/api/ops/profile/reset`), 일정·수량 저장·되돌리기(`POST /api/ops/schedule`, `/api/ops/schedule/reset`), 영상 조작(`POST /api/videos`, `/api/videos/:id/<조작>`, `/api/publications/:id/<조작>`)뿐이고, 모두 같은 출처 JSON + 세션 + CSRF 토큰을 요구한다. 예외인 영상 파일(`POST /api/videos/:id/file`)은 JSON 대신 `video/mp4`·`video/quicktime` 본문이고 나머지 검사는 같다. 형식·크기·세션·CSRF는 본문을 읽기 전에 확인하고, 거절한 본문은 읽지 않고 연결을 닫는다.
 - 코드와 세션 토큰은 sha256 해시로만 저장하고 `timingSafeEqual`로 비교한다. CSRF 토큰은 세션 토큰에서 파생해 따로 저장하지 않는다.
 - 코드 요청과 확인은 DB advisory lock으로 순서를 맞춰, 동시에 들어온 요청이 한도나 1회 사용 규칙을 넘지 못한다.
 - React가 모든 동적 텍스트를 이스케이프하고, `http(s)` URL만 링크로 만든다.
+- 영상 미리보기는 `https` 주소일 때만 그리고, CSP `media-src`는 이 서버와 `SUPABASE_URL`의 출처, 그리고 올리기 전에 브라우저가 고른 파일의 길이·해상도를 읽는 `blob:`만 허용한다.
 - 썸네일은 `https`이고 호스트가 `st.kakaocdn.net`, `t1.daumcdn.net`, `img1.kakaocdn.net`, `gift-s.kakaocdn.net`(선물하기), `image.msscdn.net`(무신사)인 URL만 그린다. CSP `img-src`도 같은 호스트만 허용한다.
 - CSP, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`를 보낸다.
 

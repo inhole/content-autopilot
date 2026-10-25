@@ -194,3 +194,44 @@ export function isHttpUrl(url: string | null | undefined): url is string {
     return false
   }
 }
+
+export const VIDEO_STATUS_LABELS: Record<string, string> = {
+  UPLOADING: '올리는 중',
+  SCRIPTING: '원고 작성',
+  RENDERING: '렌더 중',
+  PENDING_REVIEW: '검수 대기',
+  APPROVED: '승인',
+  PUBLISHED: '발행됨',
+  REJECTED: '폐기',
+  EXPIRED: '만료',
+  FAILED: '실패',
+}
+
+export const PUBLICATION_STATUS_LABELS: Record<string, string> = {
+  SCHEDULED: '예약',
+  PUBLISHING: '발행 중',
+  PUBLISHED: '발행됨',
+  FAILED: '실패',
+  CANCELLED: '중단',
+}
+
+export const PLATFORM_LABELS: Record<string, string> = {
+  REELS: 'Reels',
+  SHORTS: 'Shorts',
+}
+
+export const videoStatusLabel = (status: string) => VIDEO_STATUS_LABELS[status] ?? status
+
+/** `24초`, `1분 5초`; `-` when unknown. */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return '-'
+  const s = Math.round(ms / 1000)
+  return s < 60 ? `${s}초` : `${Math.floor(s / 60)}분${s % 60 ? ` ${s % 60}초` : ''}`
+}
+
+/** `12.3MB`, `850KB`; `-` when unknown. */
+export function formatBytes(n: number | null | undefined): string {
+  if (n == null) return '-'
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`
+  return `${Math.max(1, Math.round(n / 1024))}KB`
+}

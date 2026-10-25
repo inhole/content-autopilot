@@ -19,7 +19,12 @@ import {
 import { createReviewer } from './review/telegram.ts'
 import { applySchedules } from './schedules.ts'
 import { loadRuntimeSettings } from './settings.ts'
-import { registerVideoBots, registerVideoJobs } from './video/jobs.ts'
+import {
+  enqueueVideoReview,
+  enqueueVideoScript,
+  registerVideoBots,
+  registerVideoJobs,
+} from './video/jobs.ts'
 import { runOpsJob } from './web/ops.ts'
 import { startDashboard } from './web/server.ts'
 
@@ -103,6 +108,14 @@ const dashboard = await startDashboard(
       giftCollect: CQ.collect,
       musinsaCollect: CQ.musinsaCollect,
     }),
+  {
+    enqueueReview: async (videoId) => {
+      await enqueueVideoReview(boss, videoId)
+    },
+    enqueueScript: async (videoId, seq) => {
+      await enqueueVideoScript(boss, videoId, seq)
+    },
+  },
 )
 
 const effective = await loadRuntimeSettings()

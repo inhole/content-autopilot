@@ -459,10 +459,11 @@ export async function unalertedFailures(): Promise<
     platform: Platform
     last_error: string | null
     error_kind: string | null
+    claim_seq: number
   }[]
 > {
   return query(
-    `select id, video_id, platform, last_error, error_kind from video_publications
+    `select id, video_id, platform, last_error, error_kind, claim_seq from video_publications
      where status = 'FAILED' and alerted_at is null order by id`,
   )
 }

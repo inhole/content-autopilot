@@ -16,6 +16,8 @@ import {
   parsePostLimit,
   type RevivableData,
 } from './data.ts'
+import { parseVideoFilter, videoLimits } from './video-data.ts'
+import type { VideoDetailData, VideoListFilter, VideoListRow } from './video-types.ts'
 
 /** Data access of the JSON API; the server wires the DB loaders, tests pass fakes. */
 export type ApiLoaders = {
@@ -27,6 +29,8 @@ export type ApiLoaders = {
   post(id: number): Promise<PostDetailData | null>
   revivable(): Promise<RevivableData>
   ops(): Promise<OpsResponse>
+  videos(filter: VideoListFilter): Promise<VideoListRow[]>
+  video(id: number): Promise<VideoDetailData | null>
 }
 
 export type ApiResult = { status: number; body: unknown }
@@ -87,6 +91,22 @@ export async function handleApi(
     const idText = postDetail[1] as string
     if (!/^\d{1,15}$/.test(idText)) return apiError(404, 'not found')
     const data = await loaders.post(Number(idText))
+    return data ? { status: 200, body: data } : apiError(404, 'not found')
+  }
+
+  if (path === '/api/videos') {
+    const filter = parseVideoFilter(params.get('status'))
+    return {
+      status: 200,
+      body: { filter, rows: await loaders.videos(filter), limits: videoLimits() },
+    }
+  }
+
+  const videoDetail = /^\/api\/videos\/([^/]+)$/.exec(path)
+  if (videoDetail) {
+    const idText = videoDetail[1] as string
+    if (!/^\d{1,15}$/.test(idText)) return apiError(404, 'not found')
+    const data = await loaders.video(Number(idText))
     return data ? { status: 200, body: data } : apiError(404, 'not found')
   }
 

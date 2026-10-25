@@ -4,6 +4,7 @@ import { createDashboardServer, readCookie } from '../src/web/server.ts'
 import { fakeActions } from './fake-actions.ts'
 import { CSRF, fakeAuth, SESSION_HEADERS, TOKEN } from './fake-auth.ts'
 import { fakePostActions } from './fake-post-actions.ts'
+import { fakeVideoActions } from './fake-video-actions.ts'
 
 const { auth, state } = fakeAuth()
 const { actions, state: actionState } = fakeActions()
@@ -112,7 +113,10 @@ const server = createDashboardServer({
     ops: async () => {
       throw new Error('not used')
     },
+    videos: async () => [],
+    video: async () => null,
   },
+  videoActions: fakeVideoActions().actions,
 })
 
 beforeAll(async () => {

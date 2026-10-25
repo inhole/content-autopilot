@@ -28,7 +28,8 @@ export async function bestCandidate(now = new Date()): Promise<number | null> {
 /** Videos created in the last 7 days (rejected ones too: each one cost a review). */
 export async function videosThisWeek(now = new Date()): Promise<number> {
   const [row] = await query<{ n: number }>(
-    `select count(*)::int as n from videos where created_at >= $1::timestamptz - interval '7 days'`,
+    `select count(*)::int as n from videos
+     where origin = 'generated' and created_at >= $1::timestamptz - interval '7 days'`,
     [now],
   )
   return row?.n ?? 0

@@ -12,6 +12,7 @@ import { createDashboardServer, type DashboardLoaders } from '../src/web/server.
 import { fakeActions } from './fake-actions.ts'
 import { fakeAuth, SESSION_HEADERS } from './fake-auth.ts'
 import { fakePostActions } from './fake-post-actions.ts'
+import { fakeVideoActions } from './fake-video-actions.ts'
 
 const A = SESSION_HEADERS
 const NOW = new Date('2026-10-18T03:00:00Z')
@@ -127,6 +128,8 @@ const loaders: DashboardLoaders = {
       limits: { text: 500, lastFollowup: 480, cta: null },
     }
   },
+  videos: async () => [],
+  video: async () => null,
   ops: () =>
     loadOps({
       runs: async (queues) =>
@@ -208,6 +211,7 @@ const app = createDashboardServer({
   runOps: async () => true,
   profileEdit: { save: async () => null, reset: async () => null },
   scheduleEdit: { save: async () => null, reset: async () => null },
+  videoActions: fakeVideoActions().actions,
   notify,
   now: () => NOW,
   webDist: buildDir,
@@ -220,6 +224,7 @@ const legacy = createDashboardServer({
   runOps: async () => true,
   profileEdit: { save: async () => null, reset: async () => null },
   scheduleEdit: { save: async () => null, reset: async () => null },
+  videoActions: fakeVideoActions().actions,
   notify,
   now: () => NOW,
   webDist: missingDist,

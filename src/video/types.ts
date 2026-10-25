@@ -1,6 +1,7 @@
 // Short-form videos (docs/plans/video.md). Shared types, limits and text assembly.
 
 export type VideoStatus =
+  | 'UPLOADING'
   | 'SCRIPTING'
   | 'RENDERING'
   | 'PENDING_REVIEW'
@@ -11,7 +12,10 @@ export type VideoStatus =
   | 'FAILED'
 
 export type Platform = 'REELS' | 'SHORTS'
-export type PublicationStatus = 'SCHEDULED' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED'
+export type PublicationStatus = 'SCHEDULED' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED' | 'CANCELLED'
+
+/** `generated` from a published post, `upload` made by the owner (docs/plans/video-upload.md). */
+export type VideoOrigin = 'generated' | 'upload'
 
 export const PLATFORM_LABELS: Record<Platform, string> = {
   REELS: 'Instagram Reels',
