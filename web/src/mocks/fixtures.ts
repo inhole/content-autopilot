@@ -1062,6 +1062,7 @@ export const mockVideoList = (status: string | null): VideoListResponse => {
   const filter = status === 'all' ? 'all' : 'active'
   return {
     filter,
+    limits: VIDEO_LIMITS,
     rows: [...mockVideos.values()]
       .filter((v) => filter === 'all' || v.video.status !== 'PUBLISHED')
       .sort((a, b) => b.video.id - a.video.id)

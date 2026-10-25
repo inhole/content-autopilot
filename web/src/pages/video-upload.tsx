@@ -17,7 +17,7 @@ import { Spinner } from '@/components/ui/spinner.tsx'
 import { Textarea } from '@/components/ui/textarea.tsx'
 import { ApiError, api, uploadVideoFile } from '@/lib/api.ts'
 import { charCount, formatBytes, formatDuration, isHttpUrl } from '@/lib/format.ts'
-import { refreshVideoData } from '@/lib/queries.ts'
+import { refreshVideoData, useVideos } from '@/lib/queries.ts'
 import type { VideoFileResponse } from '@/lib/types.ts'
 import { parseHashtags } from '@/pages/video-detail.tsx'
 
@@ -26,7 +26,10 @@ import { parseHashtags } from '@/pages/video-detail.tsx'
 // UPLOADING → send the file again to the same row; under review or approved → the file is in;
 // expired → the next try starts a new row.
 
-/** The server's limits (also in GET /api/videos/:id); checked here only to warn early. */
+/**
+ * Fallbacks until GET /api/videos answers with the server's limits (VIDEO_UPLOAD_MAX_MB); the
+ * form only warns early, the server checks again.
+ */
 export const UPLOAD_LIMITS = {
   maxBytes: 50 * 1024 * 1024,
   minMs: 3_000,
@@ -61,11 +64,13 @@ function useFileProbe(file: File | null): Probe {
   return probe
 }
 
-export function fileWarnings(file: File, probe: Probe): string[] {
+export function fileWarnings(
+  file: File,
+  probe: Probe,
+  maxBytes: number = UPLOAD_LIMITS.maxBytes,
+): string[] {
   const out: string[] = []
-  if (file.size > UPLOAD_LIMITS.maxBytes) {
-    out.push(`${formatBytes(UPLOAD_LIMITS.maxBytes)}를 넘어서 올릴 수 없어요`)
-  }
+  if (file.size > maxBytes) out.push(`${formatBytes(maxBytes)}를 넘어서 올릴 수 없어요`)
   if (probe) {
     if (probe.width > probe.height) out.push('가로 영상이에요. 세로 영상만 올릴 수 있어요')
     if (probe.durationMs < UPLOAD_LIMITS.minMs || probe.durationMs > UPLOAD_LIMITS.maxMs) {
@@ -85,15 +90,20 @@ export function VideoUploadPage() {
   const [tags, setTags] = useState('')
   const [sourceUrl, setSourceUrl] = useState('')
   const [approve, setApprove] = useState(true)
-  // The UPLOADING row of this form, kept across retries.
+  // The UPLOADING row of this form, kept across retries while the fields stay as they were sent.
   const [videoId, setVideoId] = useState<number | null>(null)
+  const [sentMeta, setSentMeta] = useState<string | null>(null)
+  const limits = useVideos('active').data?.limits
+  const maxBytes = limits?.uploadMaxBytes ?? UPLOAD_LIMITS.maxBytes
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<Done | null>(null)
   const probe = useFileProbe(file)
 
   const hashtags = parseHashtags(tags)
-  const warnings = file ? fileWarnings(file, probe) : []
+  const warnings = file ? fileWarnings(file, probe, maxBytes) : []
+  const meta = { title, caption, hashtags, sourceUrl: sourceUrl.trim() || null }
+  const metaKey = JSON.stringify(meta)
   const titleLen = charCount(title.trim())
   const sourceOk = !sourceUrl.trim() || isHttpUrl(sourceUrl.trim())
   const ready =
@@ -102,7 +112,7 @@ export function VideoUploadPage() {
     titleLen <= UPLOAD_LIMITS.title &&
     new Set(hashtags).size <= UPLOAD_LIMITS.hashtags &&
     sourceOk &&
-    !(file.size > UPLOAD_LIMITS.maxBytes)
+    !(file.size > maxBytes)
   const busy = progress !== null
 
   const pickFile = (f: File | null) => {
@@ -131,18 +141,15 @@ export function VideoUploadPage() {
     if (!ready || !file || busy) return
     setError(null)
     setProgress(0)
-    let id = videoId
+    // Fields changed after the row was made: start a new row (the old one expires unused), so
+    // what gets approved is what the form shows.
+    let id = videoId !== null && sentMeta === metaKey ? videoId : null
     try {
       if (id === null) {
-        const created = await api.createVideo({
-          title,
-          caption,
-          hashtags,
-          sourceUrl: sourceUrl.trim() || null,
-          originalName: file.name,
-        })
+        const created = await api.createVideo({ ...meta, originalName: file.name })
         id = created.id
         setVideoId(id)
+        setSentMeta(metaKey)
       }
       const result = await uploadVideoFile(id, file, approve, (loaded, total) =>
         setProgress(total ? loaded / total : 0),
@@ -172,7 +179,7 @@ export function VideoUploadPage() {
       </Button>
       <PageHeader
         title="영상 올리기"
-        description="직접 만든 세로 영상(mp4·mov, 3초~3분, 50MB까지)을 검수·예약 발행에 올려요"
+        description={`직접 만든 세로 영상(mp4·mov, 3초~3분, ${formatBytes(maxBytes)}까지)을 검수·예약 발행에 올려요`}
       />
       <Card>
         <CardContent>

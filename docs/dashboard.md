@@ -58,7 +58,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 - 빌드 폴더 위치는 기본 `<repo>/web/dist`이고, 환경 변수 `WEB_DIST_DIR`로 바꿀 수 있다.
 - Railway는 배포 때 빌드 스크립트(`npm run build`)를 실행해야 한다. Railpack이 `build` 스크립트를 자동으로 돌리는지는 배포해서 확인해야 한다 (미검증). 돌리지 않으면 Settings에서 Build Command를 `npm run build`로 지정한다.
 - 화면 파일(`index.html`, `/assets/*` 등)은 데이터가 없으므로 로그인 없이 내려준다. 앱이 `/api/auth/session`으로 세션을 확인하고 없으면 로그인 화면을 띄운다. `/api/*` 데이터는 세션이 있어야 하고 없으면 JSON 401이다. 경로에 `..`나 `%2e%2e`, 역슬래시, NUL이 있으면 400으로 막고 `web/dist` 밖의 파일은 읽지 않는다.
-- CSP: React 앱 응답은 `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: <이미지 호스트>; media-src 'self' <SUPABASE_URL 출처>; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. API와 그 밖의 응답은 `default-src 'none'; frame-ancestors 'none'`이다.
+- CSP: React 앱 응답은 `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: <이미지 호스트>; media-src 'self' <SUPABASE_URL 출처> blob:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. API와 그 밖의 응답은 `default-src 'none'; frame-ancestors 'none'`이다.
 
 ### 개발
 
@@ -267,7 +267,7 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 - 코드와 세션 토큰은 sha256 해시로만 저장하고 `timingSafeEqual`로 비교한다. CSRF 토큰은 세션 토큰에서 파생해 따로 저장하지 않는다.
 - 코드 요청과 확인은 DB advisory lock으로 순서를 맞춰, 동시에 들어온 요청이 한도나 1회 사용 규칙을 넘지 못한다.
 - React가 모든 동적 텍스트를 이스케이프하고, `http(s)` URL만 링크로 만든다.
-- 영상 미리보기는 `https` 주소일 때만 그리고, CSP `media-src`는 이 서버와 `SUPABASE_URL`의 출처만 허용한다.
+- 영상 미리보기는 `https` 주소일 때만 그리고, CSP `media-src`는 이 서버와 `SUPABASE_URL`의 출처, 그리고 올리기 전에 브라우저가 고른 파일의 길이·해상도를 읽는 `blob:`만 허용한다.
 - 썸네일은 `https`이고 호스트가 `st.kakaocdn.net`, `t1.daumcdn.net`, `img1.kakaocdn.net`, `gift-s.kakaocdn.net`(선물하기), `image.msscdn.net`(무신사)인 URL만 그린다. CSP `img-src`도 같은 호스트만 허용한다.
 - CSP, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`를 보낸다.
 

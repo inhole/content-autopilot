@@ -163,7 +163,7 @@ function mediaHosts(): string {
 }
 
 /** CSP of the React app: same-origin scripts only. */
-export const APP_CSP = `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; media-src ${mediaHosts()}; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+export const APP_CSP = `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${IMG_HOSTS}; media-src ${mediaHosts()} blob:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
 const API_CSP = "default-src 'none'; frame-ancestors 'none'"
 
 const SECURITY_HEADERS = {

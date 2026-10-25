@@ -461,6 +461,8 @@ export type OpsRunResponse = { ok: true; queued: boolean }
 export type VideoListResponse = {
   filter: VideoListFilter
   rows: Jsonify<VideoListRow>[]
+  /** The same limits as the detail, for the upload form (VIDEO_UPLOAD_MAX_MB). */
+  limits: VideoDetailData['limits']
 }
 
 /** GET /api/videos/:id (404 `{ error }` when unknown) */

@@ -16,7 +16,7 @@ import {
   parsePostLimit,
   type RevivableData,
 } from './data.ts'
-import { parseVideoFilter } from './video-data.ts'
+import { parseVideoFilter, videoLimits } from './video-data.ts'
 import type { VideoDetailData, VideoListFilter, VideoListRow } from './video-types.ts'
 
 /** Data access of the JSON API; the server wires the DB loaders, tests pass fakes. */
@@ -96,7 +96,10 @@ export async function handleApi(
 
   if (path === '/api/videos') {
     const filter = parseVideoFilter(params.get('status'))
-    return { status: 200, body: { filter, rows: await loaders.videos(filter) } }
+    return {
+      status: 200,
+      body: { filter, rows: await loaders.videos(filter), limits: videoLimits() },
+    }
   }
 
   const videoDetail = /^\/api\/videos\/([^/]+)$/.exec(path)

@@ -121,7 +121,11 @@ describe('routes', () => {
 describe('reads', () => {
   it('lists with the active filter by default and returns one video or 404', async () => {
     const list = await fetch(`${base}/api/videos?status=bogus`, { headers: SESSION_HEADERS })
-    expect(await list.json()).toEqual({ filter: 'active', rows: [] })
+    expect(await list.json()).toMatchObject({
+      filter: 'active',
+      rows: [],
+      limits: { uploadMaxBytes: 50 * 1024 * 1024, uploadTypes: ['video/mp4', 'video/quicktime'] },
+    })
     await fetch(`${base}/api/videos?status=all`, { headers: SESSION_HEADERS })
     expect(listCalls).toEqual(['active', 'all'])
     expect((await fetch(`${base}/api/videos/41`, { headers: SESSION_HEADERS })).status).toBe(200)

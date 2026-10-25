@@ -177,15 +177,42 @@ class FakeXhr {
 }
 
 describe('VideoUploadPage', () => {
+  // The server side of the form: the list (for the limits), row creation and the row read-back.
+  let created: number
+  let uploadMaxBytes: number
+  let rowStatus: string
+
   beforeEach(() => {
     FakeXhr.responses = []
     FakeXhr.sent = []
     vi.stubGlobal('XMLHttpRequest', FakeXhr)
+    created = 0
+    uploadMaxBytes = 50 * 1024 * 1024
+    rowStatus = 'UPLOADING'
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.startsWith('/api/videos?')) {
+        return json({ ...mockVideoList('active'), rows: [], limits: { ...detail(3).limits, uploadMaxBytes } })
+      }
+      if (u === '/api/videos' && init?.method === 'POST') {
+        return json({ ok: true, id: 12 + created++, revision: 1 })
+      }
+      const m = /^\/api\/videos\/(\d+)$/.exec(u)
+      if (m) {
+        const d = detail(3)
+        return json({ ...d, video: { ...d.video, id: Number(m[1]), status: rowStatus } })
+      }
+      return json({ error: 'unexpected' }, 500)
+    })
   })
 
-  const fill = async () => {
+  const createCalls = () =>
+    fetchMock.mock.calls.filter(([u, i]) => String(u) === '/api/videos' && i?.method === 'POST')
+
+  const fill = async (size?: number) => {
     render(wrap(<VideoUploadPage />))
     const file = new File(['video-bytes'], 'my clip.mp4', { type: 'video/mp4' })
+    if (size) Object.defineProperty(file, 'size', { value: size })
     await userEvent.upload(screen.getByLabelText('영상 파일'), file)
     // The title starts from the file name.
     expect(screen.getByLabelText('제목')).toHaveValue('my clip')
@@ -193,7 +220,6 @@ describe('VideoUploadPage', () => {
   }
 
   it('creates the row, sends the file with the CSRF token and reports the approval', async () => {
-    fetchMock.mockResolvedValueOnce(json({ ok: true, id: 12, revision: 1 }))
     FakeXhr.responses.push({
       status: 200,
       body: { ok: true, approval: { ok: true, at: null, platforms: [] }, telegramSynced: true, detail: null },
@@ -201,9 +227,12 @@ describe('VideoUploadPage', () => {
     await fill()
     await userEvent.click(screen.getByRole('button', { name: '올리기' }))
     expect(await screen.findByText(/올리고 승인했어요/)).toBeInTheDocument()
-    expect(lastPost()).toEqual({
-      path: '/api/videos',
-      body: { title: 'my clip', caption: '', hashtags: ['AI'], sourceUrl: null, originalName: 'my clip.mp4' },
+    expect(JSON.parse(String(createCalls()[0]?.[1]?.body))).toEqual({
+      title: 'my clip',
+      caption: '',
+      hashtags: ['AI'],
+      sourceUrl: null,
+      originalName: 'my clip.mp4',
     })
     expect(FakeXhr.sent).toEqual([
       {
@@ -214,7 +243,6 @@ describe('VideoUploadPage', () => {
   })
 
   it('keeps the row after a rejected file and sends the next file to the same row', async () => {
-    fetchMock.mockResolvedValueOnce(json({ ok: true, id: 12, revision: 1 }))
     FakeXhr.responses.push({ status: 400, body: { error: '세로 영상만 올릴 수 있어요' } })
     FakeXhr.responses.push({
       status: 200,
@@ -227,21 +255,48 @@ describe('VideoUploadPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '올리기' }))
     expect(await screen.findByText(/검수 대기로 들어갔고/)).toBeInTheDocument()
     // One row only: the second try went to /api/videos/12/file again.
-    expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1)
+    expect(createCalls()).toHaveLength(1)
     expect(FakeXhr.sent.map((s) => s.url)).toEqual([
       '/api/videos/12/file?approve=0',
       '/api/videos/12/file?approve=0',
     ])
   })
 
+  it('starts a new row when the fields changed after a failed try', async () => {
+    FakeXhr.responses.push({ status: 400, body: { error: '세로 영상만 올릴 수 있어요' } })
+    FakeXhr.responses.push({
+      status: 200,
+      body: { ok: true, approval: null, telegramSynced: true, detail: null },
+    })
+    await fill()
+    await userEvent.click(screen.getByRole('button', { name: '올리기' }))
+    expect(await screen.findByText('세로 영상만 올릴 수 있어요')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('캡션'), '고친 캡션')
+    await userEvent.click(screen.getByRole('button', { name: '올리기' }))
+    expect(await screen.findByText(/올렸/)).toBeInTheDocument()
+    // What gets approved is what the form shows: the second row carries the new caption.
+    expect(createCalls()).toHaveLength(2)
+    expect(JSON.parse(String(createCalls()[1]?.[1]?.body)).caption).toBe('고친 캡션')
+    expect(FakeXhr.sent.map((s) => s.url)).toEqual([
+      '/api/videos/12/file?approve=1',
+      '/api/videos/13/file?approve=1',
+    ])
+  })
+
+  it('takes the size limit from the server', async () => {
+    uploadMaxBytes = 100 * 1024 * 1024
+    await fill(60 * 1024 * 1024)
+    await waitFor(() => expect(screen.getByText(/100.0MB까지/)).toBeInTheDocument())
+    expect(screen.queryByText(/넘어서 올릴 수 없어요/)).toBeNull()
+    expect(screen.getByRole('button', { name: '올리기' })).toBeEnabled()
+  })
+
   it('reads the row after a dropped connection: a file that got in counts as done', async () => {
-    fetchMock
-      .mockResolvedValueOnce(json({ ok: true, id: 12, revision: 1 }))
-      .mockResolvedValueOnce(json({ ...detail(3), video: { ...detail(3).video, id: 12, status: 'PENDING_REVIEW' } }))
+    rowStatus = 'PENDING_REVIEW'
     // No scripted response: the fake drops the connection.
     await fill()
     await userEvent.click(screen.getByRole('button', { name: '올리기' }))
     expect(await screen.findByText(/검수 대기로 들어갔고/)).toBeInTheDocument()
-    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toBe('/api/videos/12')
+    expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/videos/12')).toBe(true)
   })
 })
