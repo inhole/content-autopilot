@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { query } from '../../src/db/pool.ts'
 import {
   approveVideo,
+  cancelPublication,
   reschedulePublication,
   resetDryRun,
+  retryFailedPublication,
   VideoNotReviewableError,
 } from '../../src/video/approve.ts'
 import { cleanupVideoFiles } from '../../src/video/cleanup.ts'
@@ -33,7 +35,7 @@ import {
   restartVideo,
   unsentReviews,
 } from '../../src/video/store.ts'
-import { retryPublication, sendManualUpload } from '../../src/video/telegram.ts'
+import { sendManualUpload } from '../../src/video/telegram.ts'
 import { SilentTts } from '../../src/video/tts.ts'
 import type { Platform } from '../../src/video/types.ts'
 import { FakeInstagram, FakeStorage, FakeYouTube } from '../fake-video.ts'
@@ -144,6 +146,7 @@ const pub = async (id: number) => {
     permalink: string | null
     error_kind: string | null
     scheduled_at: Date
+    claim_seq: number
   }>('select * from video_publications where id = $1', [id])
   if (!row) throw new Error('missing publication')
   return row
@@ -307,6 +310,23 @@ describe('approval', () => {
     expect(acc?.account_user_id).toBe('dry-run')
   })
 
+  it('restarts a generated video whose publications were all cancelled', async () => {
+    const a = await approved(['REELS'])
+    await query(
+      "update video_publications set status = 'FAILED', claim_seq = 1, error_kind = 'other' where video_id = $1",
+      [a.id],
+    )
+    expect(await cancelPublication(a.pubs[0]?.id ?? 0, { claimSeq: 1 })).toMatchObject({
+      ok: true,
+      finished: 'FAILED',
+    })
+    expect(await restartVideo(a.id)).not.toBeNull()
+    // The cancelled rows are gone, so the next approval can create them again.
+    expect(
+      await query('select 1 from video_publications where video_id = $1', [a.id]),
+    ).toHaveLength(0)
+  })
+
   it('approves without publications when no platform is automatic', async () => {
     const a = await approved([])
     expect(a.approval).toEqual({ at: null, platforms: [] })
@@ -447,8 +467,24 @@ describe('Shorts publishing', () => {
       errorKind: 'session',
     })
     expect(yt.sessions.size).toBe(1)
-    const at = await retryPublication(s.id)
-    expect(at).not.toBeNull()
+    const failed = await pub(s.id)
+    // An unknown outcome needs the channel check first.
+    expect(await retryFailedPublication(s.id, { claimSeq: failed.claim_seq })).toMatchObject({
+      ok: false,
+      reason: 'confirm',
+    })
+    expect(
+      await retryFailedPublication(s.id, {
+        claimSeq: failed.claim_seq - 1,
+        confirmedNotOnChannel: true,
+      }),
+    ).toMatchObject({ ok: false, reason: 'stale' })
+    expect(
+      await retryFailedPublication(s.id, {
+        claimSeq: failed.claim_seq,
+        confirmedNotOnChannel: true,
+      }),
+    ).toMatchObject({ ok: true })
     expect(await pub(s.id)).toMatchObject({ status: 'SCHEDULED', upload_url: null, attempts: 0 })
     // Not before the new slot.
     expect((await publishPublication(s.id, { youtube: yt, storage: s.storage })).kind).toBe(

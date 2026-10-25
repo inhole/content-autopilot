@@ -115,6 +115,8 @@ export const schema = z.object({
   VIDEO_BGM_PATH: z.string().optional(),
   VIDEO_STORAGE: z.enum(['local', 'supabase']).default('local'),
   VIDEO_LOCAL_DIR: z.string().default('data/videos'),
+  // Largest owner upload through the admin console (docs/plans/video-upload.md 9).
+  VIDEO_UPLOAD_MAX_MB: z.coerce.number().int().min(1).max(200).default(50),
   SUPABASE_URL: z
     .string()
     .refine((v) => /^https:\/\/[^/?#\s]+\/?$/.test(v), 'must be an https origin without a path')

@@ -5,7 +5,8 @@ import { query } from '../db/pool.ts'
 import {
   type Approval,
   approveVideo,
-  reschedulePublication,
+  cancelPublication,
+  retryFailedPublication,
   VideoNotReviewableError,
 } from './approve.ts'
 import { formatScript } from './script.ts'
@@ -64,18 +65,27 @@ export function parseVideoAction(
   return { action: m[1] as VideoAction, videoId: Number(m[2]), revision: Number(m[3]) }
 }
 
-/** Retry button under a publication failure alert. */
-export const encodePubRetry = (publicationId: number) => `vpub:retry:${publicationId}`
-export function parsePubRetry(data: string): number | null {
-  const m = /^vpub:retry:(\d+)$/.exec(data)
-  return m ? Number(m[1]) : null
+/**
+ * Buttons under a publication failure alert, bound to the failed attempt (claim_seq) like the web
+ * console's guard. `confirm` is the retry after an unknown Shorts outcome: the owner checked the
+ * channel. Buttons of the old `vpub:retry:<id>` form no longer parse (treated as stale).
+ */
+export type PubButton = 'retry' | 'confirm' | 'cancel'
+export const encodePubButton = (action: PubButton, publicationId: number, claimSeq: number) =>
+  `vpub:${action}:${publicationId}:${claimSeq}`
+export function parsePubButton(
+  data: string,
+): { action: PubButton; publicationId: number; claimSeq: number } | null {
+  const m = /^vpub:(retry|confirm|cancel):(\d+):(\d+)$/.exec(data)
+  if (!m) return null
+  return { action: m[1] as PubButton, publicationId: Number(m[2]), claimSeq: Number(m[3]) }
 }
 
-/** `📤 직접 올림` under the manual-upload message. */
-export const encodeManualDone = (videoId: number) => `vman:${videoId}`
-export function parseManualDone(data: string): number | null {
-  const m = /^vman:(\d+)$/.exec(data)
-  return m ? Number(m[1]) : null
+/** `📤 직접 올림` under the manual-upload message, bound to the approved revision. */
+export const encodeManualDone = (videoId: number, revision: number) => `vman:${videoId}:${revision}`
+export function parseManualDone(data: string): { videoId: number; revision: number } | null {
+  const m = /^vman:(\d+):(\d+)$/.exec(data)
+  return m ? { videoId: Number(m[1]), revision: Number(m[2]) } : null
 }
 
 const EDIT = /^(수정|화면)\s*(\d+)\s*[:：]\s*/
@@ -114,8 +124,24 @@ const seconds = (ms: number | null) => (ms == null ? '-' : `${Math.round(ms / 10
 const cut = (text: string, max: number) =>
   [...text].length <= max ? text : `${[...text].slice(0, max - 1).join('')}…`
 
+/** The review text of an owner upload: no script, the file and the caption as published. */
+function formatUploadReview(v: VideoRow): string {
+  const size = v.width && v.height ? ` · ${v.width}×${v.height}` : ''
+  const lines = [
+    `🎬 영상 #${v.id} · ${seconds(v.duration_ms)} · 직접 올림${size}`,
+    '',
+    `제목: ${v.title ?? '-'}`,
+    '',
+    fullCaption(v),
+    '',
+    '답장: "제목:"·"캡션:"은 그대로 교체 (직접 올린 영상은 다시 만들 수 없어요)',
+  ]
+  return cut(lines.join('\n'), MESSAGE_LIMIT)
+}
+
 /** The script message: header, scenes, caption as published, reply help. Pure. */
 export function formatVideoReview(v: VideoRow, opts: { silent?: boolean } = {}): string {
+  if (v.origin === 'upload') return formatUploadReview(v)
   const script = scriptOf(v)
   const lines = [
     `🎬 영상 #${v.id} · ${seconds(v.duration_ms)} · 장면 ${v.scenes?.length ?? 0} · 원본 글 #${v.post_id}`,
@@ -131,11 +157,11 @@ export function formatVideoReview(v: VideoRow, opts: { silent?: boolean } = {}):
   return cut(lines.join('\n'), MESSAGE_LIMIT)
 }
 
-const reviewKeyboard = (videoId: number, revision: number) =>
-  new InlineKeyboard()
-    .text('✅ 승인', encodeVideoAction('ok', videoId, revision))
-    .text('🔁 다시 만들기', encodeVideoAction('re', videoId, revision))
-    .text('🗑 폐기', encodeVideoAction('rej', videoId, revision))
+function reviewKeyboard(v: VideoRow): InlineKeyboard {
+  const kb = new InlineKeyboard().text('✅ 승인', encodeVideoAction('ok', v.id, v.revision))
+  if (v.origin === 'generated') kb.text('🔁 다시 만들기', encodeVideoAction('re', v.id, v.revision))
+  return kb.text('🗑 폐기', encodeVideoAction('rej', v.id, v.revision))
+}
 
 export const formatVideoTime = (d: Date) =>
   d.toLocaleString('ko-KR', {
@@ -201,12 +227,19 @@ export async function notifyPublicationFailure(f: {
   platform: Platform
   last_error: string | null
   error_kind: string | null
+  claim_seq: number
 }): Promise<void> {
-  const label = f.error_kind === 'session' ? '🔁 확인했어요, 새로 올리기' : '🔁 다시 시도'
-  await send(
-    publicationFailedText(f.video_id, f.platform, f.last_error, f.error_kind),
-    new InlineKeyboard().text(label, encodePubRetry(f.id)),
-  )
+  const unknown = f.error_kind === 'session'
+  const kb = new InlineKeyboard()
+    .text(
+      unknown ? '🔁 확인했어요, 새로 올리기' : '🔁 다시 시도',
+      encodePubButton(unknown ? 'confirm' : 'retry', f.id, f.claim_seq),
+    )
+    .text(
+      unknown ? '🛑 확인했어요, 중단' : '🛑 발행 중단',
+      encodePubButton('cancel', f.id, f.claim_seq),
+    )
+  await send(publicationFailedText(f.video_id, f.platform, f.last_error, f.error_kind), kb)
 }
 
 /**
@@ -223,7 +256,7 @@ export async function sendManualUpload(videoId: number): Promise<boolean> {
   if (pubs.length > 0) return false
   await send(
     `📋 영상 #${v.id} 캡션 (복사해서 쓰세요)\n\n${fullCaption(v)}`,
-    new InlineKeyboard().text('📤 직접 올림', encodeManualDone(v.id)),
+    new InlineKeyboard().text('📤 직접 올림', encodeManualDone(v.id, v.revision)),
   )
   return true
 }
@@ -250,17 +283,27 @@ export async function sendVideoReview(
     link_preview_options: { is_disabled: true },
   })
   const bytes = await storage.download(v.video_url)
-  const videoMsg = await api.sendVideo(chatId, new InputFile(bytes, `video-${v.id}.mp4`), {
+  const common = {
     caption: cut(
-      `🎬 #${v.id} ${v.title ?? ''}\n↑ 원고 · 버튼으로 승인하거나 원고·영상에 답장`,
+      `🎬 #${v.id} ${v.title ?? ''}\n↑ ${v.origin === 'upload' ? '내용' : '원고'} · 버튼으로 승인하거나 답장`,
       VIDEO_CAPTION_LIMIT,
     ),
-    reply_markup: reviewKeyboard(v.id, v.revision),
-    supports_streaming: true,
-    width: 1080,
-    height: 1920,
-    ...(v.duration_ms ? { duration: Math.round(v.duration_ms / 1000) } : {}),
-  })
+    reply_markup: reviewKeyboard(v),
+  }
+  let videoMsg: { message_id: number }
+  try {
+    videoMsg = await api.sendVideo(chatId, new InputFile(bytes, `video-${v.id}.mp4`), {
+      ...common,
+      supports_streaming: true,
+      width: v.width ?? 1080,
+      height: v.height ?? 1920,
+      ...(v.duration_ms ? { duration: Math.round(v.duration_ms / 1000) } : {}),
+    })
+  } catch (err) {
+    // Telegram refuses some valid uploads as a video (codec, size); the file still reviews fine.
+    console.warn(`[video review] #${v.id} sendVideo failed, sending a file`, (err as Error).message)
+    videoMsg = await api.sendDocument(chatId, new InputFile(bytes, `video-${v.id}.mp4`), common)
+  }
   const registered = await registerReview(
     v.id,
     v.revision,
@@ -337,7 +380,7 @@ export function registerVideoBot(bot: Bot, deps: VideoBotDeps): void {
       }
       const lines = rows.map(
         (r) =>
-          `#${r.id} ${r.status} · 글 #${r.post_id} · ${seconds(r.duration_ms)}` +
+          `#${r.id} ${r.status} · ${r.post_id === null ? '직접 올림' : `글 #${r.post_id}`} · ${seconds(r.duration_ms)}` +
           (r.scheduled_at ? ` · ${formatVideoTime(r.scheduled_at)} 예정` : '') +
           (r.title ? `\n   ${cut(r.title, 40)}` : ''),
       )
@@ -392,36 +435,55 @@ export function registerVideoBot(bot: Bot, deps: VideoBotDeps): void {
   })
 
   bot.callbackQuery(/^vpub:/, async (ctx) => {
-    const id = parsePubRetry(ctx.callbackQuery.data)
-    if (id === null) {
-      await ctx.answerCallbackQuery({ text: '알 수 없는 버튼이에요' })
+    const press = parsePubButton(ctx.callbackQuery.data)
+    if (!press) {
+      await ctx.answerCallbackQuery({ text: '이전 버튼이에요. 관리자 화면에서 다시 시도해 주세요' })
+      await ctx.editMessageReplyMarkup().catch(() => {})
       return
     }
+    // Pressing a button of an unknown-outcome alert is the owner's channel check.
+    const guard = { claimSeq: press.claimSeq, confirmedNotOnChannel: press.action !== 'retry' }
     try {
-      const at = await retryPublication(id)
-      await ctx.editMessageReplyMarkup().catch(() => {})
-      if (!at) {
-        await ctx.answerCallbackQuery({ text: '다시 시도할 발행이 없어요' })
+      if (press.action === 'cancel') {
+        const r = await cancelPublication(press.publicationId, guard)
+        if (!r.ok) {
+          await ctx.answerCallbackQuery({ text: r.message })
+          if (r.reason === 'stale') await ctx.editMessageReplyMarkup().catch(() => {})
+          return
+        }
+        await ctx.editMessageReplyMarkup().catch(() => {})
+        await ctx.answerCallbackQuery()
+        await ctx.reply(cancelledText(r.videoId, r.finished))
         return
       }
+      const r = await retryFailedPublication(press.publicationId, guard)
+      if (!r.ok) {
+        await ctx.answerCallbackQuery({ text: r.message })
+        if (r.reason === 'stale') await ctx.editMessageReplyMarkup().catch(() => {})
+        return
+      }
+      await ctx.editMessageReplyMarkup().catch(() => {})
       await ctx.answerCallbackQuery()
-      await ctx.reply(`🔁 ${formatVideoTime(at)}에 다시 발행해요`)
+      await ctx.reply(`🔁 ${formatVideoTime(r.at)}에 다시 발행해요`)
     } catch (err) {
       await ctx.answerCallbackQuery({ text: errText(err) }).catch(() => {})
     }
   })
 
   bot.callbackQuery(/^vman:/, async (ctx) => {
-    const id = parseManualDone(ctx.callbackQuery.data)
-    if (id === null) {
-      await ctx.answerCallbackQuery({ text: '알 수 없는 버튼이에요' })
+    const press = parseManualDone(ctx.callbackQuery.data)
+    if (!press) {
+      await ctx.answerCallbackQuery({
+        text: '이전 버튼이에요. /video <글 번호>로 다시 받아 주세요',
+      })
+      await ctx.editMessageReplyMarkup().catch(() => {})
       return
     }
     try {
-      const done = await markManualPublished(id)
+      const done = await markManualPublished(press.videoId, press.revision)
       await ctx.editMessageReplyMarkup().catch(() => {})
-      await ctx.answerCallbackQuery(done ? {} : { text: '이미 처리된 영상이에요' })
-      if (done) await ctx.reply(`📤 영상 #${id} 직접 올림으로 기록했어요`)
+      await ctx.answerCallbackQuery(done ? {} : { text: '이미 처리됐거나 승인이 바뀐 영상이에요' })
+      if (done) await ctx.reply(`📤 영상 #${press.videoId} 직접 올림으로 기록했어요`)
     } catch (err) {
       await ctx.answerCallbackQuery({ text: errText(err) }).catch(() => {})
     }
@@ -432,13 +494,15 @@ export function registerVideoBot(bot: Bot, deps: VideoBotDeps): void {
     if (!replyTo) return next()
     const v = await videoForMessage(replyTo)
     if (!v) return next()
-    await handleReply(ctx, v.id, replyTo, ctx.message.text, deps)
+    await handleReply(ctx, v, replyTo, ctx.message.text, deps)
   })
 }
 
-async function videoForMessage(messageId: number): Promise<{ id: number } | null> {
-  const [row] = await query<{ id: number }>(
-    `select id from videos where $1 in (review_message_id, script_message_id)
+async function videoForMessage(
+  messageId: number,
+): Promise<{ id: number; origin: VideoRow['origin'] } | null> {
+  const [row] = await query<{ id: number; origin: VideoRow['origin'] }>(
+    `select id, origin from videos where $1 in (review_message_id, script_message_id)
      order by id desc limit 1`,
     [messageId],
   )
@@ -447,13 +511,20 @@ async function videoForMessage(messageId: number): Promise<{ id: number } | null
 
 async function handleReply(
   ctx: Context,
-  videoId: number,
+  video: { id: number; origin: VideoRow['origin'] },
   replyTo: number,
   text: string,
   deps: VideoBotDeps,
 ): Promise<void> {
+  const videoId = video.id
   try {
     const parsed = parseVideoReply(text)
+    if (parsed.kind === 'feedback' && video.origin === 'upload') {
+      await ctx.reply(
+        '직접 올린 영상은 다시 만들 수 없어요. "제목:"이나 "캡션:"으로 답장해서 고쳐 주세요.',
+      )
+      return
+    }
     if (parsed.kind === 'feedback') {
       const seq = await requestRescript(videoId, { replyTo }, text)
       if (seq === null) {
@@ -480,17 +551,13 @@ async function handleReply(
   }
 }
 
-/**
- * The retry button: a FAILED publication goes to the next free slot. After an expired upload
- * session the owner confirmed nothing went up, so the session is dropped and a new upload starts.
- */
-export async function retryPublication(publicationId: number): Promise<Date | null> {
-  const [row] = await query<{ error_kind: string | null }>(
-    "select error_kind from video_publications where id = $1 and status = 'FAILED'",
-    [publicationId],
-  )
-  if (!row) return null
-  return reschedulePublication(publicationId, 'FAILED', {
-    clearUpload: row.error_kind === 'session',
-  })
+/** After a publication was cancelled: what became of the video. */
+export function cancelledText(videoId: number, finished: 'PUBLISHED' | 'FAILED' | null): string {
+  const tail =
+    finished === 'PUBLISHED'
+      ? ' · 다른 플랫폼은 발행돼서 영상은 발행 완료로 끝냈어요'
+      : finished === 'FAILED'
+        ? ' · 발행된 곳이 없어서 영상은 실패로 끝냈어요'
+        : ''
+  return `🛑 영상 #${videoId} 발행 하나를 중단했어요${tail}`
 }

@@ -3,12 +3,13 @@ import type { VideoRow } from '../src/video/store.ts'
 import { guardSql } from '../src/video/store.ts'
 import {
   approvedVideoText,
+  cancelledText,
   encodeManualDone,
-  encodePubRetry,
+  encodePubButton,
   encodeVideoAction,
   formatVideoReview,
   parseManualDone,
-  parsePubRetry,
+  parsePubButton,
   parseVideoAction,
   parseVideoReply,
   publicationFailedText,
@@ -20,9 +21,16 @@ describe('callbacks', () => {
     expect(data.length).toBeLessThanOrEqual(64)
     expect(parseVideoAction(data)).toEqual({ action: 'ok', videoId: 123456, revision: 42 })
     expect(parseVideoAction('vid:nope:1:1')).toBeNull()
-    expect(parsePubRetry(encodePubRetry(9))).toBe(9)
-    expect(parseManualDone(encodeManualDone(5))).toBe(5)
-    expect(parsePubRetry('vpub:retry:x')).toBeNull()
+    expect(parsePubButton(encodePubButton('confirm', 9, 4))).toEqual({
+      action: 'confirm',
+      publicationId: 9,
+      claimSeq: 4,
+    })
+    expect(encodePubButton('cancel', 123456, 999999).length).toBeLessThanOrEqual(64)
+    expect(parseManualDone(encodeManualDone(5, 7))).toEqual({ videoId: 5, revision: 7 })
+    // Buttons from before the attempt/revision guards no longer parse: they are stale.
+    expect(parsePubButton('vpub:retry:9')).toBeNull()
+    expect(parseManualDone('vman:5')).toBeNull()
   })
 })
 
@@ -66,6 +74,7 @@ describe('guardSql', () => {
 const row = (over: Partial<VideoRow> = {}): VideoRow => ({
   id: 3,
   post_id: 11,
+  origin: 'generated',
   status: 'PENDING_REVIEW',
   title: '제목',
   caption: '캡션',
@@ -92,6 +101,10 @@ const row = (over: Partial<VideoRow> = {}): VideoRow => ({
   review_revision: null,
   last_error: null,
   published_at: null,
+  upload_started_at: null,
+  original_name: null,
+  width: 1080,
+  height: 1920,
   created_at: new Date(),
   updated_at: new Date(),
   ...over,
@@ -105,6 +118,17 @@ describe('formatVideoReview', () => {
     expect(text).toContain('[2] 본문\n둘째 문장.')
     expect(text).toContain('출처: https://example.com/a')
     expect(text).toContain('수정N:')
+  })
+
+  it('shows an owner upload without a script and without regeneration help', () => {
+    const text = formatVideoReview(
+      row({ origin: 'upload', post_id: null, scenes: null, width: 720, height: 1280 }),
+    )
+    expect(text).toContain('🎬 영상 #3 · 31초 · 직접 올림 · 720×1280')
+    expect(text).toContain('제목: 제목')
+    expect(text).toContain('캡션\n\n출처: https://example.com/a\n\n#AI')
+    expect(text).toContain('다시 만들 수 없어요')
+    expect(text).not.toContain('수정N:')
   })
 
   it('stays within the Telegram message limit', () => {
@@ -122,6 +146,12 @@ describe('notification texts', () => {
         platforms: ['REELS', 'SHORTS'],
       }),
     ).toMatch(/Instagram Reels · YouTube Shorts 발행 예정/)
+  })
+
+  it('says how the video ended after a cancellation', () => {
+    expect(cancelledText(2, 'PUBLISHED')).toMatch(/발행 완료로/)
+    expect(cancelledText(2, 'FAILED')).toMatch(/실패로/)
+    expect(cancelledText(2, null)).toBe('🛑 영상 #2 발행 하나를 중단했어요')
   })
 
   it('adds a hint for token and account failures', () => {

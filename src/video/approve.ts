@@ -2,7 +2,7 @@ import { config } from '../config.ts'
 import { type Query, query, transaction } from '../db/pool.ts'
 import { nextFreeSlot } from '../lib/time.ts'
 import { currentAccountId, DRY_RUN_ACCOUNT } from './accounts.ts'
-import { guardSql, type ReviewGuard } from './store.ts'
+import { completeIfAllPublished, guardSql, type ReviewGuard } from './store.ts'
 import { type Platform, toPlatform } from './types.ts'
 
 // Approval (docs/plans/video.md 3-7, 3-8): one transaction locks the video, picks the slot,
@@ -200,4 +200,116 @@ export async function reschedulePublication(
       if (!isUniqueViolation(err) || attempt >= SLOT_RETRIES) throw err
     }
   }
+}
+
+/**
+ * What the owner saw of a FAILED publication (docs/plans/video-upload.md 4): the failed attempt's
+ * claim_seq and, when the outcome is unknown (an expired Shorts session), that they checked the
+ * channel. Web and Telegram pass the same guard.
+ */
+export type FailedGuard = { claimSeq: number; confirmedNotOnChannel?: boolean }
+
+export type FailedDecision<T> =
+  | ({ ok: true } & T)
+  | { ok: false; reason: 'stale' | 'confirm'; message: string }
+
+const STALE_FAILURE = '이미 처리됐거나 그 뒤에 다시 시도한 발행이에요.'
+const CONFIRM_CHANNEL = '이전 업로드가 끝났는지 몰라요. 채널에 없는 것을 확인한 뒤 눌러 주세요.'
+
+/** Locks the FAILED row the guard points at, or says why not. */
+async function lockFailed(
+  q: Query,
+  publicationId: number,
+  guard: FailedGuard,
+): Promise<
+  | { ok: true; pub: { video_id: number; platform: Platform; error_kind: string | null } }
+  | { ok: false; reason: 'stale' | 'confirm'; message: string }
+> {
+  const [pub] = await q<{ video_id: number; platform: Platform; error_kind: string | null }>(
+    `select video_id, platform, error_kind from video_publications
+     where id = $1 and status = 'FAILED' and claim_seq = $2 for update`,
+    [publicationId, guard.claimSeq],
+  )
+  if (!pub) return { ok: false, reason: 'stale', message: STALE_FAILURE }
+  if (pub.error_kind === 'session' && !guard.confirmedNotOnChannel) {
+    return { ok: false, reason: 'confirm', message: CONFIRM_CHANNEL }
+  }
+  return { ok: true, pub }
+}
+
+/**
+ * Retries a FAILED publication at the next free slot of its platform. After an unknown outcome
+ * the confirmed channel check drops the old upload session, so a new upload starts.
+ */
+export async function retryFailedPublication(
+  publicationId: number,
+  guard: FailedGuard,
+  opts: { now?: Date } = {},
+): Promise<FailedDecision<{ at: Date }>> {
+  const now = opts.now ?? new Date()
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await transaction(async (q) => {
+        const locked = await lockFailed(q, publicationId, guard)
+        if (!locked.ok) return locked
+        const at = await nextVideoSlot(q, [locked.pub.platform], now)
+        await q(
+          `update video_publications set status = 'SCHEDULED', scheduled_at = $2, attempts = 0,
+             alerted_at = null, error_kind = null,
+             upload_url = case when $3 then null else upload_url end, updated_at = now()
+           where id = $1`,
+          [publicationId, at, locked.pub.error_kind === 'session'],
+        )
+        return { ok: true as const, at }
+      })
+    } catch (err) {
+      if (!isUniqueViolation(err) || attempt >= SLOT_RETRIES) throw err
+    }
+  }
+}
+
+/**
+ * Gives up on a FAILED publication (CANCELLED) and finishes the video when nothing else is left:
+ * PUBLISHED if another platform went out, FAILED if none did.
+ */
+export async function cancelPublication(
+  publicationId: number,
+  guard: FailedGuard,
+): Promise<FailedDecision<{ videoId: number; finished: 'PUBLISHED' | 'FAILED' | null }>> {
+  return transaction(async (q) => {
+    // The video first, then its publications: the same lock order as unapproveVideo.
+    const [owner] = await q<{ video_id: number }>(
+      'select video_id from video_publications where id = $1',
+      [publicationId],
+    )
+    if (!owner) return { ok: false, reason: 'stale', message: STALE_FAILURE }
+    await q('select id from videos where id = $1 for update', [owner.video_id])
+    const locked = await lockFailed(q, publicationId, guard)
+    if (!locked.ok) return locked
+    await q(
+      `update video_publications set status = 'CANCELLED', alerted_at = coalesce(alerted_at, now()),
+         updated_at = now()
+       where id = $1`,
+      [publicationId],
+    )
+    const finished = await completeIfAllPublished(locked.pub.video_id, q)
+    return { ok: true as const, videoId: locked.pub.video_id, finished }
+  })
+}
+
+/**
+ * Moves one SCHEDULED publication to just before now, only if its slot is still the one the
+ * caller saw (the admin console's `지금 발행`). The publish sweep then claims it as usual.
+ */
+export async function publishPublicationNow(
+  publicationId: number,
+  scheduledAt: Date,
+): Promise<boolean> {
+  const rows = await query(
+    `update video_publications set scheduled_at = now() - make_interval(secs => id * 0.001),
+       updated_at = now()
+     where id = $1 and status = 'SCHEDULED' and scheduled_at = $2 returning id`,
+    [publicationId, scheduledAt],
+  )
+  return rows.length > 0
 }

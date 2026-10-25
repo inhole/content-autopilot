@@ -6,7 +6,7 @@ import { query } from '../db/pool.ts'
 import { formatFinalFailure, isFinalAttempt } from '../jobs.ts'
 import { getYouTubeApi, instagramTokenExpiry, refreshInstagramTokenIfNeeded } from './accounts.ts'
 import { reschedulePublication } from './approve.ts'
-import { cleanupVideoFiles } from './cleanup.ts'
+import { cleanupVideoFiles, reclaimUploadAttempts } from './cleanup.ts'
 import { collectVideoInsights } from './insights.ts'
 import { pickVideo } from './pick.ts'
 import { runRender, runScript } from './pipeline.ts'
@@ -21,6 +21,7 @@ import {
 } from './publish.ts'
 import {
   completePublishedVideos,
+  expireUploads,
   expireVideos,
   failStage,
   isUnsentReview,
@@ -36,6 +37,7 @@ import {
   registerVideoBot,
   sendVideoReview,
 } from './telegram.ts'
+import { cleanupUploadTemp } from './upload.ts'
 
 // Video queues (docs/plans/video.md 2). One cloud worker runs them next to the Threads and
 // campaign queues; renders run one at a time (pg-boss localConcurrency defaults to 1).
@@ -289,6 +291,8 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
     const unsent =
       config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID ? await unsentReviews(now) : []
     for (const id of unsent) await enqueueVideoReview(boss, id, true)
+    const uploads = await expireUploads(now)
+    const tmp = await cleanupUploadTemp(now.getTime())
     const stuck = await recoverStuckStages(now)
     for (const s of stuck.retry) {
       if (s.status === 'SCRIPTING') await enqueueVideoScript(boss, s.id, s.seq)
@@ -297,9 +301,18 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
     for (const id of stuck.failed) {
       await notifyVideo(`❌ 영상 #${id}이 원고·렌더 단계에서 멈춰서 중단했어요`)
     }
-    if (expired.length || unsent.length || stuck.retry.length || stuck.failed.length) {
+    if (
+      expired.length ||
+      unsent.length ||
+      uploads.length ||
+      tmp ||
+      stuck.retry.length ||
+      stuck.failed.length
+    ) {
       console.log('[video-maintenance]', {
         expired: expired.map((e) => e.id),
+        expiredUploads: uploads,
+        tmpRemoved: tmp,
         unsent,
         retried: stuck.retry.map((s) => s.id),
         failed: stuck.failed,
@@ -314,6 +327,8 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
   await boss.work(VQ.cleanup, async () => {
     const result = await cleanupVideoFiles()
     if (result.deleted || result.failed) console.log('[video-cleanup]', result)
+    const attempts = await reclaimUploadAttempts()
+    if (attempts.deleted || attempts.failed) console.log('[video-cleanup] attempts', attempts)
   })
 
   await boss.work(VQ.refreshToken, async () => {

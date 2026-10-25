@@ -18,6 +18,7 @@
   },
   "type": "module",
   "dependencies": {
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "@mozilla/readability": "^0.6.0",
     "@resvg/resvg-js": "^2.6.2",
     "dotenv": "^18.0.5",

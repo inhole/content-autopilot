@@ -53,3 +53,43 @@ export async function cleanupVideoFiles(
   }
   return result
 }
+
+const ATTEMPT_MAX_AGE_HOURS = 1
+
+/**
+ * Reclaims upload attempts whose outcome is unknown (docs/plans/video-upload.md 8). The mark comes
+ * first, in its own statement, skipping rows a file request holds: after it, that attempt can
+ * never be referenced (the file step only takes unmarked rows). Then an unreferenced object is
+ * deleted, and the row only once the delete succeeded.
+ */
+export async function reclaimUploadAttempts(
+  now = new Date(),
+  storage: VideoStorage = getStorage(),
+): Promise<{ deleted: number; failed: number }> {
+  const marked = await query<{ key: string }>(
+    `update video_upload_attempts set reclaiming = true
+     where key in (
+       select key from video_upload_attempts
+       where created_at < $1::timestamptz - make_interval(hours => $2)
+       order by created_at limit 50 for update skip locked
+     )
+     returning key`,
+    [now, ATTEMPT_MAX_AGE_HOURS],
+  )
+  const result = { deleted: 0, failed: 0 }
+  for (const { key } of marked) {
+    const used = await query('select 1 from videos where storage_key = $1', [key])
+    if (used.length === 0) {
+      try {
+        await storage.remove(key)
+        result.deleted++
+      } catch (err) {
+        console.warn(`[video-cleanup] attempt ${key} delete failed: ${(err as Error).message}`)
+        result.failed++
+        continue
+      }
+    }
+    await query('delete from video_upload_attempts where key = $1', [key])
+  }
+  return result
+}
