@@ -594,7 +594,10 @@ export function OverviewPage() {
   const campaigns = useCampaigns('active', null)
   const videos = useVideos('active')
   const ops = useOps()
-  const slots = ops.data?.settings?.publishSlots ?? null
+  // Slots are wall-clock times in the worker's zone; the board shows KST, so they are used only
+  // when the two agree (otherwise the board lists the scheduled posts alone).
+  const settings = ops.data?.settings
+  const slots = settings?.timeZone === TZ ? settings.publishSlots : null
   const videoRows = videos.data?.rows
   const videosWaiting = Array.isArray(videoRows)
     ? videoRows.filter((v) => v.status === 'PENDING_REVIEW').length
