@@ -1,6 +1,6 @@
 import { CheckIcon, MessageSquareTextIcon, PlusIcon, TriangleAlertIcon } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { EmptyState, PageHeader, QueryBoundary } from '@/components/query-state.tsx'
 import { OriginBadge, PostStatusBadge } from '@/components/status-badge.tsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
@@ -26,13 +26,30 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table.tsx'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx'
 import { Textarea } from '@/components/ui/textarea.tsx'
 import { ApiError } from '@/lib/api.ts'
 import { formatNumber, formatShortDateTime, isHttpUrl, truncate } from '@/lib/format.ts'
 import { useAddTopic, usePosts } from '@/lib/queries.ts'
 import type { PostItem } from '@/lib/types.ts'
+import { cn } from '@/lib/utils.ts'
 
 const num = 'text-right tabular-nums'
+
+/** Status tabs over the loaded posts; `?status=` keeps the choice (the overview links to them). */
+export const POST_FILTERS = [
+  { key: 'all', label: '전체', statuses: null },
+  { key: 'PENDING_REVIEW', label: '검수 대기', statuses: ['PENDING_REVIEW'] },
+  { key: 'SCHEDULED', label: '발행 예정', statuses: ['APPROVED', 'SCHEDULED', 'PUBLISHING'] },
+  { key: 'PUBLISHED', label: '발행됨', statuses: ['PUBLISHED'] },
+  { key: 'FAILED', label: '실패', statuses: ['FAILED'] },
+  { key: 'CLOSED', label: '거절·만료', statuses: ['REJECTED', 'EXPIRED'] },
+] as const
+
+type PostFilter = (typeof POST_FILTERS)[number]
+
+const inFilter = (f: PostFilter, p: PostItem) =>
+  f.statuses === null || (f.statuses as readonly string[]).includes(p.status)
 
 /** Link to the post that opens as a sheet over the list. */
 export function usePostLink() {
@@ -52,11 +69,17 @@ function PostLink({ post, className }: { post: PostItem; className?: string }) {
   )
 }
 
-export function PostsTable({ rows }: { rows: PostItem[] }) {
+export function PostsTable({
+  rows,
+  emptyTitle = '글이 아직 없어요.',
+}: {
+  rows: PostItem[]
+  emptyTitle?: string
+}) {
   const navigate = useNavigate()
   const postLink = usePostLink()
   if (rows.length === 0) {
-    return <EmptyState title="글이 아직 없어요." icon={MessageSquareTextIcon} />
+    return <EmptyState title={emptyTitle} icon={MessageSquareTextIcon} />
   }
   const openRow = (p: PostItem, target: EventTarget) => {
     if (target instanceof Element && target.closest('a, button')) return
@@ -263,6 +286,46 @@ export function AddTopicDialog() {
   )
 }
 
+function FilteredPosts({ rows }: { rows: PostItem[] }) {
+  const [params, setParams] = useSearchParams()
+  const filter = POST_FILTERS.find((f) => f.key === params.get('status')) ?? POST_FILTERS[0]
+  const shown = rows.filter((p) => inFilter(filter, p))
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Scrolls sideways on narrow screens; no vertical overflow, no visible scrollbar. */}
+      <div className="min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <Tabs
+          value={filter.key}
+          onValueChange={(v) => setParams(v === 'all' ? {} : { status: v }, { replace: true })}
+        >
+          <TabsList aria-label="상태 필터">
+            {POST_FILTERS.map((f) => {
+              const n = rows.filter((p) => inFilter(f, p)).length
+              return (
+                <TabsTrigger key={f.key} value={f.key}>
+                  {f.label}
+                  <span
+                    className={cn(
+                      'tabular-nums text-muted-foreground',
+                      f.key === 'FAILED' && n > 0 && 'text-destructive',
+                    )}
+                  >
+                    {n}
+                  </span>
+                </TabsTrigger>
+              )
+            })}
+          </TabsList>
+        </Tabs>
+      </div>
+      <PostsTable
+        rows={shown}
+        emptyTitle={filter.key === 'all' ? undefined : `${filter.label} 상태인 글이 없어요.`}
+      />
+    </div>
+  )
+}
+
 export function PostsPage() {
   const q = usePosts()
   return (
@@ -274,7 +337,7 @@ export function PostsPage() {
         <AddTopicDialog />
       </PageHeader>
       <QueryBoundary query={q} skeleton={<PostsSkeleton />}>
-        {(data) => <PostsTable rows={data.rows} />}
+        {(data) => <FilteredPosts rows={data.rows} />}
       </QueryBoundary>
     </>
   )

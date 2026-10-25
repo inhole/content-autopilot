@@ -65,6 +65,7 @@ export async function loadOverview(): Promise<OverviewData> {
             count(*) filter (where status = 'FAILED') as failed
        from posts`,
   )
+  // The dashboard's schedule board relies on this limit (SCHEDULED_LIMIT in web/src/pages/overview.tsx).
   const scheduled = await query<{ id: number; text: string; scheduled_at: Date }>(
     `select id, text, scheduled_at from posts
       where status in ('SCHEDULED', 'PUBLISHING') and scheduled_at is not null

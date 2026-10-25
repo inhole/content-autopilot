@@ -205,7 +205,7 @@ export const OPS_POLL_MS = 3_000
 /** Fast polling stops after this long, however busy the queue still looks. */
 export const OPS_POLL_MAX_MS = 5 * 60_000
 
-export const isOpsBusy = (data: OpsResponse | undefined) => !!data?.jobs.some((j) => j.busy)
+export const isOpsBusy = (data: OpsResponse | undefined) => !!data?.jobs?.some((j) => j.busy)
 
 /** Jobs and settings; every 3 s while a job is busy (until `pollUntil`), else the usual refresh. */
 export const useOps = (pollUntil = 0) =>

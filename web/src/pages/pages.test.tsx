@@ -19,8 +19,8 @@ import type { CampaignRow } from '@/lib/types.ts'
 import { CampaignDetailView } from './campaign-detail.tsx'
 import { CampaignTable } from './campaigns.tsx'
 import { InsightsView } from './insights.tsx'
-import { OverviewView } from './overview.tsx'
-import { PostsTable } from './posts.tsx'
+import { buildSchedule, DeadlineList, OverviewView, tasksOf, upcomingDeadlines } from './overview.tsx'
+import { PostsPage, PostsTable } from './posts.tsx'
 
 const wrap = (ui: React.ReactNode) => (
   <QueryClientProvider client={createQueryClient()}>
@@ -31,20 +31,30 @@ const wrap = (ui: React.ReactNode) => (
 afterEach(() => vi.unstubAllGlobals())
 
 describe('OverviewView', () => {
-  it('shows Threads and campaign KPI cards, scheduled list and sources', () => {
-    render(wrap(<OverviewView data={overviewFixture} />))
+  it('lists the decisions waiting, the schedule and the record', () => {
+    render(wrap(<OverviewView data={overviewFixture} videosWaiting={1} />))
     expect(screen.getByText('최근 24시간 발행')).toBeInTheDocument()
-    expect(screen.getByText('발행 예정', { selector: '[data-slot=card-title]' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '편성표' })).toBeInTheDocument()
     expect(screen.getByText(/Vite 7 나왔음/)).toBeInTheDocument()
     expect(screen.getByText(/그때 확인한 체험단 475건/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '카카오톡 진행 중 8건, 전체 317건' })).toHaveAttribute(
       'href',
       '/campaigns?source=kakao-gift',
     )
-    expect(screen.getByRole('link', { name: /^검수 대기 4/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /체험단 신청 결정/ })).toHaveAttribute(
       'href',
       '/campaigns?status=PENDING_REVIEW',
     )
+    expect(screen.getByRole('link', { name: /발행 실패/ })).toHaveAttribute(
+      'href',
+      '/posts?status=FAILED',
+    )
+    expect(screen.getByRole('link', { name: /영상 검수/ })).toHaveAttribute('href', '/videos')
+  })
+  it('orders the decisions by urgency and drops the empty ones', () => {
+    const tasks = tasksOf(overviewFixture)
+    expect(tasks.map((t) => t.key)).toEqual(['failed', 'posts', 'apply', 'selected', 'draft', 'applied'])
+    expect(tasks.find((t) => t.key === 'apply')?.count).toBe(4)
   })
   it('shows empty states', () => {
     const empty = {
@@ -58,8 +68,73 @@ describe('OverviewView', () => {
       },
     }
     render(wrap(<OverviewView data={empty} />))
+    expect(screen.getByText('지금 결정할 일이 없어요.')).toBeInTheDocument()
     expect(screen.getByText('발행 예정인 글이 없어요.')).toBeInTheDocument()
     expect(screen.getByText('아직 수집한 체험단이 없어요.')).toBeInTheDocument()
+  })
+  it('says when the video count is unknown instead of showing none', async () => {
+    const retry = vi.fn()
+    render(wrap(<OverviewView data={overviewFixture} onRetryVideos={retry} />))
+    expect(screen.getByRole('alert')).toHaveTextContent('영상 검수 건수를 불러오지 못해')
+    await userEvent.setup().click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(retry).toHaveBeenCalled()
+  })
+})
+
+describe('buildSchedule', () => {
+  // 2026-10-25 18:44 KST
+  const now = new Date('2026-10-25T09:44:00Z')
+  const post = (id: number, iso: string) => ({ id, text: `글 ${id}`, scheduled_at: iso })
+
+  it('fills the slots ahead today and tomorrow, keeps off-slot posts, counts the rest', () => {
+    const { days, later } = buildSchedule(
+      [
+        post(1, '2026-10-25T12:44:00Z'), // today 21:44, off-slot
+        post(2, '2026-10-26T04:00:00Z'), // tomorrow 13:00, on a slot
+        post(3, '2026-10-28T00:00:00Z'), // after tomorrow
+      ],
+      ['09:00', '13:00', '19:00'],
+      now,
+    )
+    const shape = (i: number) =>
+      days[i]?.entries.map((e) => `${e.time} ${e.kind === 'post' ? e.post.id : '-'}`)
+    // 09:00 and 13:00 are already past today.
+    expect(shape(0)).toEqual(['19:00 -', '21:44 1'])
+    expect(shape(1)).toEqual(['09:00 -', '13:00 2', '19:00 -'])
+    expect(later).toBe(1)
+  })
+
+  it('does not call slots empty past the end of a cut-short list', () => {
+    // 20 posts (the API limit), all due, the last at today 18:00 KST.
+    const full = Array.from({ length: 20 }, (_, i) => post(i + 1, '2026-10-25T09:00:00Z'))
+    const { days, cutAt } = buildSchedule(full, ['19:00'], now)
+    expect(cutAt).toBe('2026-10-25T09:00:00Z')
+    expect(days[0]?.entries.some((e) => e.kind === 'empty')).toBe(false)
+    expect(days[1]?.entries).toHaveLength(0)
+  })
+
+  it('opens today with due posts, which never fill a slot', () => {
+    // Yesterday 19:00 (KST), not out yet: first in today's list, today's 19:00 stays empty.
+    const { days } = buildSchedule([post(9, '2026-10-24T10:00:00Z')], ['19:00'], now)
+    expect(days[0]?.entries).toEqual([
+      expect.objectContaining({ kind: 'post', time: '19:00', due: true }),
+      { kind: 'empty', time: '19:00' },
+    ])
+    expect(days[1]?.entries).toEqual([{ kind: 'empty', time: '19:00' }])
+  })
+})
+
+describe('upcoming deadlines', () => {
+  const now = new Date()
+  it('keeps deadlines within 7 days, soonest first', () => {
+    const soon = upcomingDeadlines(campaignRowsFixture, now)
+    const ats = soon.map((r) => Date.parse(r.next_deadline?.at ?? ''))
+    expect(ats).toEqual([...ats].sort((a, b) => a - b))
+    expect(soon.every((r) => r.next_deadline)).toBe(true)
+  })
+  it('says so when nothing is due', () => {
+    render(wrap(<DeadlineList rows={[]} />))
+    expect(screen.getByText('7일 안에 다가오는 마감이 없어요.')).toBeInTheDocument()
   })
 })
 
@@ -184,6 +259,25 @@ describe('PostsTable', () => {
   it('shows an empty state', () => {
     render(wrap(<PostsTable rows={[]} />))
     expect(screen.getByText('글이 아직 없어요.')).toBeInTheDocument()
+  })
+  it('filters by the status in the address and counts each tab', async () => {
+    stubFetch(vi.fn(async () => new Response(JSON.stringify(postsFixture))))
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={createQueryClient()}>
+        <MemoryRouter initialEntries={['/posts?status=FAILED']}>
+          <PostsPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const failedTab = await screen.findByRole('tab', { name: /실패/ })
+    expect(failedTab).toHaveAttribute('aria-selected', 'true')
+    expect(failedTab).toHaveTextContent('1')
+    expect(screen.queryByText(/Claude Code가 새 에이전트/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /발행 예정/ }))
+    expect(screen.getAllByText(/Claude Code가 새 에이전트/).length).toBeGreaterThan(0)
+    expect(screen.getByTestId('loc')).toHaveTextContent('/posts?status=SCHEDULED')
   })
 })
 
