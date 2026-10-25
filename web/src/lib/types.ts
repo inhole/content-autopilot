@@ -12,6 +12,15 @@ import type {
   OpsProfileResponse,
   OpsResponse,
   OpsRunResponse,
+  DailySchedule,
+  OpsCronView,
+  OpsScheduleConflict,
+  OpsScheduleFields,
+  OpsScheduleInvalid,
+  OpsScheduleRequests,
+  OpsScheduleResponse,
+  OpsScheduleState,
+  OpsScheduleView,
   PostActionConflict,
   PostActionName,
   PostActionRequests,
@@ -47,6 +56,15 @@ export type {
   OpsProfileResponse,
   OpsResponse,
   OpsRunResponse,
+  DailySchedule,
+  OpsCronView,
+  OpsScheduleConflict,
+  OpsScheduleFields,
+  OpsScheduleInvalid,
+  OpsScheduleRequests,
+  OpsScheduleResponse,
+  OpsScheduleState,
+  OpsScheduleView,
   PostActionConflict,
   PostActionName,
   PostActionRequests,
@@ -77,4 +95,5 @@ export type PostPart = PostDetailResponse['parts'][number]
 export type RevivableRow = RevivableResponse['rows'][number]
 export type OpsJob = OpsResponse['jobs'][number]
 export type OpsSettings = OpsResponse['settings']
+export type OpsSchedule = OpsResponse['schedule']
 export type OpsProfile = NonNullable<OpsResponse['profile']>

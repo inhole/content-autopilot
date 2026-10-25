@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
+import { envRuntimeSettings } from '../src/settings.ts'
 import type { CampaignListRow } from '../src/web/data.ts'
 import { loadOps } from '../src/web/ops.ts'
 import { createDashboardServer, type DashboardLoaders } from '../src/web/server.ts'
@@ -149,6 +150,7 @@ const loaders: DashboardLoaders = {
       profile: async () => {
         throw new Error('no file')
       },
+      settings: async () => envRuntimeSettings(),
     }),
   revivable: async () => ({
     rows: [
@@ -205,6 +207,7 @@ const app = createDashboardServer({
   postActions: fakePostActions().actions,
   runOps: async () => true,
   profileEdit: { save: async () => null, reset: async () => null },
+  scheduleEdit: { save: async () => null, reset: async () => null },
   notify,
   now: () => NOW,
   webDist: buildDir,
@@ -216,6 +219,7 @@ const legacy = createDashboardServer({
   postActions: fakePostActions().actions,
   runOps: async () => true,
   profileEdit: { save: async () => null, reset: async () => null },
+  scheduleEdit: { save: async () => null, reset: async () => null },
   notify,
   now: () => NOW,
   webDist: missingDist,
@@ -397,6 +401,12 @@ describe('api', () => {
       'threadsDryRun',
       'timeZone',
     ])
+    expect(body.schedule).toMatchObject({
+      source: 'env',
+      revision: 0,
+      current: { threadsCollect: { cron: expect.any(String) } },
+      defaults: { giftCollect: { cron: expect.any(String) } },
+    })
     expect(body.profile).toBeNull()
   })
   it('revivable rows serialize dates', async () => {

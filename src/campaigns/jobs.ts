@@ -3,6 +3,7 @@ import type { PgBoss } from 'pg-boss'
 import { config } from '../config.ts'
 import { formatFinalFailure, isFinalAttempt } from '../jobs.ts'
 import { localHour } from '../lib/time.ts'
+import { applySchedules } from '../schedules.ts'
 import { collectGiftCampaigns, collectMusinsaCampaigns } from './collect.ts'
 import { rankCollected } from './rank.ts'
 import { runCampaignReminders } from './reminders.ts'
@@ -151,9 +152,8 @@ export async function createCampaignQueues(boss: PgBoss): Promise<void> {
     retryLimit: RANK_RETRY_LIMIT,
     retryDelay: 60,
   })
-  await boss.schedule(CQ.collect, config.GIFT_COLLECT_CRON, null, { tz })
+  await applySchedules(boss, { giftCollect: CQ.collect, musinsaCollect: CQ.musinsaCollect })
   await boss.schedule(CQ.maintenance, MAINTENANCE_CRON, null, { tz })
-  await boss.schedule(CQ.musinsaCollect, config.MUSINSA_COLLECT_CRON, null, { tz })
 }
 
 /** Gift and Musinsa collectors, ranking, cards, review drafts and maintenance. */

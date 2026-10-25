@@ -12,6 +12,7 @@ import {
   type PostActionDeps,
   type PostActions,
 } from '../pipeline/post-actions.ts'
+import { parseScheduleInput } from '../settings.ts'
 import { type ApiLoaders, handleApi } from './api.ts'
 import type {
   AuthSessionResponse,
@@ -20,6 +21,9 @@ import type {
   OpsProfileInvalid,
   OpsProfileResponse,
   OpsRunResponse,
+  OpsScheduleConflict,
+  OpsScheduleInvalid,
+  OpsScheduleResponse,
 } from './api-types.ts'
 import {
   type ActiveSession,
@@ -52,11 +56,13 @@ import {
   loadRevivableList,
 } from './data.ts'
 import {
+  createScheduleEdit,
   dbProfileEdit,
   loadOps,
   type ProfileEdit,
   parseOpsJobName,
   parseProfileInput,
+  type ScheduleEdit,
 } from './ops.ts'
 import {
   matchPostActionPath,
@@ -91,6 +97,8 @@ export type DashboardDeps = {
   runOps: (name: OpsJobName) => Promise<boolean>
   /** Saves or resets the campaign profile (ops.ts); tests pass fakes. */
   profileEdit: ProfileEdit
+  /** Saves or resets the schedules and volumes and re-registers the cron jobs (ops.ts). */
+  scheduleEdit: ScheduleEdit
   /** Sends a text to the owner's Telegram chat; rejects when it cannot. */
   notify: (text: string) => Promise<void>
   now?: () => Date
@@ -495,6 +503,73 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
   }
 
+  /** POST /api/ops/schedule and /api/ops/schedule/reset: edit the saved schedules and volumes. */
+  async function handleOpsSchedule(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    reset: boolean,
+  ): Promise<void> {
+    const authorized = await authorizeWrite(req, res)
+    if (!authorized) return
+    const { session, ip } = authorized
+    const audit = {
+      sessionId: session.id,
+      action: reset ? 'ops.schedule.reset' : 'ops.schedule',
+      target: null,
+      ip,
+    }
+    const invalid = async (fields: string[], revision?: number) => {
+      await auth.record({
+        ...audit,
+        result: 'invalid',
+        ...(revision === undefined ? {} : { detail: { revision } }),
+      })
+      sendJson(req, res, 400, {
+        error: '입력값을 확인해 주세요',
+        fields,
+      } satisfies OpsScheduleInvalid)
+    }
+    const body = await readJson(req, ACTION_BODY_LIMIT).catch(async (err) => {
+      if (!(err instanceof BadBody)) throw err
+      return undefined
+    })
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      await invalid(['revision'])
+      return
+    }
+    const { revision, schedule } = body as { revision?: unknown; schedule?: unknown }
+    if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
+      await invalid(['revision'])
+      return
+    }
+    try {
+      let result: OpsScheduleResponse | null
+      if (reset) {
+        result = await deps.scheduleEdit.reset(revision)
+      } else {
+        const parsed = parseScheduleInput(schedule)
+        if (!parsed.ok) {
+          await invalid(parsed.fields, revision)
+          return
+        }
+        result = await deps.scheduleEdit.save(parsed.schedule, revision)
+      }
+      if (!result) {
+        await auth.record({ ...audit, result: 'stale', detail: { revision } })
+        sendJson(req, res, 409, {
+          error: '다른 곳에서 먼저 바뀌었어요. 새로 불러올게요',
+          stale: true,
+        } satisfies OpsScheduleConflict)
+        return
+      }
+      await auth.record({ ...audit, result: 'ok', detail: { revision, applied: result.applied } })
+      sendJson(req, res, 200, result)
+    } catch (err) {
+      await auth.record({ ...audit, result: 'error', detail: { revision } }).catch(() => {})
+      throw err
+    }
+  }
+
   async function handleAuth(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -678,6 +753,19 @@ export function createRequestHandler(deps: DashboardDeps) {
       }
       return
     }
+    if (isApi && (path === '/api/ops/schedule' || path === '/api/ops/schedule/reset')) {
+      if (req.method !== 'POST') {
+        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
+        return
+      }
+      try {
+        await handleOpsSchedule(req, res, path.endsWith('/reset'))
+      } catch (err) {
+        console.error('dashboard ops schedule failed:', err)
+        sendJson(req, res, 500, { error: 'internal error' })
+      }
+      return
+    }
     const opsRun = isApi ? /^\/api\/ops\/([^/]+)\/run$/.exec(path) : null
     if (opsRun) {
       const name = parseOpsJobName(opsRun[1] as string)
@@ -826,6 +914,7 @@ export async function startDashboard(
   campaignDeps: CampaignActionDeps,
   postDeps: PostActionDeps,
   runOps: DashboardDeps['runOps'],
+  applyNow: () => Promise<void>,
 ): Promise<{ close(): Promise<void> } | null> {
   if (!dashboardEnabled()) {
     console.log('dashboard disabled: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are needed to log in')
@@ -838,6 +927,7 @@ export async function startDashboard(
     postActions: createPostActions(postDeps),
     runOps,
     profileEdit: dbProfileEdit,
+    scheduleEdit: createScheduleEdit(applyNow),
     notify: notifyOwner,
   })
   const port = config.PORT ?? 8080

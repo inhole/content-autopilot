@@ -79,6 +79,8 @@ CLI는 Telegram 봇을 polling하지 않는다. 그래서 워커가 실행 중�
 
 ## 설정 바꾸기
 
+`DAILY_POST_COUNT`, `PUBLISH_SLOTS`, `COLLECT_CRON`과 체험단의 `GIFT_COLLECT_CRON`, `MUSINSA_COLLECT_CRON`, `CAMPAIGN_DAILY_MAX`는 대시보드 `운영` 페이지의 `일정과 수량`에서 고치면 재배포 없이 바로 반영된다. 페이지에서 저장한 값이 있으면 환경변수보다 우선하고, `기본값으로 되돌리기`를 누르면 환경변수 값으로 돌아간다([dashboard.md](dashboard.md)의 「일정과 수량 편집」). 아래 표의 기본값은 환경변수 기준이다.
+
 | env | 기본값 | 설명 |
 |---|---|---|
 | `DAILY_POST_COUNT` | `3` | 하루에 만들 초안 수 |

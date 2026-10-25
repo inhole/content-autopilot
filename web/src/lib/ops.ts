@@ -82,3 +82,10 @@ export function humanizeCron(cron: string | null): string {
   const list = hours.map(Number).join('·')
   return m === 0 ? `매일 ${list}시` : `매일 ${list}시 ${m}분`
 }
+
+/** A daily schedule as the edit form previews it: `매일 9·15·21시 0분` (the minute is always shown). */
+export function describeDaily(minute: number | null, hours: number[]): string {
+  if (hours.length === 0) return '고른 시각이 없어요'
+  const list = [...hours].sort((a, b) => a - b).join('·')
+  return minute === null ? `매일 ${list}시` : `매일 ${list}시 ${minute}분`
+}

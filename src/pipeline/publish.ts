@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
 import { nextFreeSlot } from '../lib/time.ts'
+import { loadRuntimeSettings } from '../settings.ts'
 import { getThreadsApi } from '../threads/account.ts'
 import type { TextPost, ThreadsApi } from '../threads/client.ts'
 import { composeChain, loadParts } from './parts.ts'
@@ -36,6 +37,7 @@ export async function approvePost(
 ): Promise<Date> {
   const now = opts.now ?? new Date()
   for (let attempt = 1; ; attempt++) {
+    const { publishSlots: slots } = await loadRuntimeSettings()
     const taken = await query<{ scheduled_at: Date }>(
       `select scheduled_at from posts
        where status in ('SCHEDULED', 'PUBLISHING', 'PUBLISHED') and scheduled_at >= $1`,
@@ -43,7 +45,7 @@ export async function approvePost(
     )
     const at = nextFreeSlot({
       now,
-      slots: config.PUBLISH_SLOTS,
+      slots,
       timeZone: config.TZ_NAME,
       taken: taken.map((r) => r.scheduled_at),
     })
