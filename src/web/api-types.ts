@@ -299,7 +299,10 @@ export type OpsResponse = {
     /** A job is queued or running now (a new request would be dropped by the queue policy). */
     busy: boolean
   }[]
-  /** Settings that shape the pipelines (no secrets). */
+  /**
+   * Settings that shape the pipelines (no secrets). `dailyPostCount`, `publishSlots` and
+   * `campaignDailyMax` are the values in effect (see `schedule`), as are the jobs' `cron`.
+   */
   settings: {
     dailyPostCount: number
     publishSlots: string[]
@@ -309,6 +312,8 @@ export type OpsResponse = {
     campaignRankMode: 'rule' | 'llm'
     timeZone: string
   }
+  /** Schedules and volumes editable on this page (stage 4 follow-up, see OpsScheduleRequests). */
+  schedule: OpsScheduleState
   /**
    * The campaign profile in effect (the owner's preferences; no address or phone): the copy saved
    * from this page when there is one, else config/campaign-profile.json. Null when neither loads.
@@ -365,6 +370,78 @@ export type OpsProfileResponse = { ok: true; profile: NonNullable<OpsResponse['p
 export type OpsProfileConflict = { error: string; stale: true }
 /** `fields`: dotted paths such as `review.maxChars` or `interests.3`. */
 export type OpsProfileInvalid = { error: string; fields: string[] }
+
+/**
+ * A daily schedule as the operations page edits it: at `minute` past each of `hours` (0-23, in
+ * the configured time zone, KST), every day. Cron `<minute> <hours joined by ,> * * *`.
+ */
+export type DailySchedule = { minute: number; hours: number[] }
+
+/** Editable schedules and volumes, as saved. */
+export type OpsScheduleFields = {
+  /** threads-daily (daily-pipeline): collect, rank, drafts. Env COLLECT_CRON. */
+  threadsCollect: DailySchedule
+  /** gift-collect. Env GIFT_COLLECT_CRON. */
+  giftCollect: DailySchedule
+  /** musinsa-collect. Env MUSINSA_COLLECT_CRON. */
+  musinsaCollect: DailySchedule
+  /** Threads drafts per daily run (1-10). Env DAILY_POST_COUNT. */
+  dailyPostCount: number
+  /** Local `HH:MM` times approved posts are published at, one post each (1-10). Env PUBLISH_SLOTS. */
+  publishSlots: string[]
+  /** Campaign cards per source per KST day (1-20). Env CAMPAIGN_DAILY_MAX. */
+  campaignDailyMax: number
+}
+
+/** A schedule as shown: the cron string, and its DailySchedule form when it is that simple. */
+export type OpsCronView = { cron: string; daily: DailySchedule | null }
+
+/** The same fields for display: crons may come from env in any form. */
+export type OpsScheduleView = Omit<
+  OpsScheduleFields,
+  'threadsCollect' | 'giftCollect' | 'musinsaCollect'
+> & {
+  threadsCollect: OpsCronView
+  giftCollect: OpsCronView
+  musinsaCollect: OpsCronView
+}
+
+export type OpsScheduleState = {
+  /** Values in effect: the copy saved from this page, else the env values. */
+  current: OpsScheduleView
+  /** The env values (what a reset goes back to). */
+  defaults: OpsScheduleView
+  /** `db` when a saved copy is in effect, `env` otherwise. */
+  source: 'db' | 'env'
+  /** Edit guard to send back with a save or reset: 0 until the first save, then only grows. */
+  revision: number
+}
+
+/**
+ * Schedule edits (operations page), same model as the profile edit: one saved copy in the
+ * database that wins over the env values, guarded by `revision`. Same session, same-origin and
+ * `X-CSRF-Token` rules as every write; audited as `ops.schedule` / `ops.schedule.reset` with the
+ * revision. A save takes effect without a redeploy: the three collect schedules are re-registered
+ * with pg-boss right away (and from the saved copy on every worker start), the daily post count
+ * applies from the next Threads run, the publish slots from the next approval (posts already
+ * scheduled keep their time) and the campaign quota from the next ranking.
+ * - POST /api/ops/schedule `{ revision, schedule }`: saves the whole set. Hours are deduplicated
+ *   and sorted, slots deduplicated and sorted. Limits: `minute` 0-59, 1-24 `hours` of 0-23,
+ *   `dailyPostCount` 1-10, `campaignDailyMax` 1-20, 1-10 `publishSlots` as zero-padded `HH:MM`.
+ * - POST /api/ops/schedule/reset `{ revision }`: clears the saved copy (the revision still grows),
+ *   so the env values apply again (the schedules are re-registered too).
+ * 200 `OpsScheduleResponse`; 409 `{ error, stale: true }` when the revision is not current; 400
+ * `{ error, fields }` with dotted paths (`giftCollect.hours`, `publishSlots.2`).
+ * `applied` is false when saving worked but re-registering the schedules failed (logged); the
+ * next worker start registers them from the saved copy.
+ */
+export type OpsScheduleRequests = {
+  save: { revision: number; schedule: OpsScheduleFields }
+  reset: { revision: number }
+}
+export type OpsScheduleResponse = { ok: true; schedule: OpsScheduleState; applied: boolean }
+export type OpsScheduleConflict = { error: string; stale: true }
+export type OpsScheduleInvalid = { error: string; fields: string[] }
 
 /**
  * POST /api/ops/<name>/run (body `{}`): queues the job now. Same session, same-origin and
