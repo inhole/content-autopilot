@@ -260,7 +260,7 @@ COLLECTED ──▶ SKIPPED            (규칙 또는 선별 탈락)
 
 ## 숏폼 영상 파이프라인
 
-발행된 Threads 글을 30~45초 세로 영상으로 만들어 Reels와 Shorts에 올린다. 설계와 결정 이유는 [plans/video.md](plans/video.md)와 [결정 15](decisions.md#15-숏폼-영상은-발행된-글로-만들고-클라우드에서-렌더한다)에 있다. 코드는 `src/video/`, 마이그레이션은 `021`이다. 같은 워커가 같은 pg-boss로 처리한다.
+발행된 Threads 글을 30~45초 세로 영상으로 만들어 Reels와 Shorts에 올린다. 설계와 결정 이유는 [plans/video.md](plans/video.md)와 [결정 15](decisions.md#15-숏폼-영상은-발행된-글로-만들고-클라우드에서-렌더한다)에 있다. 코드는 `src/video/`, 마이그레이션은 `022`이다. 같은 워커가 같은 pg-boss로 처리한다.
 
 ```
 video-pick (VIDEO_CRON) / /video [글 번호]   → videos SCRIPTING

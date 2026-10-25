@@ -166,7 +166,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
   - Shorts: `GET youtube/v3/videos?part=statistics&id=…`
 - 주간 리포트(`/report`, 월 09:00)에 “🎬 영상” 구역을 붙인다: 최근 7일 발행한 영상의 플랫폼별 개수와 조회 합계, 조회가 가장 많은 영상.
 
-## 4. 데이터 모델 (`021_videos.sql`)
+## 4. 데이터 모델 (`022_videos.sql`)
 
 ```sql
 videos

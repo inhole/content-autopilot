@@ -1,6 +1,6 @@
 # 웹 대시보드
 
-Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험단 진행, 최근 Threads 글과 성과를 보는 화면이다. 관리자 콘솔로 넓히는 중이다(roadmap.md 3절). 1단계(Telegram 1회용 코드 로그인), 2단계(체험단 조작), 3단계(Threads 글 검수·예약과 만료 초안)까지 있고, 수집 실행 같은 운영 버튼(4단계)은 아직 Telegram과 CLI에서 한다.
+Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험단 진행, 최근 Threads 글과 성과를 보는 화면이다. 관리자 콘솔로 넓히는 중이다(roadmap.md 3절). 1단계(Telegram 1회용 코드 로그인), 2단계(체험단 조작), 3단계(Threads 글 검수·예약과 만료 초안), 4단계(운영: 작업 지금 실행, 설정·프로필 보기)까지 있다.
 
 워커 안에서 뜬다. 별도 프로세스 없이 `node:http`로 같은 워커 안에서 돈다 (`src/web/`).
 
@@ -48,7 +48,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 
 화면은 `web/`의 React + Vite + shadcn/ui 앱이고, 서버(`src/web/`)는 JSON API와 빌드 결과 서빙만 맡는다. 데이터 조회 API는 읽기 전용이다. 쓰기 요청은 로그인·로그아웃, 체험단 조작(아래 「체험단 조작」), Threads 조작(아래 「Threads 조작」)뿐이다.
 
-화면 구성: 왼쪽 사이드바(데스크톱은 아이콘으로 접기, 모바일은 슬라이드)에 현황·체험단·Threads 글·만료 초안·성과가 있고, 위쪽 헤더에 경로, 마지막 갱신 시각, 라이트/다크/시스템 테마 전환이 있다. 테마 선택은 브라우저 localStorage에 저장하고 기본은 시스템 설정을 따른다. 체험단 목록은 정렬(마감·경쟁률·점수)·검색·20건 단위 쪽 나누기를 지원하고, 행을 누르면 목록 위에 상세 시트가 열린다(`/campaigns/:id`로 바로 들어가면 전체 페이지). Threads 글 목록도 같은 방식으로 `/posts/:id` 상세 시트를 연다. 성과는 7/30/90일 영역 차트를 쓴다.
+화면 구성: 왼쪽 사이드바(데스크톱은 아이콘으로 접기, 모바일은 슬라이드)에 현황·체험단·Threads 글·만료 초안·성과·운영이 있고, 위쪽 헤더에 경로, 마지막 갱신 시각, 라이트/다크/시스템 테마 전환이 있다. 테마 선택은 브라우저 localStorage에 저장하고 기본은 시스템 설정을 따른다. 체험단 목록은 정렬(마감·경쟁률·점수)·검색·20건 단위 쪽 나누기를 지원하고, 행을 누르면 목록 위에 상세 시트가 열린다(`/campaigns/:id`로 바로 들어가면 전체 페이지). Threads 글 목록도 같은 방식으로 `/posts/:id` 상세 시트를 연다. 성과는 7/30/90일 영역 차트를 쓴다.
 
 ### 빌드와 서빙
 
@@ -79,6 +79,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 | `/api/posts?limit=50` | 최근 Threads 글과 최신 반응 수치, `origin`(news / revived / digest). `limit`은 1~200 |
 | `/api/posts/<id>` | Threads 글 상세: 본 글과 답글 조각(`post_parts`의 상태·시도·오류·조각 링크), 주제, 확인 필요, `revision`·`regen_seq`, 재활용 판정과 살리기 전 원문, 묶음 글 id, 글자 수 한도(`limits`: 500, 마지막 답글은 CTA 자리를 뺀 값). 숫자가 아니거나 없는 id는 404 |
 | `/api/revivable` | 다시 살릴 수 있는 만료 초안(`/revive` 목록과 같다: 30일 안의 `EXPIRED` 뉴스 초안 중 살리지도 묶지도 않은 것, 최신순 20개)과 저장된 판정 |
+| `/api/ops` | 운영 화면: 작업 5개의 큐·일정(cron)·마지막 실행(상태, 시각, 실패 오류 300자)·`busy`, 파이프라인 설정(하루 초안 수, 발행 시각, 연결 글, dry-run, 체험단 하루 최대, 선별 방식, 시간대), 체험단 프로필(읽지 못하면 null). 비밀값은 담지 않는다 |
 | `/api/insights?days=30` | 최근 `days`일(7~90) 안에 발행한 글의 반응. `daily`는 글마다 가장 최근 스냅샷을 KST 발행일별로 합산(오래된 날부터, 글이 있는 날만), `top`은 조회수 상위 10개 |
 
 인증 API (`src/web/server.ts`, 모양은 `api-types.ts`의 `AuthSessionResponse`, `AuthCodeResponse`):
@@ -176,6 +177,33 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 - **Telegram과 맞추기** (best effort, `telegramSynced`): `approve`는 검수 메시지 키보드를 지우고, 봇과 같은 `✅ 승인 · 발행 예정` 메시지를 `⏪ 예약 취소` / `🚀 지금 발행` 버튼과 함께 보낸다(`Reviewer.notifyApproved`). `reject`와 `regenerate`는 검수 메시지 키보드를 지우고 봇과 같은 문구를 보낸다(재생성 결과는 새 검수 메시지로 온다). `edit`·`deletePart`는 답장했을 때처럼 새 검수 메시지를 보낸다. `unschedule`은 안내와 새 검수 메시지를, `publishNow`·`retryParts`는 안내를 보낸다. `revive`는 작업이 검수 메시지를 보낸다. 웹에서 예약을 바꾸면 Telegram의 예전 `⏪`/`🚀` 버튼은 남지만, 시각이 달라져 누르면 `이미 처리된 예약이에요`로 끝난다. 메시지 문구는 봇과 같은 함수(`approvedText` 등)를 쓴다.
 - 세션·같은 출처·`X-CSRF-Token` 검사와 16KB 본문 한도는 체험단 조작과 같다. 감사 기록은 `post.<조작>`(`post:<id>`), `post.add`, `revive.check`, `digest.build`이다. 본문·피드백·의견은 남기지 않고 글자 수, 조각 번호, 사유, 예약 시각만 남긴다.
 
+## 운영
+
+사이드바 `운영` 페이지(`/ops`)에서 정해진 시각에 도는 작업을 지금 한 번 돌리고, 파이프라인 설정을 보고, 체험단 프로필을 고친다. 설정은 읽기 전용이다(`.env`를 고쳐 재배포한다). 프로필 편집은 아래 「체험단 프로필 편집」을 본다.
+
+| 작업 (`<name>`) | 큐 | 일정 | 하는 일 |
+|---|---|---|---|
+| `threads-daily` | `daily-pipeline` | `COLLECT_CRON` | 뉴스 수집 → 선별 → 초안 생성(LLM 호출, 초안은 Telegram 검수로 간다) |
+| `gift-collect` | `gift-collect` | `GIFT_COLLECT_CRON` | 카카오톡 선물하기 체험단 수집·선별·카드 |
+| `musinsa-collect` | `musinsa-collect` | `MUSINSA_COLLECT_CRON` | 무신사 체험단 수집·선별·카드 |
+| `campaign-maintenance` | `campaign-maintenance` | 매시 정각 | 신청 마감 지난 카드 만료, 리마인더(09~21시에만 보낸다) |
+| `collect-insights` | `collect-insights` | 매일 5시 | Threads 성과 스냅샷 |
+
+- `POST /api/ops/<name>/run` (본문 `{}`): 큐에 `boss.send`로 작업 하나를 넣는다. 202 `{ ok: true, queued: true }`. 그 큐에 대기·재시도·실행 중인 작업이 있으면 보내지 않고 200 `{ ok: true, queued: false }`이고, 큐 정책(`stately`/`singleton`)이 중복을 버린 경우도 같다. `singleton`은 실행 중인 작업만 하나로 막으므로, 확인과 전송을 큐별 advisory lock(`ops-run:<큐>`)으로 묶어 동시에 누른 요청이 작업을 두 번 넣지 못하게 한다. 모르는 이름은 404, 본문이 객체가 아니면 400, GET은 405다. 세션·같은 출처·`X-CSRF-Token` 검사는 다른 쓰기와 같고, 감사 기록은 `ops.<name>`(`detail: { queued }`)이다.
+- 작업 상태는 pg-boss 테이블 `pgboss.job`을 직접 읽는다. 큐마다 가장 최근 작업(`created_on` 기준)의 상태와 시각, 실패하면 `output->>'message'`(스택은 읽지 않는다)를 보여 준다. `pgboss` 스키마가 아직 없으면 실행 기록이 없는 것으로 본다.
+- 일정 문자열은 작업을 등록하는 코드와 같은 상수(`HOURLY_CRON`, `INSIGHTS_CRON`, `MAINTENANCE_CRON`, `config`의 cron)를 읽으므로 화면과 실제 일정이 어긋나지 않는다. 화면은 단순한 cron을 `매일 9·15·21시`처럼 풀어 쓰고, 그 밖의 식은 그대로 보여 준다.
+- 화면은 실행 확인 창(Threads 수집은 LLM 호출과 초안 생성을 경고)을 거친다. 실행 중인 작업이 있으면 3초마다(최대 5분) 다시 읽고, 아니면 60초마다 읽는다.
+
+### 체험단 프로필 편집
+
+프로필 카드의 `편집`으로 관심사, 선호·제외 키워드, 제외 브랜드, 최대 경쟁률, 최소 정가, 리뷰 말투·글자 수·포인트, 협찬 문구를 고친다(마이그레이션 `021`). 저장한 사본은 DB의 한 행짜리 테이블 `campaign_profile`에 들어가고, 있으면 `config/campaign-profile.json`보다 우선한다. 선별과 리뷰 초안은 프로필을 부를 때마다 이 행을 다시 읽으므로, 저장하면 재배포나 재시작 없이 다음 수집·선별과 리뷰 초안부터 반영된다. 이미 나간 카드와 초안은 바뀌지 않는다.
+
+- 카드에 출처가 `페이지에서 수정함`(DB 사본) 또는 `기본 파일`로 보인다. 목록 칸은 한 줄에 하나씩 쓰고, 최대 경쟁률·최소 정가는 비우면 제한 없음, 협찬 문구는 비우면 없음이다.
+- `POST /api/ops/profile` `{ revision, profile }`: 화면이 본 `revision`에서만 저장한다(한 번도 저장하지 않았으면 0, 저장하거나 되돌릴 때마다 1씩 오르고 줄지 않는다. 그래서 옛 화면이 되돌린 뒤 새로 저장한 사본을 덮어쓰지 못한다). 편집 폼은 열 때의 `revision`을 보내므로, 편집하는 사이 다른 곳에서 저장했으면 덮어쓰지 않고 409가 된다. 그 사이 다른 곳에서 저장했으면 409 `{ error, stale: true }`이고 화면이 다시 읽는다. 문자열과 목록 항목은 앞뒤 공백을 떼고, 빈 항목과 중복은 버린다. 한도는 소개 500자, 말투·협찬 문구 200자, 목록마다 50개·항목 50자, 최대 경쟁률은 0보다 큰 수, 최소 정가는 양의 정수, 최소 글자 수 10 이상, 최대 글자 수 50~4000, 최소 < 최대다. 최대 글자 수에서 협찬 문구와 빈 줄(`disclosureReserve`, 리뷰 초안이 쓰는 계산과 같다)을 빼고도 본문 10자가 들어가야 한다. 어긋나면 400 `{ error, fields }`(`review.maxChars`, `interests.3` 같은 경로)이고 화면은 해당 칸 아래에 표시한다.
+- `POST /api/ops/profile/reset` `{ revision }`: 저장한 사본을 비워(행은 남고 `profile`만 null) 파일 기본값으로 되돌린다(확인 창을 거친다). 한 번도 저장하지 않았고 `revision`이 0이면 비울 것이 없어 성공이다. 요청 본문은 64KB까지 받는다(한도까지 채운 프로필이 약 40KB).
+- 저장된 사본이 스키마에 맞지 않으면(손으로 고친 경우 등) 오류 로그를 남기고 파일을 쓴다. 이때 출처는 `기본 파일`이지만 `revision`은 그 행의 번호여서, 화면에서 다시 저장하면 사본을 고칠 수 있다.
+- 감사 기록은 `ops.profile`, `ops.profile.reset`이고 `detail`에는 `revision`만 남긴다(프로필 내용은 남기지 않는다).
+
 ## 인증 없이 열리는 경로
 
 - `/healthz` 인증 없이 `ok`를 돌려준다. 헬스체크용이다.
@@ -189,7 +217,7 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 
 ## 보안
 
-- 데이터 조회 API는 GET/HEAD만 허용하고 나머지는 405를 돌려준다. 쓰기는 인증 API 다섯 개, 체험단 조작 여덟 개(`POST /api/campaigns/:id/<조작>`), Threads 조작 아홉 개(`POST /api/posts/:id/<조작>`)와 `POST /api/posts/add`, `/api/revivable/check`, `/api/digest`뿐이고, 모두 같은 출처 JSON + 세션 + CSRF 토큰을 요구한다.
+- 데이터 조회 API는 GET/HEAD만 허용하고 나머지는 405를 돌려준다. 쓰기는 인증 API 다섯 개, 체험단 조작 여덟 개(`POST /api/campaigns/:id/<조작>`), Threads 조작 아홉 개(`POST /api/posts/:id/<조작>`)와 `POST /api/posts/add`, `/api/revivable/check`, `/api/digest`, 운영 작업 실행(`POST /api/ops/<name>/run`), 프로필 저장·되돌리기(`POST /api/ops/profile`, `/api/ops/profile/reset`)뿐이고, 모두 같은 출처 JSON + 세션 + CSRF 토큰을 요구한다.
 - 코드와 세션 토큰은 sha256 해시로만 저장하고 `timingSafeEqual`로 비교한다. CSRF 토큰은 세션 토큰에서 파생해 따로 저장하지 않는다.
 - 코드 요청과 확인은 DB advisory lock으로 순서를 맞춰, 동시에 들어온 요청이 한도나 1회 사용 규칙을 넘지 못한다.
 - React가 모든 동적 텍스트를 이스케이프하고, `http(s)` URL만 링크로 만든다.
@@ -201,5 +229,5 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 - Threads 글의 permalink는 DB에 없어서 표시하지 않는다.
 - 한도는 IP별이 아니라 전체 기준이다(사용자가 한 명). 누가 코드 요청을 계속 보내면 그동안 나도 코드를 못 받는다. 이때는 Telegram 알림을 보고 판단한다.
 - 감사 기록(`admin_actions`)을 보는 화면은 아직 없다. DB에서 직접 본다.
-- 수집 실행, 리마인더 확인 같은 운영 버튼은 아직 웹에 없다(roadmap.md 3절 4단계).
+- 체험단 프로필과 설정은 웹에서 고칠 수 없다(파일과 환경 변수를 고쳐 재배포한다).
 - Threads 글 목록은 최근 50개만 보여 준다. 더 오래된 글은 `/posts/<id>` 주소로 직접 연다.

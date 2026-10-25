@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
 import type { CampaignListRow } from '../src/web/data.ts'
+import { loadOps } from '../src/web/ops.ts'
 import { createDashboardServer, type DashboardLoaders } from '../src/web/server.ts'
 import { fakeActions } from './fake-actions.ts'
 import { fakeAuth, SESSION_HEADERS } from './fake-auth.ts'
@@ -125,6 +126,30 @@ const loaders: DashboardLoaders = {
       limits: { text: 500, lastFollowup: 480, cta: null },
     }
   },
+  ops: () =>
+    loadOps({
+      runs: async (queues) =>
+        new Map(
+          queues.map((q) => [
+            q,
+            q === 'gift-collect'
+              ? {
+                  last: {
+                    state: 'failed' as const,
+                    created_at: new Date('2026-10-18T00:00:00Z'),
+                    started_at: new Date('2026-10-18T00:00:01Z'),
+                    completed_at: null,
+                    error: 'boom',
+                  },
+                  busy: true,
+                }
+              : { last: null, busy: false },
+          ]),
+        ),
+      profile: async () => {
+        throw new Error('no file')
+      },
+    }),
   revivable: async () => ({
     rows: [
       {
@@ -178,6 +203,8 @@ const app = createDashboardServer({
   auth: fakeAuth().auth,
   actions: fakeActions().actions,
   postActions: fakePostActions().actions,
+  runOps: async () => true,
+  profileEdit: { save: async () => null, reset: async () => null },
   notify,
   now: () => NOW,
   webDist: buildDir,
@@ -187,6 +214,8 @@ const legacy = createDashboardServer({
   auth: fakeAuth().auth,
   actions: fakeActions().actions,
   postActions: fakePostActions().actions,
+  runOps: async () => true,
+  profileEdit: { save: async () => null, reset: async () => null },
   notify,
   now: () => NOW,
   webDist: missingDist,
@@ -244,6 +273,7 @@ describe('api', () => {
       '/api/posts',
       '/api/posts/9',
       '/api/revivable',
+      '/api/ops',
       '/api/insights',
       '/api/nope',
     ]) {
@@ -335,6 +365,39 @@ describe('api', () => {
     const err = await get('/api/posts/500')
     expect(err.status).toBe(500)
     expect(await err.text()).not.toContain('db down')
+  })
+  it('ops lists every job with ISO dates, settings and a null profile on load failure', async () => {
+    const body = await (await get('/api/ops')).json()
+    expect(body.jobs.map((j: { name: string }) => j.name)).toEqual([
+      'threads-daily',
+      'gift-collect',
+      'musinsa-collect',
+      'campaign-maintenance',
+      'collect-insights',
+    ])
+    const gift = body.jobs.find((j: { name: string }) => j.name === 'gift-collect')
+    expect(gift).toMatchObject({
+      queue: 'gift-collect',
+      busy: true,
+      last: {
+        state: 'failed',
+        created_at: '2026-10-18T00:00:00.000Z',
+        completed_at: null,
+        error: 'boom',
+      },
+    })
+    const hourly = body.jobs.find((j: { name: string }) => j.name === 'campaign-maintenance')
+    expect(hourly).toMatchObject({ cron: '0 * * * *', last: null, busy: false })
+    expect(Object.keys(body.settings).sort()).toEqual([
+      'campaignDailyMax',
+      'campaignRankMode',
+      'dailyPostCount',
+      'publishSlots',
+      'threadChainEnabled',
+      'threadsDryRun',
+      'timeZone',
+    ])
+    expect(body.profile).toBeNull()
   })
   it('revivable rows serialize dates', async () => {
     const body = await (await get('/api/revivable')).json()

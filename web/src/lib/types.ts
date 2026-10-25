@@ -3,6 +3,15 @@ import type {
   AddTopicConflict,
   AddTopicRequest,
   AddTopicResponse,
+  OpsJobName,
+  OpsJobState,
+  OpsProfileConflict,
+  OpsProfileFields,
+  OpsProfileInvalid,
+  OpsProfileRequests,
+  OpsProfileResponse,
+  OpsResponse,
+  OpsRunResponse,
   PostActionConflict,
   PostActionName,
   PostActionRequests,
@@ -29,6 +38,15 @@ export type {
   AddTopicConflict,
   AddTopicRequest,
   AddTopicResponse,
+  OpsJobName,
+  OpsJobState,
+  OpsProfileConflict,
+  OpsProfileFields,
+  OpsProfileInvalid,
+  OpsProfileRequests,
+  OpsProfileResponse,
+  OpsResponse,
+  OpsRunResponse,
   PostActionConflict,
   PostActionName,
   PostActionRequests,
@@ -57,3 +75,6 @@ export type StatusFilter = CampaignListResponse['filter']['status']
 export type PostDetail = PostDetailResponse['post']
 export type PostPart = PostDetailResponse['parts'][number]
 export type RevivableRow = RevivableResponse['rows'][number]
+export type OpsJob = OpsResponse['jobs'][number]
+export type OpsSettings = OpsResponse['settings']
+export type OpsProfile = NonNullable<OpsResponse['profile']>

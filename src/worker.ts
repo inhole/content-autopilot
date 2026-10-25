@@ -13,6 +13,7 @@ import {
 } from './pipeline/revive-jobs.ts'
 import { createReviewer } from './review/telegram.ts'
 import { registerVideoBots, registerVideoJobs } from './video/jobs.ts'
+import { runOpsJob } from './web/ops.ts'
 import { startDashboard } from './web/server.ts'
 
 let stopping = false
@@ -88,6 +89,7 @@ const dashboard = await startDashboard(
     },
     reviewer,
   },
+  (name) => runOpsJob(name, { send: (queue) => boss.send(queue, null) }),
 )
 
 console.log(

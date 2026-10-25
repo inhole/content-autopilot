@@ -5,6 +5,10 @@ import type {
   CampaignActionName,
   CampaignActionRequests,
   CampaignDetailResponse,
+  OpsJobName,
+  OpsProfileRequests,
+  OpsProfileResponse,
+  OpsResponse,
   PostActionName,
   PostActionRequests,
   PostDetailResponse,
@@ -189,6 +193,64 @@ export function useDigest() {
 
 export const useInsights = (days: number) =>
   useQuery({ queryKey: ['insights', days], queryFn: () => api.insights(days), ...live })
+
+/** How often the operations page is re-read while a job is queued or running. */
+export const OPS_POLL_MS = 3_000
+/** Fast polling stops after this long, however busy the queue still looks. */
+export const OPS_POLL_MAX_MS = 5 * 60_000
+
+export const isOpsBusy = (data: OpsResponse | undefined) => !!data?.jobs.some((j) => j.busy)
+
+/** Jobs and settings; every 3 s while a job is busy (until `pollUntil`), else the usual refresh. */
+export const useOps = (pollUntil = 0) =>
+  useQuery({
+    queryKey: ['ops'],
+    queryFn: api.ops,
+    ...live,
+    refetchInterval: (query) =>
+      isOpsBusy(query.state.data) && Date.now() < pollUntil ? OPS_POLL_MS : REFRESH_MS,
+  })
+
+/** Runs one job now; refetches the jobs and whatever lists the job feeds. */
+export function useRunOps() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (name: OpsJobName) => api.runOps(name),
+    onSuccess: (_res, name) => {
+      const keys = ['ops', 'overview']
+      if (name === 'threads-daily') keys.push('posts')
+      else if (name !== 'collect-insights') keys.push('campaigns')
+      for (const key of keys) void client.invalidateQueries({ queryKey: [key] })
+    },
+  })
+}
+
+function useProfileMutation<V>(fn: (v: V) => Promise<OpsProfileResponse>) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (res) => {
+      client.setQueryData<OpsResponse>(['ops'], (old) =>
+        old ? { ...old, profile: res.profile } : old,
+      )
+      void client.invalidateQueries({ queryKey: ['ops'] })
+    },
+    onError: (e) => {
+      // A stale revision: show what is really saved now.
+      if (e instanceof ApiError && e.status === 409) {
+        void client.invalidateQueries({ queryKey: ['ops'] })
+      }
+    },
+  })
+}
+
+/** Saves the edited profile on the displayed revision. A 400 carries `body.fields`. */
+export const useSaveProfile = () =>
+  useProfileMutation((v: OpsProfileRequests['save']) => api.saveOpsProfile(v))
+
+/** Drops the saved copy so the bundled file is in effect again. */
+export const useResetProfile = () =>
+  useProfileMutation((v: OpsProfileRequests['reset']) => api.resetOpsProfile(v))
 
 export const SESSION_KEY = ['session'] as const
 
