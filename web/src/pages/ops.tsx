@@ -23,6 +23,7 @@ import {
 } from '@/lib/ops.ts'
 import { OPS_POLL_MAX_MS, useOps, useResetProfile, useRunOps } from '@/lib/queries.ts'
 import type { OpsJob, OpsJobName, OpsProfile, OpsResponse, OpsSettings } from '@/lib/types.ts'
+import { EditSheet } from '@/pages/ops-edit-sheet.tsx'
 import { ProfileForm } from '@/pages/ops-profile.tsx'
 import { ScheduleCard } from '@/pages/ops-schedule.tsx'
 import { Confirm } from '@/pages/post-actions.tsx'
@@ -168,6 +169,7 @@ export function ProfileCard({
   onNotice?: (kind: Notice['kind'], text: string) => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
   const reset = useResetProfile()
   const say = (kind: Notice['kind'], text: string) => onNotice?.(kind, text)
   // The revision shown when the confirmation opened: polling may bring a newer copy while it is
@@ -207,18 +209,28 @@ export function ProfileCard({
       <CardContent className="flex flex-col gap-4">
         {profile === null ? (
           <p className="text-sm text-muted-foreground">프로필을 읽지 못했어요.</p>
-        ) : editing ? (
-          <ProfileForm
-            profile={profile}
-            onCancel={() => setEditing(false)}
-            onSaved={() => {
-              setEditing(false)
-              say('ok', '프로필을 저장했어요. 다음 수집·선별부터 반영돼요.')
-            }}
-            onError={(m) => say('error', m)}
-          />
         ) : (
           <>
+            {/* The sheet mounts the form only while open, so each opening starts from the
+                profile (and revision) shown at that moment. */}
+            <EditSheet
+              open={editing}
+              busy={busy}
+              onClose={() => setEditing(false)}
+              title="체험단 프로필 편집"
+              description="저장하면 다음 수집·선별과 리뷰 초안부터 반영돼요."
+            >
+              <ProfileForm
+                profile={profile}
+                onBusyChange={setBusy}
+                onCancel={() => setEditing(false)}
+                onSaved={() => {
+                  setEditing(false)
+                  say('ok', '프로필을 저장했어요. 다음 수집·선별부터 반영돼요.')
+                }}
+                onError={(m) => say('error', m)}
+              />
+            </EditSheet>
             <dl className="flex flex-col gap-2 text-sm">
               <Row label="소개">{profile.about || '-'}</Row>
               <Row label="관심사">
