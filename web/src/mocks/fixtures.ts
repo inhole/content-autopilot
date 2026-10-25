@@ -881,7 +881,7 @@ export function mockResetProfile(req: OpsProfileRequests['reset']) {
   return { ok: true as const, profile: mockProfileState }
 }
 
-const SLOT = /^([01]d|2[0-3]):[0-5]d$/
+const SLOT = /^([01]\d|2[0-3]):[0-5]\d$/
 const isInt = (n: unknown, lo: number, hi: number) =>
   typeof n === 'number' && Number.isInteger(n) && n >= lo && n <= hi
 const sortedUnique = <T extends string | number>(list: T[]) => [...new Set(list)].sort()

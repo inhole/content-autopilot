@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setCsrfToken } from '@/lib/api.ts'
 import type { OpsSchedule } from '@/lib/types.ts'
-import { mockOps, resetMockOps } from '@/mocks/fixtures.ts'
+import { mockOps, mockSaveSchedule, resetMockOps } from '@/mocks/fixtures.ts'
 import { OpsPage } from './ops.tsx'
 import { buildSchedule, toScheduleForm } from './ops-schedule.tsx'
 
@@ -303,5 +303,25 @@ describe('schedule reset', () => {
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '되돌리기' }))
     expect(await screen.findByText(/기본값\(환경변수\)으로 되돌렸어요/)).toBeInTheDocument()
+  })
+})
+
+describe('mock schedule handler', () => {
+  it('accepts valid publish slots and normalizes them', () => {
+    const res = mockSaveSchedule({
+      revision: mockOps().schedule.revision,
+      schedule: {
+        threadsCollect: { minute: 0, hours: [6] },
+        giftCollect: { minute: 0, hours: [21, 9, 15] },
+        musinsaCollect: { minute: 30, hours: [10] },
+        dailyPostCount: 3,
+        publishSlots: ['21:00', '08:00', '12:30', '08:00'],
+        campaignDailyMax: 3,
+      },
+    })
+    expect(res).toMatchObject({ ok: true })
+    if (res === 'stale' || !('schedule' in res) || !res.schedule) throw new Error('not saved')
+    expect(res.schedule.current.publishSlots).toEqual(['08:00', '12:30', '21:00'])
+    expect(res.schedule.current.giftCollect.daily?.hours).toEqual([9, 15, 21])
   })
 })
