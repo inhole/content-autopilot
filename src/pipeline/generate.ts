@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { config } from '../config.ts'
+import { config, type ThreadChainMode, threadChainMode } from '../config.ts'
 import { type Query, query, transaction } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
@@ -41,6 +41,13 @@ export const shortenPrompt = (text: string, target = THREADS_TEXT_LIMIT - SHORTE
 export const charCount = (text: string) => [...text].length
 
 /**
+ * Whether a topic's draft gets follow-ups. `alternate` (the format experiment, decision 16) gives
+ * even topic ids a chain and odd ones a single post, so a regeneration keeps its format.
+ */
+export const chainFor = (topicId: number, mode: ThreadChainMode = threadChainMode()): boolean =>
+  mode === 'on' || (mode === 'alternate' && topicId % 2 === 0)
+
+/**
  * One LLM draft for an assembled user prompt. Every piece over its limit is shortened once: the
  * main post and non-last follow-ups to the Threads limit, the last follow-up to leave room for
  * the CTA that is appended at publish time. Empty follow-ups are dropped.
@@ -48,7 +55,7 @@ export const charCount = (text: string) => [...text].length
 export async function draftPost(
   user: string,
   model = config.LLM_MODEL,
-  chain = config.THREAD_CHAIN_ENABLED,
+  chain = threadChainMode() === 'on',
 ): Promise<StoredGeneration> {
   const system = chain ? `${GENERATE_SYSTEM}\n\n${CHAIN_RULES}` : GENERATE_SYSTEM
   const raw = chain
@@ -113,7 +120,7 @@ export type GenerateOptions = {
    * request exists, so a retried older request never overwrites a newer result.
    */
   seq?: number
-  /** Generate follow-up replies too; defaults to THREAD_CHAIN_ENABLED. */
+  /** Generate follow-up replies too; defaults to chainFor(topicId). */
   chain?: boolean
 }
 
@@ -150,8 +157,12 @@ export async function pendingShortlistedTopicIds(): Promise<number[]> {
  * (owner's edited/approved posts, recent hooks, reject reasons) is a nice-to-have: a failure to
  * load it must not block the draft. Labeled parts are joined by blank lines.
  */
-async function buildUserPrompt(topic: Topic, sources: GatheredSources): Promise<string> {
-  const stylePrompt = await loadStyleContext()
+async function buildUserPrompt(
+  topic: Topic,
+  sources: GatheredSources,
+  chain: boolean,
+): Promise<string> {
+  const stylePrompt = await loadStyleContext({ chain })
     .then(buildStylePrompt)
     .catch((err: unknown) => {
       console.warn(`[generate] style context unavailable: ${(err as Error).message}`)
@@ -182,7 +193,11 @@ export async function previewDraft(
   const sources = await gatherSources(topic)
   if (!sources) return null
   const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
-  return draftPost(`${await buildUserPrompt(topic, sources)}${notePrompt}`, config.LLM_MODEL, chain)
+  return draftPost(
+    `${await buildUserPrompt(topic, sources, chain)}${notePrompt}`,
+    config.LLM_MODEL,
+    chain,
+  )
 }
 
 /**
@@ -195,7 +210,7 @@ export async function generatePost(
   topicId: number,
   options: GenerateOptions = {},
 ): Promise<number | null> {
-  const { regenerate = false, feedback, seq, chain = config.THREAD_CHAIN_ENABLED } = options
+  const { regenerate = false, feedback, seq, chain = chainFor(topicId) } = options
   const [topic] = await query<Topic>(
     'select id, title, url, discussion_url, feed_summary, note from topics where id = $1',
     [topicId],
@@ -234,7 +249,7 @@ export async function generatePost(
   const notePrompt = topic.note ? `\n\n작성자 의견 (글의 관점으로 삼을 것): ${topic.note}` : ''
 
   const gen = await draftPost(
-    `${await buildUserPrompt(topic, sources)}${notePrompt}${revisionPrompt}`,
+    `${await buildUserPrompt(topic, sources, chain)}${notePrompt}${revisionPrompt}`,
     config.LLM_MODEL,
     chain,
   )

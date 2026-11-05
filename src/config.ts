@@ -44,6 +44,9 @@ export const schema = z.object({
   // Thread chains (docs/decisions.md 8): drafts get up to two follow-up replies. Only affects
   // generation; a post that already has parts is published as a chain either way.
   THREAD_CHAIN_ENABLED: bool,
+  // off | on | alternate (decision 16: even topic ids get a chain, odd ones a single post).
+  // Unset follows THREAD_CHAIN_ENABLED: true means alternate, false means off.
+  THREAD_CHAIN_MODE: z.enum(['off', 'on', 'alternate']).optional(),
   // Fixed text appended to the last follow-up of a chain, never to a single post. `\n` in the
   // value becomes a line break. Unset: no CTA.
   THREAD_CTA_TEXT: z
@@ -157,6 +160,13 @@ export const config: Config = schema.parse(
   const errors = videoConfigErrors(config)
   if (errors.length) throw new Error(`invalid video config: ${errors.join('; ')}`)
 }
+
+export type ThreadChainMode = NonNullable<Config['THREAD_CHAIN_MODE']>
+
+/** The effective chain mode: THREAD_CHAIN_MODE, else THREAD_CHAIN_ENABLED (true = alternate). */
+export const threadChainMode = (
+  c: Pick<Config, 'THREAD_CHAIN_MODE' | 'THREAD_CHAIN_ENABLED'> = config,
+): ThreadChainMode => c.THREAD_CHAIN_MODE ?? (c.THREAD_CHAIN_ENABLED ? 'alternate' : 'off')
 
 /** The dashboard runs only where its login codes can reach the owner's Telegram chat. */
 export function dashboardEnabled(): boolean {

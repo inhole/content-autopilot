@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildWeeklyReport, type InsightRow, isDryRunId } from '../src/pipeline/insights.ts'
+import { buildWeeklyReport, type InsightRow, isDryRunId, median } from '../src/pipeline/insights.ts'
 import { ThreadsClient } from '../src/threads/client.ts'
 import { parseInsights } from '../src/threads/insights.ts'
 
@@ -106,10 +106,11 @@ describe('buildWeeklyReport', () => {
     expect(out).toContain('"첫 글입니다"')
     expect(out).not.toContain('둘째 줄')
     expect(out).toContain(`"${'B'.repeat(28)}…"`)
-    const top = out.split('📉')[0] ?? ''
+    expect(out).toContain('#3 "세번째" · 조회 200 · 답글 0 · 좋아요 0')
+    const top = out.split('▸ 조회 가장 적은 글')[0] ?? ''
     expect(top.indexOf('#2')).toBeLessThan(top.indexOf('#1'))
     expect(top).not.toContain('#3')
-    expect(out.split('📉')[1]).toContain('#3')
+    expect(out.split('▸ 조회 가장 적은 글')[1]).toContain('#3')
   })
 
   it('treats null metrics as unknown and notes unmeasured posts', () => {
@@ -119,24 +120,59 @@ describe('buildWeeklyReport', () => {
     expect(out).toContain('조회 -')
   })
 
-  it('omits the chain comparison when no post has parts', () => {
+  it('uses no emoji', () => {
+    const out = buildWeeklyReport([row(1, 'a', m(10, 1)), row(2, 'b', m(5, 0))])
+    expect(out).not.toMatch(/\p{Extended_Pictographic}/u)
+  })
+
+  it('omits the format comparison when no post qualifies', () => {
     expect(buildWeeklyReport([row(1, 'a', m(10, 1))])).not.toContain('연결 글')
   })
 
-  it('compares chain and single posts using only known metrics', () => {
-    const out = buildWeeklyReport([
-      { ...row(1, 'chain a', m(300, 4)), hasParts: true },
-      { ...row(2, 'chain b', m(null, 2)), hasParts: true },
-      row(3, 'single', m(100, 0)),
-    ])
-    expect(out).toContain('연결 글 2개 — 평균 조회 300 · 평균 답글 3')
-    expect(out).toContain('단일 글 1개 — 평균 조회 100 · 평균 답글 0')
+  const exp = (postId: number, hasParts: boolean, matureViews: number | null): InsightRow => ({
+    ...row(postId, `post ${postId}`, m(matureViews ?? 1, 0)),
+    hasParts,
+    origin: 'news',
+    promptVersion: 2,
+    matureViews,
+  })
+
+  it('compares chain and single news posts by the median of mature views', () => {
+    const rows = [
+      exp(1, true, 2),
+      exp(2, true, 10),
+      exp(3, true, 3),
+      exp(4, false, 40),
+      exp(5, false, 300),
+    ]
+    const out = buildWeeklyReport(rows)
+    expect(out).toContain('연결 글 3개 · 조회 중앙값 3')
+    expect(out).toContain('단독 글 2개 · 조회 중앙값 170')
+    expect(out).toContain('최근 28일 · 발행 1일 뒤 조회')
     expect(out).toContain('표본이 작아')
   })
 
-  it('states when there are no single posts to compare', () => {
-    const out = buildWeeklyReport([{ ...row(1, 'chain', m(300, 4)), hasParts: true }])
-    expect(out).toContain('단일 글 없음')
+  it('leaves out young, digest, revived and older-voice posts', () => {
+    const out = buildWeeklyReport([
+      exp(1, true, 5),
+      exp(2, false, null),
+      { ...exp(3, true, 900), origin: 'digest' },
+      { ...exp(4, false, 900), origin: 'revived' },
+      { ...exp(5, false, 900), promptVersion: null },
+    ])
+    expect(out).toContain('연결 글 1개 · 조회 중앙값 5')
+    expect(out).toContain('단독 글 없음 · 비교 불가')
+  })
+
+  it('still shows the comparison after a week without posts', () => {
+    const out = buildWeeklyReport([], [exp(9, true, 6)])
+    expect(out).toContain('발행된 글이 없어요')
+    expect(out).toContain('연결 글 1개 · 조회 중앙값 6')
+  })
+
+  it('takes the comparison from the longer window when given', () => {
+    const out = buildWeeklyReport([row(1, 'week', m(10, 0))], [exp(9, false, 70)])
+    expect(out).toContain('단독 글 1개 · 조회 중앙값 70')
   })
 
   it('averages and ranks each metric over the posts that report it', () => {
@@ -149,7 +185,14 @@ describe('buildWeeklyReport', () => {
     expect(out).toContain('답글 3 (평균 2)')
     // Only post 1 has both views and replies: 2 / 100 * 1000.
     expect(out).toContain('답글률 20.0')
-    expect(out.split('📉')[1]).toContain('#3')
-    expect(out.split('📉')[1]).not.toContain('#2')
+    expect(out.split('▸ 조회 가장 적은 글')[1]).toContain('#3')
+    expect(out.split('▸ 조회 가장 적은 글')[1]).not.toContain('#2')
+  })
+})
+
+describe('median', () => {
+  it('takes the middle value, or the mean of the middle two', () => {
+    expect(median([5, 1, 3])).toBe(3)
+    expect(median([40, 300])).toBe(170)
   })
 })

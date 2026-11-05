@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildStylePrompt, type StyleContext } from '../src/pipeline/style.ts'
+import { buildStylePrompt, pickTopFirstLines, type StyleContext } from '../src/pipeline/style.ts'
 
 const empty: StyleContext = {
   examples: [],
@@ -65,5 +65,39 @@ describe('buildStylePrompt', () => {
       rejectReasons: [{ reason: 'boring', count: 3 }],
     })
     expect(out).toContain('재미없다')
+  })
+})
+
+describe('pickTopFirstLines', () => {
+  const rows = (views: number[]) => views.map((v, i) => ({ text: `글 ${i} 첫 줄\n본문`, views: v }))
+
+  it('learns nothing until six posts of the format are measured', () => {
+    expect(pickTopFirstLines(rows([1, 2, 3, 4, 500]))).toEqual([])
+  })
+
+  it('keeps up to three first lines above the median, best first', () => {
+    expect(pickTopFirstLines(rows([1, 2, 3, 40, 300, 90, 5, 6]))).toEqual([
+      '글 4 첫 줄',
+      '글 5 첫 줄',
+      '글 3 첫 줄',
+    ])
+  })
+
+  it('keeps nothing when every post has the same views', () => {
+    expect(pickTopFirstLines(rows([7, 7, 7, 7, 7, 7]))).toEqual([])
+  })
+})
+
+describe('buildStylePrompt top first lines', () => {
+  it('adds the section only when there are lines', () => {
+    expect(buildStylePrompt({ ...empty, topFirstLines: [] })).toBe('')
+    const out = buildStylePrompt({
+      ...empty,
+      topFirstLines: ['반응 좋았던 훅'],
+      recentFirstLines: ['최근 훅'],
+    })
+    expect(out).toContain('## 반응 좋았던 첫 줄')
+    expect(out).toContain('- 반응 좋았던 훅')
+    expect(out.indexOf('반응 좋았던 첫 줄')).toBeLessThan(out.indexOf('최근 첫 줄'))
   })
 })

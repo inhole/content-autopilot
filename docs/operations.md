@@ -16,7 +16,7 @@ Telegram으로 오는 초안을 확인한다. 하루 기본 3개다.
 | 승인 메시지의 ⏪ 예약 취소 | 예약을 풀고 검수 대기로 되돌린다. 새 검수 메시지가 온다. |
 | 승인 메시지의 🚀 지금 발행 | 발행 시각을 지금으로 당긴다. 다음 발행 확인 주기(5분 이내)에 나간다. |
 
-**연결 글:** `THREAD_CHAIN_ENABLED=true`이면 LLM이 답글을 0~2개 붙인다. 검수 메시지 하나에 `[1/3]`, `[2/3]`, `[3/3]`이 글자 수와 함께 보인다. 본문이든 조각이든 바뀔 때마다 `revision`이 올라가서 이전 메시지의 버튼은 무효가 된다. 승인하면 본글이 예약 시간에 나가고, 그 직후 `publish-chain`이 답글을 순서대로 올린다. 출처 링크는 마지막 답글(답글이 없으면 본글)에 붙고, `THREAD_CTA_TEXT`가 있으면 마지막 답글 끝에 붙는다. 이 CTA는 글이 하나뿐일 때는 붙지 않는다. 연결 글 내용은 `npm run cli -- show <postId>`로 볼 수 있다.
+**연결 글:** 연결 글로 배정된 주제면 LLM이 답글을 0~2개 붙인다. 배정은 `THREAD_CHAIN_MODE`(아래 표)가 정하고, `THREAD_CHAIN_ENABLED=true`만 있으면 주제 id 짝수는 연결 글, 홀수는 단독 글로 번갈아 낸다(결정 16). 검수 메시지 하나에 `[1/3]`, `[2/3]`, `[3/3]`이 글자 수와 함께 보인다. 본문이든 조각이든 바뀔 때마다 `revision`이 올라가서 이전 메시지의 버튼은 무효가 된다. 승인하면 본글이 예약 시간에 나가고, 그 직후 `publish-chain`이 답글을 순서대로 올린다. 출처 링크는 마지막 답글(답글이 없으면 본글)에 붙고, `THREAD_CTA_TEXT`가 있으면 마지막 답글 끝에 붙는다. 이 CTA는 글이 하나뿐일 때는 붙지 않는다. 연결 글 내용은 `npm run cli -- show <postId>`로 볼 수 있다.
 
 **답글 조각 발행이 실패했을 때:** 조각마다 3번까지 시도한다. 그래도 실패하면 ❌ 알림과 「🔁 답글 다시 시도」 버튼(`chainretry:<postId>`)이 온다. 누르면 `FAILED` 조각이 `PENDING`으로 돌아가고, 다음 `publish-due` 확인(5분 이내)이 이어서 올린다. 본글은 그대로 남는다. `/status`에는 실패한 조각 수가 `연결 글 답글 실패: N건`으로, 발행된 글에서 30분 넘게 진행이 없는 조각 수가 `연결 글 답글 멈춤: N건`으로 보인다. 멈춘 조각은 `publish-due`가 5분마다 다시 찾아 이어서 올린다.
 
@@ -67,7 +67,7 @@ npm run cli -- threads:refresh       # 토큰 수동 갱신
 npm run cli -- insights              # 발행 글의 성과를 지금 수집하고 글별 최신 숫자 출력
 npm run cli -- report                # 주간 리포트 본문 출력 (/report와 같음)
 npm run cli -- replies               # 새 Threads 답글을 지금 확인하고 Telegram으로 알림
-npm run cli -- draft:preview <topicId...> [--chain]  # 지금 프롬프트로 초안을 만들어 본 글·답글과 글자 수를 출력 (읽기 전용: DB 쓰기·큐 없음. --chain은 THREAD_CHAIN_ENABLED와 관계없이 연결 글로)
+npm run cli -- draft:preview <topicId...> [--chain]  # 지금 프롬프트로 초안을 만들어 본 글·답글과 글자 수를 출력 (읽기 전용: DB 쓰기·큐 없음. 형식은 THREAD_CHAIN_MODE 배정을 따르고, --chain은 배정과 관계없이 연결 글로)
 npm run cli -- revive                # 만료 초안을 판정하고 목록 출력 (Telegram으로 보내지 않음)
 npm run cli -- revive <postId>       # 그 만료 초안을 지금 재활용하고 새 본문 출력 (검수 메시지는 review로 따로 보낸다)
 npm run cli -- digest                # 주간 묶음 연결 글을 지금 만들고 출력 (검수 메시지는 review로 따로 보낸다)
@@ -87,7 +87,8 @@ CLI는 Telegram 봇을 polling하지 않는다. 그래서 워커가 실행 중�
 | `PUBLISH_SLOTS` | `08:00,12:30,21:00` | 발행 시간 (`TZ_NAME` 기준) |
 | `COLLECT_CRON` | `0 6 * * *` | 수집 시각 |
 | `TZ_NAME` | `Asia/Seoul` | |
-| `THREAD_CHAIN_ENABLED` | `false` | 켜면 생성 단계에서 답글 조각을 만든다. 이미 조각이 있는 글은 이 값과 관계없이 연결 글로 발행한다. 2~3주 꺼서 기준선을 만든 뒤 켜서 비교한다. |
+| `THREAD_CHAIN_ENABLED` | `false` | `THREAD_CHAIN_MODE`가 비어 있을 때 true면 `alternate`, false면 `off`다. 이미 조각이 있는 글은 이 값과 관계없이 연결 글로 발행한다. |
+| `THREAD_CHAIN_MODE` | (비어 있음) | `off`(단독 글만), `on`(연결 글만), `alternate`(주제 id 짝수 연결 글·홀수 단독 글). 형식 실험(결정 16)이 끝나면 결과에 맞춰 `on`이나 `off`로 고정한다. |
 | `THREAD_CTA_TEXT` | 없음 | 마지막 답글 끝에 코드가 붙이는 고정 문구. `\n`은 줄바꿈이다. 500자에 맞지 않으면 발행할 때 뺀다. 글이 하나뿐이면 붙이지 않는다. 참여 유도로 보일 수 있어서 도달이 줄면 비운다(결정 8). |
 
 스케줄은 워커가 시작할 때 다시 등록된다. 바꾼 뒤에는 워커를 재시작한다.

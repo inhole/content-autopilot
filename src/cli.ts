@@ -16,6 +16,7 @@ import { publishChain } from './pipeline/chain.ts'
 import { addManualTopic, collectAll } from './pipeline/collect.ts'
 import { buildWeeklyDigest } from './pipeline/digest.ts'
 import {
+  chainFor,
   charCount,
   generatePost,
   pendingShortlistedTopicIds,
@@ -149,12 +150,12 @@ try {
       break
     }
     case 'draft:preview': {
-      const chain = args.includes('--chain') || config.THREAD_CHAIN_ENABLED
       const ids = args.filter((a) => !a.startsWith('--')).map(Number)
       if (!ids.length || ids.some((n) => !Number.isInteger(n))) {
         throw new Error('at least one numeric topicId is required')
       }
       for (const topicId of ids) {
+        const chain = args.includes('--chain') || chainFor(topicId)
         const gen = await previewDraft(topicId, chain)
         console.log(`===== topic ${topicId} (chain: ${chain}) =====`)
         if (!gen) {
