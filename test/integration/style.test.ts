@@ -32,3 +32,55 @@ describe('loadStyleContext examples', () => {
     expect((await loadStyleContext()).examples).toEqual([])
   })
 })
+
+describe('loadStyleContext top first lines', () => {
+  async function measured(
+    text: string,
+    views: number,
+    opts: { chain?: boolean; origin?: string } = {},
+  ) {
+    const id = await published(text, { text, prompt_version: 2 })
+    await query(
+      `update posts set origin = $2, platform_post_id = 'media-' || id,
+         published_at = now() - interval '3 days' where id = $1`,
+      [id, opts.origin ?? 'news'],
+    )
+    if (opts.chain) {
+      await query(
+        "insert into post_parts (post_id, idx, text, status) values ($1, 2, 'p', 'PUBLISHED')",
+        [id],
+      )
+    }
+    await query(
+      `insert into post_insights (post_id, collected_at, views)
+       select id, published_at + interval '2 days', $2 from posts where id = $1`,
+      [id, views],
+    )
+  }
+
+  it('learns from the best posts of the same format only', async () => {
+    for (const [i, v] of [1, 2, 3, 40, 50, 60].entries()) await measured(`단독 ${i}`, v)
+    for (const [i, v] of [9, 8, 7, 6, 5].entries()) await measured(`연결 ${i}`, v, { chain: true })
+    await measured('묶음 글', 9999, { origin: 'digest' })
+
+    expect((await loadStyleContext({ chain: false })).topFirstLines).toEqual([
+      '단독 5',
+      '단독 4',
+      '단독 3',
+    ])
+    // Five measured chain posts are not enough to learn from.
+    expect((await loadStyleContext({ chain: true })).topFirstLines).toEqual([])
+  })
+
+  it('learns chain posts from chain posts once six are measured', async () => {
+    for (const [i, v] of [1, 2, 3, 4, 5].entries()) await measured(`단독 ${i}`, v * 100)
+    for (const [i, v] of [9, 8, 7, 6, 5, 4].entries()) {
+      await measured(`연결 ${i}`, v, { chain: true })
+    }
+    expect((await loadStyleContext({ chain: true })).topFirstLines).toEqual([
+      '연결 0',
+      '연결 1',
+      '연결 2',
+    ])
+  })
+})

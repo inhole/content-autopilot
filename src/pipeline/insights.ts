@@ -3,10 +3,13 @@ import { getThreadsApi } from '../threads/account.ts'
 import type { ThreadsApi } from '../threads/client.ts'
 import type { Insights } from '../threads/insights.ts'
 import { videoReport } from '../video/insights.ts'
+import { PROMPT_VERSION } from './prompts.ts'
 
 /** Counts keep moving for a while after publishing; older posts are no longer worth polling. */
 const COLLECT_WINDOW_DAYS = 14
 const REPORT_WINDOW_DAYS = 7
+// The format comparison needs more posts than a week gives (decision 16).
+const COMPARE_WINDOW_DAYS = 28
 const TOP_SHOWN = 3
 const PREVIEW_CHARS = 28
 
@@ -66,11 +69,31 @@ export type InsightRow = {
   metrics: Insights | null
   /** True when the post has follow-up parts (a thread chain); insights cover the main post only. */
   hasParts?: boolean
+  origin?: string
+  promptVersion?: number | null
+  /** Views of the latest snapshot taken a day or more after publishing; null before that. */
+  matureViews?: number | null
 }
 
-/** Published posts of the last 7 days (non-dry) with their latest snapshot. */
-export async function loadInsightRows(now = new Date()): Promise<InsightRow[]> {
-  const since = new Date(now.getTime() - REPORT_WINDOW_DAYS * 86_400_000)
+/**
+ * Lateral join on `posts p` giving `mv.views`: the latest snapshot taken at least a day after
+ * publishing. Views are nearly final by then, so posts of different ages compare fairly.
+ */
+export const MATURE_VIEWS_JOIN = `left join lateral (
+  select views from post_insights
+  where post_id = p.id and collected_at >= p.published_at + interval '1 day' and views is not null
+  order by collected_at desc, id desc limit 1
+) mv on true`
+
+/**
+ * Published posts of the last `days` days (non-dry) with their latest snapshot. Threads counts the
+ * owner's own follow-up replies in `replies`, so the published parts are subtracted.
+ */
+export async function loadInsightRows(
+  now = new Date(),
+  days = REPORT_WINDOW_DAYS,
+): Promise<InsightRow[]> {
+  const since = new Date(now.getTime() - days * 86_400_000)
   const rows = await query<
     {
       id: number
@@ -78,15 +101,28 @@ export async function loadInsightRows(now = new Date()): Promise<InsightRow[]> {
       published_at: Date
       has_snapshot: boolean
       has_parts: boolean
+      own_replies: number
+      origin: string
+      prompt_version: number | null
+      mature_views: number | null
     } & Insights
   >(
     `select p.id, p.text, p.published_at, (i.id is not null) as has_snapshot,
-            exists (select 1 from post_parts pp where pp.post_id = p.id) as has_parts,
+            -- A chain whose follow-ups all failed reached readers as a single post.
+            exists (select 1 from post_parts pp
+                    where pp.post_id = p.id and pp.status = 'PUBLISHED') as has_parts,
+            (select count(*) from post_parts pp
+             where pp.post_id = p.id and pp.status = 'PUBLISHED')::int as own_replies,
+            p.origin,
+            case when p.generation->>'prompt_version' ~ '^[0-9]+$'
+                 then (p.generation->>'prompt_version')::int end as prompt_version,
+            mv.views as mature_views,
             i.views, i.likes, i.replies, i.reposts, i.quotes, i.shares
      from posts p
      left join lateral (
        select * from post_insights where post_id = p.id order by collected_at desc, id desc limit 1
      ) i on true
+     ${MATURE_VIEWS_JOIN}
      where p.status = 'PUBLISHED' and p.published_at >= $1
        and p.platform_post_id is not null and p.platform_post_id not like 'dry-%'
      order by p.published_at`,
@@ -97,11 +133,14 @@ export async function loadInsightRows(now = new Date()): Promise<InsightRow[]> {
     text: r.text,
     publishedAt: r.published_at,
     hasParts: r.has_parts,
+    origin: r.origin,
+    promptVersion: r.prompt_version,
+    matureViews: r.mature_views,
     metrics: r.has_snapshot
       ? {
           views: r.views,
           likes: r.likes,
-          replies: r.replies,
+          replies: r.replies === null ? null : Math.max(r.replies - r.own_replies, 0),
           reposts: r.reposts,
           quotes: r.quotes,
           shares: r.shares,
@@ -119,45 +158,57 @@ function preview(text: string): string {
 }
 
 const line = (r: InsightRow) =>
-  `#${r.postId} "${preview(r.text)}" — 👁 ${show(r.metrics?.views ?? null)} · 💬 ${show(r.metrics?.replies ?? null)} · ❤️ ${show(r.metrics?.likes ?? null)}`
+  `#${r.postId} "${preview(r.text)}" · 조회 ${show(r.metrics?.views ?? null)} · 답글 ${show(r.metrics?.replies ?? null)} · 좋아요 ${show(r.metrics?.likes ?? null)}`
 
-/** Average of a metric over the rows that report it; null when none does (unknown, not zero). */
-function average(rows: InsightRow[], k: keyof Insights): number | null {
-  const rs = rows.filter((r) => r.metrics?.[k] != null)
-  if (rs.length === 0) return null
-  return rs.reduce((a, r) => a + n(r.metrics?.[k]), 0) / rs.length
+/** Median of a non-empty list (mean of the middle two for an even count). */
+export function median(values: number[]): number {
+  const s = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 ? (s[mid] as number) : ((s[mid - 1] as number) + (s[mid] as number)) / 2
 }
 
-function chainLine(label: string, rows: InsightRow[]): string {
-  const avg = (k: keyof Insights) => {
-    const v = average(rows, k)
-    return v === null ? '-' : String(Math.round(v))
-  }
-  return `${label} ${rows.length}개 — 평균 조회 ${avg('views')} · 평균 답글 ${avg('replies')}`
-}
+const groupLine = (label: string, views: number[]) =>
+  views.length
+    ? `${label} ${views.length}개 · 조회 중앙값 ${Math.round(median(views))}`
+    : `${label} 없음 · 비교 불가`
 
-/** Chain vs single comparison over the main posts; empty when there is nothing to compare. */
+/**
+ * The format experiment (decision 16): chain vs single news posts in the current voice, by views a
+ * day or more after publishing. Digests, revived drafts and older voices would blur the format
+ * effect, so they are left out. Empty when no post qualifies.
+ */
 export function chainComparison(rows: InsightRow[]): string[] {
-  const chain = rows.filter((r) => r.hasParts)
-  if (chain.length === 0) return []
-  const single = rows.filter((r) => !r.hasParts)
+  const eligible = rows.filter(
+    (r) => r.origin === 'news' && r.promptVersion === PROMPT_VERSION && r.matureViews != null,
+  )
+  if (eligible.length === 0) return []
+  const views = (chain: boolean) =>
+    eligible.filter((r) => Boolean(r.hasParts) === chain).map((r) => r.matureViews as number)
   return [
     '',
-    '🔗 연결 글 vs 단일 글 (본글 기준)',
-    chainLine('연결 글', chain),
-    single.length ? chainLine('단일 글', single) : '단일 글 없음',
+    `▸ 연결 글 vs 단독 글 (최근 ${COMPARE_WINDOW_DAYS}일 · 발행 1일 뒤 조회)`,
+    groupLine('연결 글', views(true)),
+    groupLine('단독 글', views(false)),
     '표본이 작아 참고용이에요.',
   ]
 }
 
-/** Builds the Telegram text for the last 7 days from rows (latest snapshot per post). */
-export function buildWeeklyReport(rows: InsightRow[]): string {
-  const header = '📊 주간 Threads 리포트 (최근 7일)'
-  if (rows.length === 0) return `${header}\n\n이번 주에 발행된 글이 없어요.`
+/**
+ * Builds the Telegram text for the last 7 days from rows (latest snapshot per post). The format
+ * comparison uses `compareRows`, a longer window (weeklyReport passes the last 28 days).
+ */
+export function buildWeeklyReport(rows: InsightRow[], compareRows: InsightRow[] = rows): string {
+  const header = '■ 주간 Threads 리포트 (최근 7일)'
+  // The comparison spans 28 days, so it still has something to say after a quiet week.
+  const withComparison = (text: string) =>
+    [`${header}\n\n${text}`, ...chainComparison(compareRows)].join('\n')
+  if (rows.length === 0) return withComparison('이번 주에 발행된 글이 없어요.')
 
   const measured = rows.filter((r) => r.metrics !== null)
   if (measured.length === 0) {
-    return `${header}\n\n발행 ${rows.length}개, 아직 수집된 성과 숫자가 없어요. (npm run cli -- insights)`
+    return withComparison(
+      `발행 ${rows.length}개, 아직 수집된 성과 숫자가 없어요. (npm run cli -- insights)`,
+    )
   }
 
   // A null metric is unknown, not zero: each total and average uses only the posts that report it.
@@ -185,24 +236,27 @@ export function buildWeeklyReport(rows: InsightRow[]): string {
       : '답글률 계산 불가 (조회 0 또는 미집계)',
   ]
 
-  out.push(...chainComparison(rows))
+  out.push(...chainComparison(compareRows))
 
   const byReplies = has('replies').sort(
     (a, b) =>
       n(b.metrics?.replies) - n(a.metrics?.replies) || n(b.metrics?.views) - n(a.metrics?.views),
   )
   if (byReplies.length) {
-    out.push('', '💬 답글 많은 글', ...byReplies.slice(0, TOP_SHOWN).map(line))
+    out.push('', '▸ 답글 많은 글', ...byReplies.slice(0, TOP_SHOWN).map(line))
   }
 
   const withViews = has('views')
   if (withViews.length > 1) {
     const worst = withViews.sort((a, b) => n(a.metrics?.views) - n(b.metrics?.views))[0]
-    if (worst) out.push('', '📉 조회 가장 적은 글', line(worst))
+    if (worst) out.push('', '▸ 조회 가장 적은 글', line(worst))
   }
   return out.join('\n')
 }
 
 /** The Threads report plus the video section (docs/plans/video.md 3-12) when videos went out. */
 export const weeklyReport = async (now = new Date()) =>
-  [buildWeeklyReport(await loadInsightRows(now)), ...(await videoReport(now))].join('\n')
+  [
+    buildWeeklyReport(await loadInsightRows(now), await loadInsightRows(now, COMPARE_WINDOW_DAYS)),
+    ...(await videoReport(now)),
+  ].join('\n')

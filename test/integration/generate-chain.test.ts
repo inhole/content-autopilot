@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// The format experiment decides chain vs single when a caller passes no `chain`; set before config loads.
+process.env.THREAD_CHAIN_MODE = 'alternate'
+
 const chatJson = vi.fn()
 vi.mock('../../src/llm/openrouter.ts', () => ({
   chatJson: (...args: unknown[]) => chatJson(...args),
@@ -83,5 +86,31 @@ describe('generatePost with follow-ups', () => {
     chatJson.mockResolvedValueOnce({ text: main, angle: 'a', topic_tag: 'AI', caveats: [] })
     const postId = await generatePost(topicId, { chain: false })
     expect(await loadParts(postId as number)).toEqual([])
+  })
+})
+
+describe('generatePost format experiment', () => {
+  beforeEach(() => chatJson.mockReset())
+
+  it('asks for follow-ups on even topic ids only, also on regeneration', async () => {
+    const ids = [await seedTopic(), await seedTopic()]
+    const schemaNames = () =>
+      chatJson.mock.calls.map((c) => (c as [{ schemaName: string }])[0].schemaName)
+    const expected = ids.map((id) => (id % 2 === 0 ? 'threads_chain' : 'threads_post'))
+
+    for (const topicId of ids) {
+      chatJson.mockResolvedValueOnce(draft(main, topicId % 2 === 0 ? ['답글'.repeat(20)] : []))
+      await generatePost(topicId)
+    }
+    expect(schemaNames()).toEqual(expected)
+
+    chatJson.mockReset()
+    for (const topicId of ids) {
+      chatJson.mockResolvedValueOnce(
+        draft(`${main}!`, topicId % 2 === 0 ? ['새 답글'.repeat(20)] : []),
+      )
+      await generatePost(topicId, { regenerate: true })
+    }
+    expect(schemaNames()).toEqual(expected)
   })
 })

@@ -4,6 +4,7 @@ import { query } from '../db/pool.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { loadRuntimeSettings } from '../settings.ts'
 import { expireStaleTopics } from './collect.ts'
+import { MATURE_VIEWS_JOIN } from './insights.ts'
 import { RANK_SYSTEM } from './prompts.ts'
 
 const MAX_CANDIDATES = 100
@@ -89,6 +90,24 @@ export function resolveDuplicates<T extends Score>(scores: T[], known: Set<numbe
   return cleaned.map((s) => (roots.has(s.id) ? { ...s, duplicate_of: null } : s))
 }
 
+type RecentTopic = { id: number; title: string; views: number | null }
+
+/**
+ * The ranker's user prompt. A recent topic shows its views once they are mature (decision 16), so
+ * the ranker sees what this account's readers actually read.
+ */
+export function rankUserPrompt(candidates: Candidate[], recent: RecentTopic[]): string {
+  const list = candidates
+    .map((c) => `[${c.id}] (${c.source}) ${c.title}\n${(c.feed_summary ?? '').slice(0, 300)}`)
+    .join('\n\n')
+  const recentList = recent.length
+    ? recent
+        .map((t) => `[${t.id}] ${t.title}${t.views === null ? '' : ` · 조회 ${t.views}`}`)
+        .join('\n')
+    : '(없음)'
+  return `최근 다룬 주제:\n${recentList}\n\n후보 ${candidates.length}개를 모두 평가해라.\n\n${list}`
+}
+
 /** Pick the top `count` non-duplicate topics. A fixed count keeps daily volume stable. */
 export function pickTop(scores: Score[], candidateIds: Set<number>, count: number): number[] {
   const picked: number[] = []
@@ -118,21 +137,19 @@ export async function rankCollected(count?: number): Promise<number[]> {
     [MAX_CANDIDATES],
   )
   if (candidates.length === 0) return []
-  const recent = await query<{ id: number; title: string }>(
-    `select id, title from topics
-     where status = 'USED' and updated_at > now() - make_interval(days => $1)
-     order by updated_at desc`,
+  const recent = await query<RecentTopic>(
+    `select t.id, t.title, mv.views from topics t
+     left join posts p on p.topic_id = t.id and p.platform = 'THREADS' and p.status = 'PUBLISHED'
+     ${MATURE_VIEWS_JOIN}
+     where t.status = 'USED' and t.updated_at > now() - make_interval(days => $1)
+     order by t.updated_at desc`,
     [RECENT_DAYS],
   )
 
-  const list = candidates
-    .map((c) => `[${c.id}] (${c.source}) ${c.title}\n${(c.feed_summary ?? '').slice(0, 300)}`)
-    .join('\n\n')
-  const recentList = recent.length ? recent.map((t) => `[${t.id}] ${t.title}`).join('\n') : '(없음)'
   const { scores: raw } = await chatJson({
     model: config.LLM_RANK_MODEL,
     system: RANK_SYSTEM,
-    user: `최근 다룬 주제:\n${recentList}\n\n후보 ${candidates.length}개를 모두 평가해라.\n\n${list}`,
+    user: rankUserPrompt(candidates, recent),
     schema: rankSchema,
     schemaName: 'topic_scores',
     temperature: 0,

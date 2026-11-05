@@ -103,9 +103,9 @@ describe('chain data in reports and status', () => {
       [chain, true],
       [single, false],
     ])
-    const report = buildWeeklyReport(rows)
-    expect(report).toContain('연결 글 1개 — 평균 조회 400 · 평균 답글 6')
-    expect(report).toContain('단일 글 1개 — 평균 조회 100 · 평균 답글 0')
+    // The owner's own published follow-up is not a reader reply.
+    expect(rows[0]?.metrics?.replies).toBe(5)
+    expect(rows[1]?.metrics?.replies).toBe(0)
   })
 
   it('counts failed parts and stale unfinished parts of published posts', async () => {
@@ -116,5 +116,91 @@ describe('chain data in reports and status', () => {
     await addPart(fresh, 2, 'PUBLISHING', 2)
 
     expect(await loadChainParts()).toEqual({ failed: 1, stuck: 1 })
+  })
+})
+
+describe('format experiment data', () => {
+  async function experimentPost(opts: {
+    views: { hoursAfter: number; views: number }[]
+    parts?: string[]
+    origin?: string
+    promptVersion?: number
+    hoursAgo?: number
+  }) {
+    const postId = await seedPost(await seedTopic(), { status: 'PUBLISHED' })
+    await query(
+      `update posts set platform_post_id = 'media-' || id, origin = $2,
+         generation = jsonb_build_object('prompt_version', $3::int),
+         published_at = now() - make_interval(hours => $4)
+       where id = $1`,
+      [postId, opts.origin ?? 'news', opts.promptVersion ?? 2, opts.hoursAgo ?? 72],
+    )
+    for (const [i, status] of (opts.parts ?? []).entries()) {
+      await query(
+        "insert into post_parts (post_id, idx, text, status) values ($1, $2, 'part', $3)",
+        [postId, i + 2, status],
+      )
+    }
+    for (const v of opts.views) {
+      await query(
+        `insert into post_insights (post_id, collected_at, views, replies)
+         select id, published_at + make_interval(hours => $2), $3, 2 from posts where id = $1`,
+        [postId, v.hoursAfter, v.views],
+      )
+    }
+    return postId
+  }
+
+  it('reads mature views a day after publishing and subtracts only published own replies', async () => {
+    const chain = await experimentPost({
+      parts: ['PUBLISHED', 'FAILED'],
+      views: [
+        { hoursAfter: 8, views: 3 },
+        { hoursAfter: 30, views: 9 },
+      ],
+    })
+    const young = await experimentPost({ hoursAgo: 10, views: [{ hoursAfter: 8, views: 50 }] })
+
+    const rows = await loadInsightRows(new Date(), 28)
+    const byId = new Map(rows.map((r) => [r.postId, r]))
+
+    expect(byId.get(chain)).toMatchObject({
+      hasParts: true,
+      origin: 'news',
+      promptVersion: 2,
+      matureViews: 9,
+    })
+    // Threads says 2 replies; one is the owner's published follow-up, the failed one never went out.
+    expect(byId.get(chain)?.metrics?.replies).toBe(1)
+    expect(byId.get(young)?.matureViews).toBeNull()
+  })
+
+  it('counts a chain whose follow-ups all failed as a single post', async () => {
+    const postId = await experimentPost({
+      parts: ['FAILED'],
+      views: [{ hoursAfter: 30, views: 5 }],
+    })
+    const [row] = await loadInsightRows(new Date(), 28)
+    expect(row).toMatchObject({ postId, hasParts: false, matureViews: 5 })
+  })
+
+  it('compares formats over the 28-day window in the weekly report', async () => {
+    await experimentPost({
+      parts: ['PUBLISHED'],
+      hoursAgo: 24 * 20,
+      views: [{ hoursAfter: 30, views: 4 }],
+    })
+    await experimentPost({ hoursAgo: 24 * 20, views: [{ hoursAfter: 30, views: 80 }] })
+    await experimentPost({
+      origin: 'digest',
+      parts: ['PUBLISHED'],
+      views: [{ hoursAfter: 30, views: 999 }],
+    })
+
+    const now = new Date()
+    const report = buildWeeklyReport(await loadInsightRows(now), await loadInsightRows(now, 28))
+
+    expect(report).toContain('연결 글 1개 · 조회 중앙값 4')
+    expect(report).toContain('단독 글 1개 · 조회 중앙값 80')
   })
 })

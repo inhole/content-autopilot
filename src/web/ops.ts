@@ -9,7 +9,7 @@ import {
   saveCampaignProfile,
 } from '../campaigns/profile.ts'
 import { chars, disclosureReserve, MIN_BODY_MAX } from '../campaigns/review-draft.ts'
-import { config } from '../config.ts'
+import { config, threadChainMode } from '../config.ts'
 import { type Query, query, transaction } from '../db/pool.ts'
 import { INSIGHTS_CRON, INSIGHTS_QUEUE, Q } from '../jobs.ts'
 import {
@@ -319,7 +319,7 @@ export function opsSettings(s: RuntimeSettings): OpsResponse['settings'] {
   return {
     dailyPostCount: s.dailyPostCount,
     publishSlots: s.publishSlots,
-    threadChainEnabled: config.THREAD_CHAIN_ENABLED,
+    threadChainEnabled: threadChainMode() !== 'off',
     threadsDryRun: config.THREADS_DRY_RUN,
     campaignDailyMax: s.campaignDailyMax,
     campaignRankMode: config.CAMPAIGN_RANK_MODE,

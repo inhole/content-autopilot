@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickTop, resolveDuplicates, validateScores } from '../src/pipeline/rank.ts'
+import { pickTop, rankUserPrompt, resolveDuplicates, validateScores } from '../src/pipeline/rank.ts'
 
 const s = (id: number, score: number, duplicate_of: number | null = null) => ({
   id,
@@ -86,5 +86,27 @@ describe('pickTop', () => {
 
   it('never returns the same id twice', () => {
     expect(pickTop([s(1, 9), s(1, 9), s(2, 5)], new Set([1, 2]), 2)).toEqual([1, 2])
+  })
+})
+
+describe('rankUserPrompt', () => {
+  const candidate = { id: 7, title: '후보', feed_summary: '요약', source: 'GeekNews' }
+
+  it('shows mature views next to recent topics that have them', () => {
+    const out = rankUserPrompt(
+      [candidate],
+      [
+        { id: 1, title: '읽힌 글', views: 120 },
+        { id: 2, title: '아직 집계 전', views: null },
+      ],
+    )
+    expect(out).toContain('[1] 읽힌 글 · 조회 120')
+    expect(out).toContain('[2] 아직 집계 전\n')
+    expect(out).toContain('후보 1개를 모두 평가해라')
+    expect(out).toContain('[7] (GeekNews) 후보\n요약')
+  })
+
+  it('says so when nothing was covered recently', () => {
+    expect(rankUserPrompt([candidate], [])).toContain('최근 다룬 주제:\n(없음)')
   })
 })
