@@ -121,16 +121,6 @@ export function parseReplies(raw: unknown): ThreadsReply[] {
   })
 }
 
-export class ThreadsApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly body: string,
-  ) {
-    super(message)
-  }
-}
-
 export class ThreadsClient implements ThreadsApi {
   constructor(
     private readonly opts: {
@@ -230,7 +220,7 @@ export class ThreadsClient implements ThreadsApi {
     const res = await (this.opts.fetch ?? fetch)(url, init)
     const text = await res.text()
     if (!res.ok) {
-      throw new ThreadsApiError(`Threads ${method} ${path} ${res.status}`, res.status, text)
+      throw new Error(`Threads ${method} ${path} ${res.status}: ${text.slice(0, 300)}`)
     }
     return JSON.parse(text)
   }

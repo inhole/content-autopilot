@@ -24,16 +24,18 @@ Telegram을 열지 않고도 폰이나 PC에서 파이프라인 상태, 체험�
 | 규칙 | 값 |
 |---|---|
 | 코드 유효 시간 | 5분, 한 번만 쓴다. 새 코드를 받으면 이전 코드는 바로 무효가 된다. |
-| 틀린 입력 | 코드당 5번까지. 5번 틀리면 그 코드는 막히고 Telegram으로 알린다. |
+| 틀린 입력 | 코드당 5번까지. 5번 틀리면 그 코드는 막히고 Telegram으로 알린다(막히는 순간 한 번만, 막힌 코드로 다시 시도해도 알리지 않는다). |
 | 코드 요청 | 1분에 1번, 한 시간에 5번. 시간당 한도에 처음 걸리면 Telegram으로 알린다. |
 | 세션 | 30일. 쿠키 `ca_session`(`HttpOnly; Secure; SameSite=Strict`)에 무작위 토큰만 두고, DB(`admin_sessions`)에는 그 해시만 둔다. |
 | 로그인 성공 | Telegram으로 `🔐 관리자 콘솔 로그인`(시각, IP)을 보낸다. |
 
 - 코드도 해시(`admin_login_codes.code_hash`)로만 저장한다. 코드 원문은 Telegram 메시지에만 있다.
 - 사이드바 아래 `로그아웃`은 이 브라우저의 세션을, `모든 세션 끊기`(확인 창을 거친다)는 모든 기기의 세션을 끊는다. 모두 끊으면 Telegram으로 알린다.
-- 세션이 끝나면(만료, 다른 곳에서 모두 끊음) 다음 데이터 요청이 401을 받고 화면이 로그인으로 돌아간다.
+- 세션이 끝나면(만료, 다른 곳에서 모두 끊음) 다음 데이터 요청이나 쓰기가 401을 받고 화면이 로그인으로 돌아간다. 쓰기가 403이면(다른 탭에서 다시 로그인해 CSRF 토큰이 바뀐 경우 등) 세션을 다시 받아 새 토큰을 쓴다.
 - 모든 로그인 관련 동작(코드 요청, 로그인 성공·실패, 로그아웃)은 `admin_actions`에 시각, IP, 결과와 함께 남는다.
-- 서버는 `X-Forwarded-For`의 첫 주소를 IP로 기록한다(Railway 프록시). 기록과 알림용이고 접근 제어에는 쓰지 않는다.
+- 서버는 `X-Forwarded-For`의 첫 주소를 IP로 기록한다(Railway 프록시). IP 형식이 아니면 소켓 주소를 쓴다. 기록과 알림용이고 접근 제어에는 쓰지 않는다.
+- 코드 요청과 로그인은 한 프로세스에서 한 번에 하나만 처리한다. 처리 중에 들어온 요청은 DB에 가지 않고 바로 429 `{ error, retryAfter: 1 }`(+ `Retry-After: 1`)를 받는다(비인증 요청이 DB 연결을 다 잡지 못하게).
+- 오래된 행은 `pruneAdminAuth()`(`src/web/auth.ts`)가 매시간 지운다: 만료 뒤 하루 지난 코드, 만료나 끊긴 지 30일 지난 세션, 세션 없는 로그인 시도 기록(`code_request`, `login`) 중 실패했고 90일 지난 것. 성공한 로그인 기록은 남긴다. 쓰기 감사 기록은 세션이 지워져도(`session_id`가 null이 돼도) 남긴다.
 
 ## Railway 설정
 
@@ -83,7 +85,7 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 | 경로 | 설명 |
 |---|---|
 | `/api/overview` | 현황 (Threads 검수 대기·발행 예정·24시간 발행·실패, 체험단 상태별·출처별 개수, 마지막 수집) |
-| `/api/campaigns?status=active\|all\|<STATUS>&source=kakao-gift\|musinsa` | 체험단 목록. 알 수 없는 값은 `active`와 전체 출처로 본다. 행마다 `price`(정가 원 단위, 모르면 null; 카카오톡은 수집 때 읽은 `detail.price.basic`, 무신사는 대표 상품 정가)와 `next_deadline`(현재 단계의 마감, 카카오톡 체험단 신청 마감은 `estimated: true`)과 `competition`(신청자/모집 인원, 모르면 null)을 더한다. |
+| `/api/campaigns?status=active\|all\|<STATUS>&source=kakao-gift\|musinsa` | 체험단 목록. 알 수 없는 값은 `active`와 전체 출처로 본다. 행마다 `price`(정가 원 단위, 모르면 null; 카카오톡은 수집 때 읽은 `detail.price.basic`, 무신사는 대표 상품 정가)와 `next_deadline`(현재 단계의 마감, 카카오톡 체험단 신청 마감은 `estimated: true`)과 `competition`(신청자/모집 인원, 모르면 null)을 더한다. 최근에 바뀐 300건까지만 주고, 상한에 걸리면 `capped: 300`(아니면 null)이라 화면이 `최근 300건만 보여요`라고 표시한다. |
 | `/api/campaigns/<id>` | 체험단 상세와 보낸 리마인더. 숫자가 아니거나 없는 id는 404 |
 | `/api/posts?limit=50` | 최근 Threads 글과 최신 반응 수치, `origin`(news / revived / digest). `limit`은 1~200 |
 | `/api/posts/<id>` | Threads 글 상세: 본 글과 답글 조각(`post_parts`의 상태·시도·오류·조각 링크), 주제, 확인 필요, `revision`·`regen_seq`, 재활용 판정과 살리기 전 원문, 묶음 글 id, 글자 수 한도(`limits`: 500, 마지막 답글은 CTA 자리를 뺀 값). 숫자가 아니거나 없는 id는 404 |
@@ -91,15 +93,15 @@ HTTPS는 Railway가 처리한다. 세션 쿠키에 `Secure`가 붙으므로 HTTP
 | `/api/ops` | 운영 화면: 작업 5개의 큐·일정(cron)·마지막 실행(상태, 시각, 실패 오류 300자)·`busy`, 파이프라인 설정(하루 초안 수, 발행 시각, 연결 글, dry-run, 체험단 하루 최대, 선별 방식, 시간대), 체험단 프로필(읽지 못하면 null). 비밀값은 담지 않는다 |
 | `/api/videos?status=active\|all` | 숏폼 영상 목록. active는 진행 중(`UPLOADING`~`APPROVED`)이거나 최근 7일에 바뀐 영상. 행마다 출처(`post_id`, 직접 올림이면 null), 길이, 해상도, 발행 행 요약 |
 | `/api/videos/<id>` | 영상 상세: 제목·캡션·해시태그·발행 캡션(`full_caption`), 원고(생성 영상), 파일 정보와 `video_url`, 발행 행(상태, 시각, 시도, `claim_seq`, 오류, 링크), 원본 글, 한도. 숫자가 아니거나 없는 id는 404 |
-| `/api/insights?days=30` | 최근 `days`일(7~90) 안에 발행한 글의 반응. `daily`는 글마다 가장 최근 스냅샷을 KST 발행일별로 합산(오래된 날부터, 글이 있는 날만), `top`은 조회수 상위 10개 |
+| `/api/insights?days=30` | 최근 `days`일(7~90) 안에 발행한 글의 반응. `daily`는 글마다 가장 최근 스냅샷을 `TZ_NAME`(기본 `Asia/Seoul`) 기준 발행일별로 합산(오래된 날부터, 글이 있는 날만), `top`은 조회수 상위 10개 |
 
 인증 API (`src/web/server.ts`, 모양은 `api-types.ts`의 `AuthSessionResponse`, `AuthCodeResponse`):
 
 | 경로 | 설명 |
 |---|---|
 | `GET /api/auth/session` | `{ authenticated: true, csrf, expiresAt }` 또는 `{ authenticated: false }`. 세션이 없어도 200이다. |
-| `POST /api/auth/code` | 코드를 Telegram으로 보낸다. 200 `{ expiresAt }`, 한도에 걸리면 429 `{ error, retryAfter }`(+ `Retry-After`), Telegram 전송 실패는 502(그 코드는 바로 무효). |
-| `POST /api/auth/login` | 본문 `{ code: "123456" }`. 성공하면 세션 쿠키와 `{ authenticated: true, csrf, expiresAt }`. 형식이 틀리면 400, 틀린 코드 401(남은 횟수), 5번 틀리면 429, 유효한 코드가 없으면 400. |
+| `POST /api/auth/code` | 코드를 Telegram으로 보낸다. 200 `{ expiresAt }`, 한도에 걸리거나 다른 코드 요청·로그인을 처리 중이면 429 `{ error, retryAfter }`(+ `Retry-After`), Telegram 전송 실패는 502(그 코드는 바로 무효). |
+| `POST /api/auth/login` | 본문 `{ code: "123456" }`. 성공하면 세션 쿠키와 `{ authenticated: true, csrf, expiresAt }`. 형식이 틀리면 400, 틀린 코드 401(남은 횟수), 5번 틀리면 429, 다른 코드 요청·로그인을 처리 중이면 429(`retryAfter: 1`), 유효한 코드가 없으면 400. |
 | `POST /api/auth/logout` | 이 세션을 끊고 쿠키를 지운다. |
 | `POST /api/auth/logout-all` | 모든 세션을 끊는다. `{ ok: true, revoked }` |
 
@@ -242,6 +244,7 @@ Threads 글 상세(시트와 전체 페이지)의 `작업` 카드에서 Telegram
 | 발행 시각 (`HH:MM`, 1~10개) | `PUBLISH_SLOTS` | 다음 승인부터(이미 예약된 글은 시각이 그대로다) |
 | 체험단 하루 카드 수 (출처별, 1~20) | `CAMPAIGN_DAILY_MAX` | 다음 선별부터 |
 
+- 시각은 워커 시간대(`TZ_NAME`) 기준이다. 화면은 `Asia/Seoul`이면 `한국 시간`이라고, 다르면 그 시간대 기준이라고 알린다.
 - 수집 일정은 "매일, 고른 시각들의 몇 분"만 고를 수 있다(cron `<분> <시,시> * * *`). 화면은 0~23시 칸에서 시각을 여러 개 고르고 분을 넣는다. 환경변수 cron이 이보다 복잡하면 화면에 그대로 보여 주고, 저장하면 고른 일정으로 바뀐다.
 - 카드에 출처가 `페이지에서 수정함` 또는 `기본값(환경변수)`로 보이고, 값이 기본값과 다르면 기본값을 함께 보여 준다. 발행 시각이 하루 초안 수보다 적으면 안내만 한다(남는 글은 다음 날 시각으로 넘어간다).
 - `POST /api/ops/schedule` `{ revision, schedule }`, `POST /api/ops/schedule/reset` `{ revision }`: 프로필 편집과 같은 방식이다. 화면이 본 `revision`에서만 바뀌고(편집 폼은 열 때의, 되돌리기는 확인 창을 열 때의 `revision`을 보낸다), 되돌려도 `revision`은 계속 오른다. 409 stale, 400 `{ error, fields }`(`giftCollect.hours`, `publishSlots.2` 같은 경로). 시각과 발행 시각은 중복을 빼고 정렬하며, `8:00`은 `08:00`으로 맞춘다.

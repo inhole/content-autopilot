@@ -25,3 +25,27 @@ describe('PUBLIC_BASE_URL', () => {
     expect(parse(v).success).toBe(false)
   })
 })
+
+const parseEnv = (env: Record<string, string>) =>
+  schema.safeParse({ ...process.env, ...env } as Record<string, unknown>)
+
+describe('PUBLISH_SLOTS', () => {
+  it('pads, drops empty entries, dedupes and sorts', () => {
+    const r = parseEnv({ PUBLISH_SLOTS: '21:00, 8:00,21:00,' })
+    expect(r.success && r.data.PUBLISH_SLOTS).toEqual(['08:00', '21:00'])
+  })
+  it.each(['', ',', '25:00', '8', '08:00,noon'])('rejects %j', (v) => {
+    expect(parseEnv({ PUBLISH_SLOTS: v }).success).toBe(false)
+  })
+})
+
+describe('video limits', () => {
+  it('caps VIDEO_UPLOAD_MAX_MB at the Telegram bot file limit', () => {
+    expect(parseEnv({ VIDEO_UPLOAD_MAX_MB: '50' }).success).toBe(true)
+    expect(parseEnv({ VIDEO_UPLOAD_MAX_MB: '51' }).success).toBe(false)
+  })
+  it('dedupes VIDEO_PLATFORMS', () => {
+    const r = parseEnv({ VIDEO_PLATFORMS: 'shorts, Shorts,reels' })
+    expect(r.success && r.data.VIDEO_PLATFORMS).toEqual(['shorts', 'reels'])
+  })
+})

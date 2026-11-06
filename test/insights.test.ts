@@ -59,6 +59,20 @@ describe('ThreadsClient.getInsights', () => {
     expect(url).toContain('/v1.0/m1/insights')
     expect(url).toContain('metric=views%2Clikes%2Creplies%2Creposts%2Cquotes%2Cshares')
   })
+
+  it('puts the start of the error body in the message', async () => {
+    const body = JSON.stringify({
+      error: { message: 'Invalid OAuth access token', pad: 'x'.repeat(400) },
+    })
+    const client = new ThreadsClient({
+      baseUrl: 'https://graph.example',
+      userId: 'u',
+      accessToken: 't',
+      fetch: (async () => new Response(body, { status: 400 })) as unknown as typeof fetch,
+    })
+    const err = (await client.getInsights('m1').catch((e: Error) => e)) as Error
+    expect(err.message).toBe(`Threads GET /m1/insights 400: ${body.slice(0, 300)}`)
+  })
 })
 
 describe('isDryRunId', () => {

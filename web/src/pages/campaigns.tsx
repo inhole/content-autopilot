@@ -386,9 +386,14 @@ export function CampaignsPage() {
         description="마감이 가까운 순 · 카카오톡 체험단 신청 마감은 남은 일수로 추정한 값"
       >
         {q.data && (
-          <Badge variant="outline" className="tabular-nums">
-            {q.data.rows.length}건
-          </Badge>
+          <div className="flex items-center gap-2">
+            {q.data.capped && (
+              <span className="text-sm text-muted-foreground">최근 {q.data.capped}건만 보여요</span>
+            )}
+            <Badge variant="outline" className="tabular-nums">
+              {q.data.rows.length}건
+            </Badge>
+          </div>
         )}
       </PageHeader>
 

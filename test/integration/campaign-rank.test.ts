@@ -272,3 +272,32 @@ describe('rankCollected by LLM', () => {
     expect(systems[1]).toContain('무신사')
   })
 })
+
+describe('rankCollected per source', () => {
+  beforeEach(() => {
+    chatJson.mockReset()
+    config.CAMPAIGN_DAILY_MAX = 2
+    config.CAMPAIGN_RANK_MODE = 'rule'
+  })
+
+  it('ranks only the given source and leaves the other COLLECTED', async () => {
+    const gift = await seedCampaign()
+    const m = await seedCampaign({ source: 'musinsa' })
+    expect(await rankCollected(now, 'musinsa')).toEqual([m])
+    expect((await getCampaign(gift)).status).toBe('COLLECTED')
+    expect(await rankCollected(now, 'kakao-gift')).toEqual([gift])
+  })
+
+  it('without a source ranks every source (legacy campaign-rank, CLI)', async () => {
+    const gift = await seedCampaign()
+    const m = await seedCampaign({ source: 'musinsa' })
+    expect(await rankCollected(now)).toEqual([gift, m])
+  })
+
+  it('keeps a Musinsa row whose detail was never tried COLLECTED', async () => {
+    const untried = await seedCampaign({ source: 'musinsa', detailTried: false })
+    const tried = await seedCampaign({ source: 'musinsa' })
+    expect(await rankCollected(now, 'musinsa')).toEqual([tried])
+    expect((await getCampaign(untried)).status).toBe('COLLECTED')
+  })
+})

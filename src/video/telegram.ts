@@ -279,10 +279,11 @@ export async function sendVideoReview(
     console.log(`[video review] #${videoId} (no Telegram): ${v.video_url}\n${text}`)
     return
   }
+  // Download first: a failed download must not leave a script message behind on every retry.
+  const bytes = await storage.download(v.video_url)
   const scriptMsg = await api.sendMessage(chatId, text, {
     link_preview_options: { is_disabled: true },
   })
-  const bytes = await storage.download(v.video_url)
   const common = {
     caption: cut(
       `🎬 #${v.id} ${v.title ?? ''}\n↑ ${v.origin === 'upload' ? '내용' : '원고'} · 버튼으로 승인하거나 답장`,

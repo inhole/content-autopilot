@@ -6,6 +6,7 @@ import {
   csrfFor,
   loadSession,
   loginWithCode,
+  pruneAdminAuth,
   recordAdminAction,
   requestLoginCode,
   revokeAllSessions,
@@ -119,8 +120,16 @@ describe('login', () => {
         attemptsLeft: left,
       })
     }
-    expect(await loginWithCode(wrongFor(code), client)).toEqual({ ok: false, reason: 'locked' })
-    expect(await loginWithCode(code, client)).toEqual({ ok: false, reason: 'locked' })
+    expect(await loginWithCode(wrongFor(code), client)).toEqual({
+      ok: false,
+      reason: 'locked',
+      justLocked: true,
+    })
+    expect(await loginWithCode(code, client)).toEqual({
+      ok: false,
+      reason: 'locked',
+      justLocked: false,
+    })
     expect(await query('select 1 from admin_sessions')).toHaveLength(0)
   })
 
@@ -192,5 +201,52 @@ describe('audit log', () => {
       'select action, result, detail from admin_actions',
     )
     expect(rows).toEqual([{ action: 'login', result: 'wrong', detail: { note: 1 } }])
+  })
+})
+
+describe('pruneAdminAuth', () => {
+  it('deletes old codes, long-dead sessions and old login attempts only', async () => {
+    await query(
+      `insert into admin_login_codes (code_hash, created_at, expires_at) values
+         ('old', now() - interval '2 days', now() - interval '2 days'),
+         ('recent', now() - interval '2 hours', now() - interval '2 hours'),
+         ('live', now(), now() + interval '5 minutes')`,
+    )
+    await query(
+      `insert into admin_sessions (token_hash, expires_at, revoked_at) values
+         ('expired-old', now() - interval '31 days', null),
+         ('revoked-old', now() + interval '10 days', now() - interval '31 days'),
+         ('expired-recent', now() - interval '29 days', null),
+         ('revoked-recent', now() + interval '10 days', now() - interval '29 days'),
+         ('live', now() + interval '10 days', null)`,
+    )
+    const [live] = await query<{ id: number }>(
+      `select id from admin_sessions where token_hash = 'live'`,
+    )
+    await query(
+      `insert into admin_actions (at, session_id, action, result) values
+         (now() - interval '91 days', null, 'code_request', 'too_soon'),
+         (now() - interval '91 days', null, 'login', 'wrong'),
+         (now() - interval '89 days', null, 'login', 'wrong'),
+         (now() - interval '91 days', null, 'login', 'ok'),
+         (now() - interval '91 days', $1, 'campaign.apply', 'ok'),
+         (now() - interval '91 days', null, 'campaign.apply', 'ok')`,
+      [live?.id],
+    )
+
+    expect(await pruneAdminAuth()).toEqual({ codes: 1, sessions: 2, actions: 2 })
+    const left = async (sql: string) => (await query<{ k: string }>(sql)).map((r) => r.k).sort()
+    expect(await left('select code_hash as k from admin_login_codes')).toEqual(['live', 'recent'])
+    expect(await left('select token_hash as k from admin_sessions')).toEqual([
+      'expired-recent',
+      'live',
+      'revoked-recent',
+    ])
+    // Writes keep their audit even when their session is gone (session_id is then null).
+    expect(
+      await left(
+        `select action || ':' || (at > now() - interval '90 days') as k from admin_actions`,
+      ),
+    ).toEqual(['campaign.apply:false', 'campaign.apply:false', 'login:false', 'login:true'])
   })
 })

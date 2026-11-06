@@ -306,6 +306,16 @@ export function endSession(client: QueryClient): void {
   client.setQueryData<AuthSessionResponse>(SESSION_KEY, { authenticated: false })
 }
 
+/**
+ * A write that failed on auth: 401 means the session is gone (back to login), 403 usually means
+ * the CSRF token is from an older session (another tab logged in again), so fetch it again.
+ */
+export function onWriteAuthError(client: QueryClient, error: unknown): void {
+  if (!(error instanceof ApiError)) return
+  if (error.status === 401) endSession(client)
+  else if (error.status === 403) void client.invalidateQueries({ queryKey: SESSION_KEY })
+}
+
 export const useVideos = (filter: 'active' | 'all') =>
   useQuery({ queryKey: ['videos', filter], queryFn: () => api.videos(filter), ...live })
 

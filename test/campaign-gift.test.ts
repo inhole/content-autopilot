@@ -138,6 +138,8 @@ describe('fetchGiftTrialList', () => {
     expect(out.items).toHaveLength(74)
     expect(calls.filter((u) => u.includes('page=3&'))).toHaveLength(2) // one retry
     expect(warn).toHaveBeenCalled()
+    // A failed page is not the page cap.
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('cap'))).toBe(false)
     warn.mockRestore()
   })
 

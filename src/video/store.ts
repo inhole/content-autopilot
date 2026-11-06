@@ -271,29 +271,48 @@ export async function loadRenderJob(videoId: number): Promise<RenderJob | null> 
   return row ?? null
 }
 
+const STALE_RENDER = new Error('stale render')
+
 /**
- * Stores a finished render, only if the script is still the revision it was rendered from.
- * Returns the replaced storage key (to delete), or `applied: false` when the render is stale.
+ * Stores a finished render, only if the script is still the revision it was rendered from and
+ * its upload attempt (`video_upload_attempts`, recorded before the upload) was not reclaimed. The
+ * attempt row is deleted in the same transaction that references the key. Returns the replaced
+ * storage key (to delete), or `applied: false` (attempt row kept) when the render is stale.
  */
 export async function applyRender(
   videoId: number,
   revision: number,
   r: { hash: string; url: string; key: string; durationMs: number; sizeBytes: number },
 ): Promise<{ applied: boolean; previousKey: string | null }> {
-  const [row] = await query<{ previous_key: string | null }>(
-    `with old as (select storage_key from videos where id = $1 for update)
-     update videos v set render_hash = $3, video_url = $4, storage_key = $5, duration_ms = $6,
-       size_bytes = $7, rendered_at = now(), storage_deleted_at = null,
-       status = 'PENDING_REVIEW', stage_recoveries = 0,
-       last_error = null, review_message_id = null, script_message_id = null,
-       review_revision = null, updated_at = now()
-     from old
-     where v.id = $1 and v.status = 'RENDERING' and v.revision = $2
-     returning old.storage_key as previous_key`,
-    [videoId, revision, r.hash, r.url, r.key, r.durationMs, r.sizeBytes],
-  )
-  if (!row) return { applied: false, previousKey: null }
-  return { applied: true, previousKey: row.previous_key === r.key ? null : row.previous_key }
+  try {
+    return await transaction(async (q) => {
+      const claimed = await q(
+        'delete from video_upload_attempts where key = $1 and not reclaiming returning key',
+        [r.key],
+      )
+      if (claimed.length === 0) throw STALE_RENDER
+      const [row] = await q<{ previous_key: string | null }>(
+        `with old as (select storage_key from videos where id = $1 for update)
+         update videos v set render_hash = $3, video_url = $4, storage_key = $5,
+           duration_ms = $6, size_bytes = $7, rendered_at = now(), storage_deleted_at = null,
+           status = 'PENDING_REVIEW', stage_recoveries = 0,
+           last_error = null, review_message_id = null, script_message_id = null,
+           review_revision = null, updated_at = now()
+         from old
+         where v.id = $1 and v.status = 'RENDERING' and v.revision = $2
+         returning old.storage_key as previous_key`,
+        [videoId, revision, r.hash, r.url, r.key, r.durationMs, r.sizeBytes],
+      )
+      if (!row) throw STALE_RENDER
+      return {
+        applied: true,
+        previousKey: row.previous_key === r.key ? null : row.previous_key,
+      }
+    })
+  } catch (err) {
+    if (err === STALE_RENDER) return { applied: false, previousKey: null }
+    throw err
+  }
 }
 
 /** The script changed in a way that does not change the video (same render hash): back to review. */
@@ -397,7 +416,8 @@ export async function applyEdit(
         return { ok: false, message: `제목은 ${YOUTUBE_TITLE_LIMIT}자를 넘을 수 없어요.` }
       }
       await q(
-        'update videos set title = $2, revision = revision + 1, updated_at = now() where id = $1',
+        `update videos set title = $2, revision = revision + 1, stage_recoveries = 0,
+          updated_at = now() where id = $1`,
         [videoId, text],
       )
       return { ok: true, rerender: false }
@@ -410,7 +430,8 @@ export async function applyEdit(
       )
       if (problems.length) return { ok: false, message: problems.join(', ') }
       await q(
-        'update videos set caption = $2, revision = revision + 1, updated_at = now() where id = $1',
+        `update videos set caption = $2, revision = revision + 1, stage_recoveries = 0,
+          updated_at = now() where id = $1`,
         [videoId, text],
       )
       return { ok: true, rerender: false }
@@ -472,7 +493,7 @@ export async function applyMetaEdit(
     if (problem) return { ok: false, message: problem }
     await q(
       `update videos set title = $2, caption = $3, hashtags = $4, revision = revision + 1,
-         updated_at = now()
+         stage_recoveries = 0, updated_at = now()
        where id = $1`,
       [videoId, edit.title.trim(), edit.caption.trim(), cleanHashtags(edit.hashtags)],
     )
@@ -570,7 +591,7 @@ export async function unapproveVideo(
     await q(
       `update videos set status = 'PENDING_REVIEW', revision = revision + 1,
          review_message_id = null, script_message_id = null, review_revision = null,
-         updated_at = now()
+         stage_recoveries = 0, updated_at = now()
        where id = $1`,
       [videoId],
     )
@@ -584,6 +605,11 @@ export const REVIEW_EXPIRE_HOURS = 72
 export const UNSENT_REVIEW_MINUTES = 10
 export const STUCK_STAGE_MINUTES = 45
 export const MAX_STAGE_RECOVERIES = 2
+/**
+ * Hourly review re-sends per revision: a day of tries outlasts a Telegram outage, while a send
+ * that can never succeed stops long before the 72h expiry instead of repeating every hour.
+ */
+export const MAX_REVIEW_RESENDS = 24
 
 export const UPLOAD_EXPIRE_HOURS = 1
 
@@ -621,17 +647,20 @@ export async function expireVideos(
 }
 
 /**
- * PENDING_REVIEW videos without a current review message: never registered (a crash or lost
- * enqueue), or registered for an older revision whose re-send failed (a title/caption edit).
+ * Claims PENDING_REVIEW videos without a current review message for one more send: never
+ * registered (a crash or lost enqueue), or registered for an older revision whose re-send failed
+ * (a title/caption edit). Each claim bumps stage_recoveries (unused while under review, reset by
+ * every revision), so a send that keeps failing stops after MAX_REVIEW_RESENDS hourly tries.
  */
 export async function unsentReviews(now = new Date()): Promise<number[]> {
   const rows = await query<{ id: number }>(
-    `select id from videos
+    `update videos set stage_recoveries = stage_recoveries + 1
      where status = 'PENDING_REVIEW'
        and (review_message_id is null or review_revision is distinct from revision)
        and updated_at < $1::timestamptz - make_interval(mins => $2)
-     order by id`,
-    [now, UNSENT_REVIEW_MINUTES],
+       and stage_recoveries < $3
+     returning id`,
+    [now, UNSENT_REVIEW_MINUTES, MAX_REVIEW_RESENDS],
   )
   return rows.map((r) => r.id)
 }

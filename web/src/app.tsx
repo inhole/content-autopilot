@@ -1,4 +1,4 @@
-import { QueryCache, QueryClient } from '@tanstack/react-query'
+import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query'
 import { SearchXIcon } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { Link, Route, Routes, useLocation } from 'react-router-dom'
@@ -8,7 +8,7 @@ import { RequireAuth } from '@/components/require-auth.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import { Skeleton } from '@/components/ui/skeleton.tsx'
 import { ApiError } from '@/lib/api.ts'
-import { endSession, SESSION_KEY } from '@/lib/queries.ts'
+import { endSession, onWriteAuthError, SESSION_KEY } from '@/lib/queries.ts'
 import { CampaignDetailPage, CampaignSheet } from '@/pages/campaign-detail.tsx'
 import { CampaignsPage } from '@/pages/campaigns.tsx'
 import { ExpiredPage } from '@/pages/expired.tsx'
@@ -39,6 +39,11 @@ export function createQueryClient(): QueryClient {
         )
           endSession(client)
       },
+    }),
+    // Same for a write. A 403 is most likely a CSRF token from before a login in another tab:
+    // fetching the session again hands the API client the current one.
+    mutationCache: new MutationCache({
+      onError: (error) => onWriteAuthError(client, error),
     }),
     defaultOptions: {
       queries: {

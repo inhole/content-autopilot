@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { config } from './config.ts'
+import { config, publishSlotsSchema } from './config.ts'
 import { type Query, query } from './db/pool.ts'
 import type { DailySchedule, OpsScheduleFields } from './web/api-types.ts'
 
@@ -40,24 +40,12 @@ const dailySchema = z.object({
     .refine((hs) => hs.length >= 1 && hs.length <= 24, { message: 'need 1-24 hours' }),
 })
 
-/** `H:MM` or `HH:MM` (trimmed) to zero-padded `HH:MM`; anything else stays as is and fails. */
-const slotSchema = z
-  .string()
-  .transform((s) => {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim())
-    return m ? `${(m[1] as string).padStart(2, '0')}:${m[2]}` : s
-  })
-  .refine((s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s), { message: 'expected HH:MM' })
-
 export const scheduleFieldsSchema = z.object({
   threadsCollect: dailySchema,
   giftCollect: dailySchema,
   musinsaCollect: dailySchema,
   dailyPostCount: z.number().int().min(1).max(10),
-  publishSlots: z
-    .array(slotSchema)
-    .transform((s) => [...new Set(s)].sort())
-    .refine((s) => s.length >= 1 && s.length <= 10, { message: 'need 1-10 slots' }),
+  publishSlots: publishSlotsSchema,
   campaignDailyMax: z.number().int().min(1).max(20),
 })
 

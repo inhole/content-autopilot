@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { config } from '../../src/config.ts'
 import { query } from '../../src/db/pool.ts'
 import { loadCampaignCounts, loadStatus } from '../../src/pipeline/status.ts'
 import {
@@ -279,6 +280,17 @@ describe('loadInsights', () => {
 
   it('is empty without published posts', async () => {
     expect(await loadInsights(30, now)).toEqual({ days: 30, daily: [], top: [] })
+  })
+
+  it('groups by the publish day in TZ_NAME', async () => {
+    await seedPost('PUBLISHED', { published_at: new Date('2026-10-17T15:30:00Z') })
+    const tz = config.TZ_NAME
+    config.TZ_NAME = 'UTC'
+    try {
+      expect((await loadInsights(30, now)).daily.map((d) => d.date)).toEqual(['2026-10-17'])
+    } finally {
+      config.TZ_NAME = tz
+    }
   })
 })
 

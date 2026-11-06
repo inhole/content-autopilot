@@ -1,6 +1,7 @@
 import { query } from '../db/pool.ts'
 import { getThreadsApi } from '../threads/account.ts'
 import { THREADS_TEXT_LIMIT, type ThreadsApi, type ThreadsReply } from '../threads/client.ts'
+import { charCount } from './generate.ts'
 import { driveContainer } from './publish.ts'
 
 /** Replies matter most early, and older posts would only add API calls. */
@@ -55,7 +56,7 @@ export function formatReplyNotification(r: NewReply): string {
 export function validateAnswer(text: string): string {
   const trimmed = text.trim()
   if (!trimmed) throw new Error('답글 내용이 비어 있어요.')
-  const length = [...trimmed].length
+  const length = charCount(trimmed)
   if (length > THREADS_TEXT_LIMIT) {
     throw new Error(`답글은 ${THREADS_TEXT_LIMIT}자까지예요 (현재 ${length}자).`)
   }
@@ -204,12 +205,18 @@ export async function answerReply(
     )
 
   // A previous attempt may have published and then lost the response or crashed.
-  if (
-    claimed.answer_container_id &&
-    (await containerStatus(threads, claimed.answer_container_id)) === 'PUBLISHED'
-  ) {
-    await markAnswered(null)
-    return done
+  if (claimed.answer_container_id) {
+    const previous = await containerStatus(threads, claimed.answer_container_id)
+    if (previous === 'PUBLISHED') {
+      await markAnswered(null)
+      return done
+    }
+    // Posting now could answer twice; the renewed claim goes stale and the next attempt re-checks.
+    if (previous === 'unknown') {
+      throw new Error(
+        `이전 답글이 올라갔는지 확인하지 못했어요. ${STALE_CLAIM_MINUTES}분 뒤 다시 답장해 주세요.`,
+      )
+    }
   }
 
   let containerId: string | null = null
@@ -237,7 +244,8 @@ export async function answerReply(
     }
     if (status !== 'unknown') {
       await query(
-        `update threads_replies set answer_state = null, answer_text = null
+        // The container is known not to be live, so the next try must not look it up again.
+        `update threads_replies set answer_state = null, answer_text = null, answer_container_id = null
          where id = $1 and answer_state = 'ANSWERING'`,
         [claimed.id],
       ).catch(() => {})

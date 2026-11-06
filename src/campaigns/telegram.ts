@@ -3,7 +3,7 @@ import { config, dashboardEnabled } from '../config.ts'
 import { localDate, zonedToUtc } from '../lib/time.ts'
 import { type CampaignCallback, parseCampaignCallback } from './callbacks.ts'
 import { GIFT_CAMPAIGN_ID_RE } from './gift.ts'
-import { musinsaAppUrl } from './musinsa.ts'
+import { endOfLocalDay, musinsaAppUrl } from './musinsa.ts'
 import {
   loadActiveCampaigns,
   markApplied,
@@ -28,6 +28,7 @@ import {
   type CampaignStatus,
   campaignPriceInfo,
   competition,
+  daysUntil,
   isCampaignRejectReason,
   musinsaCategoryLabel,
   musinsaFacts,
@@ -53,12 +54,6 @@ export const CAMPAIGN_BOT_COMMANDS = [
 ]
 
 // ---------- formatting ----------
-
-/** Whole local calendar days from `now` to `target` in `tz` (negative when past). */
-export function daysUntil(target: Date, now: Date, tz: string): number {
-  const day = (d: Date) => Date.parse(`${localDate(d, tz)}T00:00:00Z`)
-  return Math.round((day(target) - day(now)) / 86_400_000)
-}
 
 export function formatDday(days: number): string {
   if (days === 0) return 'D-day'
@@ -100,6 +95,12 @@ export function formatCounts(
   return parts.length ? parts.join(' · ') : null
 }
 
+/** `정가 49,000원` (`→ 39,200원` when the sale price is lower), or null without a list price. */
+const formatPrice = (p: { price: number | null; salePrice: number | null }) =>
+  p.price == null
+    ? null
+    : `정가 ${formatWon(p.price)}${p.salePrice != null ? ` → ${formatWon(p.salePrice)}` : ''}`
+
 /** `10/27(화)` for a YYYY-MM-DD source date, read as a day in `tz`. */
 export const formatIsoDay = (date: string, tz: string) =>
   formatKstDate(zonedToUtc(date, '12:00', tz), tz)
@@ -114,15 +115,9 @@ export function formatMusinsaFacts(
 ): string[] {
   const m = musinsaFacts(c)
   if (!m) return []
-  const price =
-    m.price == null
-      ? null
-      : m.salePrice != null
-        ? `정가 ${formatWon(m.price)} → ${formatWon(m.salePrice)}`
-        : `정가 ${formatWon(m.price)}`
   const head = [
     m.category ? musinsaCategoryLabel(m.category) : null,
-    price,
+    formatPrice(m),
     m.goodsCount != null && m.goodsCount > 1 ? `상품 ${m.goodsCount}개` : null,
   ].filter(Boolean)
   const day = (d: string) => formatIsoDay(d, tz)
@@ -150,14 +145,8 @@ export function formatCampaignCard(c: Campaign, now: Date, tz: string): string {
   if (counts) lines.push(counts)
   if (c.source === 'musinsa') lines.push(...formatMusinsaFacts(c, tz))
   else {
-    const p = campaignPriceInfo(c)
-    if (p.price != null) {
-      lines.push(
-        p.salePrice != null
-          ? `정가 ${formatWon(p.price)} → ${formatWon(p.salePrice)}`
-          : `정가 ${formatWon(p.price)}`,
-      )
-    }
+    const price = formatPrice(campaignPriceInfo(c))
+    if (price) lines.push(price)
   }
   if (c.apply_deadline) {
     const estimate = sourceInfo(c.source).estimatedDeadline ? ' (추정)' : ''
@@ -239,18 +228,6 @@ export const selectedText = (id: number) =>
   `🎉 #${id} 선정 축하해요! 리뷰 기한을 /due ${id} 10/30 처럼 알려주세요.`
 export const notSelectedText = (id: number) => `😢 #${id} 미선정으로 기록했어요. 다음 기회에!`
 
-const STATUS_LABEL: Partial<Record<CampaignStatus, string>> = {
-  APPLIED: '신청함',
-  SELECTED: '선정',
-  NOT_SELECTED: '미선정',
-  DRAFT_REVIEW: '초안 검수',
-  POSTED: '리뷰 완료',
-}
-
-export function statusLabel(status: CampaignStatus): string {
-  return STATUS_LABEL[status] ?? status
-}
-
 type Stage = { title: string; statuses: CampaignStatus[]; when: (c: Campaign) => Date | null }
 
 const STAGES: Stage[] = [
@@ -292,7 +269,7 @@ function validDate(y: number, m: number, d: number): boolean {
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /**
- * Parses a /due date into the end (23:59) of that day in `tz`. Accepts `M/D`, `M-D`, `M.D`
+ * Parses a /due date into the end (23:59:59.999, like a Musinsa deadline) of that day in `tz`. Accepts `M/D`, `M-D`, `M.D`
  * (a day already past this year means next year) and `YYYY-MM-DD` (also `/` or `.`). Anything
  * else, including compact forms like `1030`, is rejected as ambiguous.
  */
@@ -319,7 +296,14 @@ export function parseDueDate(input: string, now: Date, tz: string): Date | null 
     if (!validDate(year, month, day) || `${year}-${pad(month)}-${pad(day)}` < today) year += 1
     if (!validDate(year, month, day)) return null
   }
-  return zonedToUtc(`${year}-${pad(month)}-${pad(day)}`, '23:59', tz)
+  return endOfLocalDay(`${year}-${pad(month)}-${pad(day)}`, tz)
+}
+
+/** The /due confirmation; the year is shown when it is not this year (a past M/D rolls over). */
+export function dueSetText(id: number, due: Date, now: Date, tz: string): string {
+  const year = localDate(due, tz).slice(0, 4)
+  const prefix = year === localDate(now, tz).slice(0, 4) ? '' : `${year}-`
+  return `📅 #${id} 리뷰 기한을 ${prefix}${formatKstDate(due, tz)}로 기록했어요.`
 }
 
 // ---------- staleness ----------
@@ -402,7 +386,8 @@ export function registerCampaignBot(bot: Bot): void {
       await ctx.reply(DUE_USAGE)
       return
     }
-    const due = parseDueDate(dateText, new Date(), config.TZ_NAME)
+    const now = new Date()
+    const due = parseDueDate(dateText, now, config.TZ_NAME)
     if (!due) {
       await ctx.reply(`날짜를 읽을 수 없어요: ${dateText}\n${DUE_USAGE}`)
       return
@@ -414,7 +399,7 @@ export function registerCampaignBot(bot: Bot): void {
         )
         return
       }
-      await ctx.reply(`📅 #${id} 리뷰 기한을 ${formatKstDate(due, config.TZ_NAME)}로 기록했어요.`)
+      await ctx.reply(dueSetText(id, due, now, config.TZ_NAME))
     } catch (err) {
       console.error('[campaign] /due failed', err)
       await ctx.reply(`❌ 기한을 기록하지 못했어요: ${errText(err)}`)

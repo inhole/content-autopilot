@@ -380,7 +380,8 @@ export function CampaignActionsPanel({ data, now }: { data: CampaignDetailRespon
               <CheckIcon data-icon="inline-start" />
               신청함
             </Button>
-            <RejectButton revision={c.revision} busy={busy} run={run} />
+            {/* Re-mounted per revision: an open dialog closes instead of acting on a newer card. */}
+            <RejectButton key={c.revision} revision={c.revision} busy={busy} run={run} />
           </div>
         )}
 

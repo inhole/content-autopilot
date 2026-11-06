@@ -13,6 +13,8 @@ import { pcmDurationMs, silence, writeWav } from './wav.ts'
 // Timeline → narration WAV + frame PNGs → H.264/AAC mp4 (docs/plans/video.md 3-2).
 
 export const FPS = 30
+/** Every render's temp folder lives here, so leftovers of a killed process can be found. */
+export const RENDER_TMP_ROOT = join(tmpdir(), 'content-autopilot')
 const FFMPEG_TIMEOUT_MS = 5 * 60_000
 /** Final checks: Telegram uploads stop at 50MB; Reels/Shorts targets are 30-45s. */
 export const RENDER_LIMITS = { minMs: 15_000, maxMs: 75_000, maxBytes: 45 * 1024 * 1024 }
@@ -214,7 +216,7 @@ export async function renderVideo(
   opts: { bgmPath?: string | null; limits?: typeof RENDER_LIMITS } = {},
 ): Promise<RenderResult> {
   const limits = opts.limits ?? RENDER_LIMITS
-  const dir = join(tmpdir(), 'content-autopilot', `render-${randomUUID()}`)
+  const dir = join(RENDER_TMP_ROOT, `render-${randomUUID()}`)
   await mkdir(dir, { recursive: true })
   const cleanup = () => rm(dir, { recursive: true, force: true })
   try {

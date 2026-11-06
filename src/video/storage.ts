@@ -120,8 +120,3 @@ export function getStorage(): VideoStorage {
   }
   return storage
 }
-
-/** For tests. */
-export function setStorage(next: VideoStorage | undefined): void {
-  storage = next
-}

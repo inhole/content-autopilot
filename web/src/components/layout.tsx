@@ -83,10 +83,21 @@ function Header() {
 export function Layout() {
   return (
     <SidebarProvider>
+      {/* Keyboard users skip the sidebar and header links. */}
+      <a
+        href="#main"
+        className="sr-only rounded-md bg-background px-3 py-2 text-sm font-medium ring-2 ring-ring focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50"
+      >
+        본문으로 건너뛰기
+      </a>
       <AppSidebar />
       <SidebarInset>
         <Header />
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-4 md:p-6">
+        <main
+          id="main"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-4 outline-none md:p-6"
+        >
           <Outlet />
         </main>
       </SidebarInset>

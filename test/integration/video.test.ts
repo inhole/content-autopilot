@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { setTelegramApi } from '../../src/campaigns/tg.ts'
+import { config } from '../../src/config.ts'
 import { query } from '../../src/db/pool.ts'
 import {
   approveVideo,
@@ -8,7 +10,7 @@ import {
   retryFailedPublication,
   VideoNotReviewableError,
 } from '../../src/video/approve.ts'
-import { cleanupVideoFiles } from '../../src/video/cleanup.ts'
+import { cleanupVideoFiles, reclaimUploadAttempts } from '../../src/video/cleanup.ts'
 import { collectVideoInsights, loadVideoReportRows } from '../../src/video/insights.ts'
 import { InstagramApiError } from '../../src/video/instagram.ts'
 import { bestCandidate, pickVideo } from '../../src/video/pick.ts'
@@ -28,6 +30,7 @@ import {
   expireVideos,
   failStage,
   loadVideo,
+  MAX_REVIEW_RESENDS,
   recoverStuckStages,
   registerReview,
   rejectVideo,
@@ -35,7 +38,7 @@ import {
   restartVideo,
   unsentReviews,
 } from '../../src/video/store.ts'
-import { sendManualUpload } from '../../src/video/telegram.ts'
+import { sendManualUpload, sendVideoReview } from '../../src/video/telegram.ts'
 import { SilentTts } from '../../src/video/tts.ts'
 import type { Platform } from '../../src/video/types.ts'
 import { FakeInstagram, FakeStorage, FakeYouTube } from '../fake-video.ts'
@@ -205,6 +208,34 @@ describe('render ownership', () => {
     expect(storage.removed).toHaveLength(1)
     expect(storage.files.size).toBe(0)
     expect((await loadVideo(id))?.video_url).toBeNull()
+    expect(await query('select 1 from video_upload_attempts')).toEqual([])
+  })
+
+  it('records the upload first, so cleanup reclaims it when the outcome is unknown', async () => {
+    const storage = new FakeStorage()
+    const store = storage.upload.bind(storage)
+    storage.upload = async (path, key) => {
+      await store(path, key)
+      throw new Error('response lost')
+    }
+    const postId = await seedPublishedPost()
+    const id = ((await createVideo(postId)) as { created: number }).created
+    await runScript(id, 1, { write: writer() })
+    await expect(runRender(id, { tts, storage, render: fakeRender(), bgm: null })).rejects.toThrow(
+      'response lost',
+    )
+    expect(storage.files.size).toBe(1)
+    const later = new Date(Date.now() + 2 * 3600_000)
+    expect(await reclaimUploadAttempts(later, storage)).toEqual({ deleted: 1, failed: 0 })
+    expect(storage.files.size).toBe(0)
+    // The retried render references its key and leaves no attempt behind.
+    const ok = new FakeStorage()
+    expect((await runRender(id, { tts, storage: ok, render: fakeRender(), bgm: null })).kind).toBe(
+      'rendered',
+    )
+    expect(await query('select 1 from video_upload_attempts')).toEqual([])
+    expect(await reclaimUploadAttempts(later, ok)).toEqual({ deleted: 0, failed: 0 })
+    expect(ok.files.size).toBe(1)
   })
 
   it('re-renders after a scene edit and deletes the replaced file', async () => {
@@ -281,6 +312,49 @@ describe('review guards', () => {
       ok: false,
     })
     expect(await unsentReviews(now)).toContain(r.id)
+  })
+
+  it('re-sends an unsent review a limited number of times per revision', async () => {
+    const postId = await seedPublishedPost()
+    const id = ((await createVideo(postId)) as { created: number }).created
+    await runScript(id, 1, { write: writer() })
+    await runRender(id, { tts, storage: new FakeStorage(), render: fakeRender(), bgm: null })
+    const later = new Date(Date.now() + 11 * 60_000)
+    for (let i = 0; i < MAX_REVIEW_RESENDS; i++) expect(await unsentReviews(later)).toEqual([id])
+    // Every hourly try failed (the row never changed): stop instead of re-sending for 72h.
+    expect(await unsentReviews(later)).toEqual([])
+    // A new revision gets new tries.
+    const v = await loadVideo(id)
+    expect(await registerReview(id, v?.revision ?? 0, 1, 500, 501)).not.toBeNull()
+    await applyEdit(id, { replyTo: 500 }, { kind: 'title', text: '새 제목' })
+    expect(await unsentReviews(later)).toEqual([id])
+  })
+
+  it('sends nothing when the video cannot be downloaded', async () => {
+    const r = await videoUnderReview()
+    r.storage.download = async () => {
+      throw new Error('storage down')
+    }
+    const sent: string[] = []
+    const reply = (kind: string) => async () => {
+      sent.push(kind)
+      return { message_id: 999 }
+    }
+    const saved = config.TELEGRAM_CHAT_ID
+    config.TELEGRAM_CHAT_ID = 1
+    setTelegramApi({
+      sendMessage: reply('message'),
+      sendVideo: reply('video'),
+      sendDocument: reply('document'),
+      editMessageReplyMarkup: async () => true,
+    } as never)
+    try {
+      await expect(sendVideoReview(r.id, r.storage)).rejects.toThrow('storage down')
+      expect(sent).toEqual([])
+    } finally {
+      config.TELEGRAM_CHAT_ID = saved
+      setTelegramApi(undefined)
+    }
   })
 
   it('validates edits without changing anything', async () => {

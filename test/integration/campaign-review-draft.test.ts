@@ -8,7 +8,6 @@ import {
   generateReviewDraft,
   markControlSent,
   markPosted,
-  replaceDraft,
   replaceDraftGuarded,
   requestDraftRegeneration,
   saveMemo,
@@ -87,6 +86,31 @@ describe('generateReviewDraft', () => {
     expect(await generateReviewDraft(id)).toBe(false)
     expect((await getCampaign(id)).draft_text).toBe('초안입니다')
   })
+  it('a retry of the same seq after the draft was written re-sends it without the LLM', async () => {
+    const id = await seedCampaign({ memo: '메모' })
+    const seq = (await requestDraftRegeneration(id)) ?? 0
+    chatJson.mockResolvedValue({ text: '처음 쓴 초안입니다' })
+    expect(await generateReviewDraft(id, { seq })).toBe(true)
+    const written = await getCampaign(id)
+    // The job then failed while sending the control message and is retried with the same seq.
+    chatJson.mockResolvedValue({ text: '다른 초안입니다' })
+    expect(await generateReviewDraft(id, { seq })).toBe(true)
+    expect(chatJson).toHaveBeenCalledTimes(1)
+    const again = await getCampaign(id)
+    expect([again.draft_text, again.revision]).toEqual([written.draft_text, written.revision])
+  })
+  it('an owner edit after the draft means a retried job writes and re-sends nothing', async () => {
+    const id = await seedCampaign({ memo: '메모' })
+    const seq = (await requestDraftRegeneration(id)) ?? 0
+    chatJson.mockResolvedValue({ text: '처음 쓴 초안입니다' })
+    await generateReviewDraft(id, { seq })
+    const c = await getCampaign(id)
+    expect(
+      (await replaceDraftGuarded(id, { revision: c.revision }, '내가 고친 리뷰', profile)).ok,
+    ).toBe(true)
+    expect(await generateReviewDraft(id, { seq })).toBe(false)
+    expect((await getCampaign(id)).draft_text).toContain('내가 고친 리뷰')
+  })
   it('requestDraftRegeneration is null outside the review stages', async () => {
     const id = await seedCampaign({ status: 'POSTED' })
     expect(await requestDraftRegeneration(id)).toBeNull()
@@ -108,10 +132,10 @@ describe('control message registration', () => {
   })
 })
 
-describe('replaceDraft', () => {
+describe('replaceDraftGuarded on the control message', () => {
   it('replaces the text, keeps the disclosure first and bumps the revision', async () => {
     const id = await seedDraftCampaign()
-    const res = await replaceDraft(id, 200, '내가 고친 리뷰', profile)
+    const res = await replaceDraftGuarded(id, { messageId: 200 }, '내가 고친 리뷰', profile)
     expect(res).toEqual({ ok: true, revision: 2 })
     const c = await getCampaign(id)
     expect(c.draft_text).toBe(`${DISCLOSURE}\n\n내가 고친 리뷰`)
@@ -121,7 +145,7 @@ describe('replaceDraft', () => {
     const id = await seedDraftCampaign()
     const seq = await requestDraftRegeneration(id)
     expect(seq).not.toBeNull()
-    await replaceDraft(id, 200, '내가 고친 리뷰', profile)
+    await replaceDraftGuarded(id, { messageId: 200 }, '내가 고친 리뷰', profile)
     chatJson.mockResolvedValue({ text: '예전 요청으로 다시 쓴 리뷰'.repeat(5) })
     // The queued job still carries the old seq, so it must not overwrite the owner's text.
     expect(await generateReviewDraft(id, { seq: seq ?? 0 })).toBe(false)
@@ -129,14 +153,16 @@ describe('replaceDraft', () => {
   })
   it('does not duplicate a disclosure the owner kept', async () => {
     const id = await seedDraftCampaign()
-    await replaceDraft(id, 200, `${DISCLOSURE}\n\n본문`, profile)
+    await replaceDraftGuarded(id, { messageId: 200 }, `${DISCLOSURE}\n\n본문`, profile)
     expect((await getCampaign(id)).draft_text).toBe(`${DISCLOSURE}\n\n본문`)
   })
   it('refuses a stale message, an empty text and an over-long text', async () => {
     const id = await seedDraftCampaign()
-    expect((await replaceDraft(id, 199, '글', profile)).ok).toBe(false)
-    expect((await replaceDraft(id, 200, '   ', profile)).ok).toBe(false)
-    expect((await replaceDraft(id, 200, '가'.repeat(600), profile)).ok).toBe(false)
+    expect((await replaceDraftGuarded(id, { messageId: 199 }, '글', profile)).ok).toBe(false)
+    expect((await replaceDraftGuarded(id, { messageId: 200 }, '   ', profile)).ok).toBe(false)
+    expect((await replaceDraftGuarded(id, { messageId: 200 }, '가'.repeat(600), profile)).ok).toBe(
+      false,
+    )
     const c = await getCampaign(id)
     expect([c.draft_text, c.revision]).toEqual(['초안입니다', 1])
   })
@@ -153,7 +179,7 @@ describe('markPosted', () => {
   })
   it('refuses a stale revision after the draft changed', async () => {
     const id = await seedDraftCampaign()
-    await replaceDraft(id, 200, '새 글', profile)
+    await replaceDraftGuarded(id, { messageId: 200 }, '새 글', profile)
     expect(await markPosted(id, 1)).toBe(false)
     expect((await getCampaign(id)).status).toBe('DRAFT_REVIEW')
   })
@@ -182,7 +208,7 @@ describe('pending draft requests (draft_seq)', () => {
   it('an owner edit leaves nothing pending', async () => {
     const id = await seedDraftCampaign()
     await requestDraftRegeneration(id)
-    await replaceDraft(id, 200, '내가 고친 리뷰', profile)
+    await replaceDraftGuarded(id, { messageId: 200 }, '내가 고친 리뷰', profile)
     const c = await getCampaign(id)
     expect(c.draft_seq).toBe(c.regen_seq)
   })

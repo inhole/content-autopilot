@@ -125,6 +125,9 @@ describe('setReviewDeadline', () => {
     // Same date again: nothing to resend.
     await setReviewDeadline(id, due)
     expect(await kinds()).toEqual(['due-missing', 'review-d0'])
+    // The same day as the end-of-day instant a newer /due stores: still the same date.
+    await setReviewDeadline(id, new Date('2026-10-30T14:59:59.999Z'))
+    expect(await kinds()).toEqual(['due-missing', 'review-d0'])
     // A new date gets its own reminders; unrelated kinds stay.
     await setReviewDeadline(id, new Date('2026-11-05T14:59:00Z'))
     expect(await kinds()).toEqual(['due-missing'])
@@ -234,5 +237,43 @@ describe('runCampaignReminders', () => {
     expect(await runCampaignReminders(send, now, tz)).toBe(1)
     expect(delivered).toHaveLength(2)
     expect(delivered[1]).toContain(`#${a} `)
+  })
+})
+
+describe('Musinsa result-check', () => {
+  const tz = 'Asia/Seoul'
+
+  it('waits for the announcement day (winnerDrawDate), not only a day after the apply deadline', async () => {
+    await seedCampaign({
+      source: 'musinsa',
+      status: 'APPLIED',
+      apply_deadline: new Date('2026-10-20T14:59:59.999Z'),
+      detail: JSON.stringify({ winnerDrawDate: '2026-10-27' }),
+    })
+    const sent: string[] = []
+    const send = async (text: string) => {
+      sent.push(text)
+    }
+    // 10/22 12:00 KST: a day after the deadline, but before the announcement.
+    expect(await runCampaignReminders(send, new Date('2026-10-22T03:00:00Z'), tz)).toBe(0)
+    // 10/26 23:59 KST: still the day before.
+    expect(await runCampaignReminders(send, new Date('2026-10-26T14:59:00Z'), tz)).toBe(0)
+    // 10/27 00:00 KST: announcement day.
+    expect(await runCampaignReminders(send, new Date('2026-10-26T15:00:00Z'), tz)).toBe(1)
+    expect(sent[0]).toContain('무신사')
+  })
+
+  it('falls back to a day after the apply deadline without a usable announcement date', async () => {
+    for (const detail of [{}, { winnerDrawDate: 'soon' }, { winnerDrawDate: '2026-10-19' }]) {
+      await seedCampaign({
+        source: 'musinsa',
+        status: 'APPLIED',
+        apply_deadline: new Date('2026-10-20T14:59:59.999Z'),
+        detail: JSON.stringify(detail),
+      })
+    }
+    const send = async () => {}
+    expect(await runCampaignReminders(send, new Date('2026-10-21T14:59:00Z'), tz)).toBe(0)
+    expect(await runCampaignReminders(send, new Date('2026-10-21T15:00:00Z'), tz)).toBe(3)
   })
 })

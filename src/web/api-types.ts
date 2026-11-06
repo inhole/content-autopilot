@@ -35,6 +35,8 @@ export type CampaignListResponse = {
     /** Applicants per slot; null when unknown. */
     competition: number | null
   })[]
+  /** The row cap when the list hit it (older rows are left out), else null. */
+  capped: number | null
 }
 
 /** GET /api/campaigns/:id (404 `{ error }` when unknown) */

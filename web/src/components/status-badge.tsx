@@ -1,3 +1,4 @@
+import { type LucideIcon, NewspaperIcon, RecycleIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge.tsx'
 import {
   daysUntil,
@@ -31,8 +32,19 @@ export const PostStatusBadge = ({ status }: { status: string }) => (
   <Badge variant={postTone(status)}>{postStatusLabel(status)}</Badge>
 )
 
-export const OriginBadge = ({ origin }: { origin: PostItem['origin'] }) =>
-  ORIGIN_LABELS[origin] ? <Badge variant="outline">{ORIGIN_LABELS[origin]}</Badge> : null
+const ORIGIN_ICONS: Record<string, LucideIcon> = { revived: RecycleIcon, digest: NewspaperIcon }
+
+// A line icon instead of an emoji, so the badge renders the same on every OS and follows the theme.
+export function OriginBadge({ origin }: { origin: PostItem['origin'] }) {
+  const Icon = ORIGIN_ICONS[origin]
+  if (!ORIGIN_LABELS[origin]) return null
+  return (
+    <Badge variant="outline">
+      {Icon && <Icon aria-hidden="true" />}
+      {ORIGIN_LABELS[origin]}
+    </Badge>
+  )
+}
 
 const PART_TONES: Record<string, BadgeTone> = {
   PENDING: 'outline',

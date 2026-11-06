@@ -134,6 +134,31 @@ describe('displaying the post', () => {
   })
 })
 
+describe('a newer revision while a confirmation is open', () => {
+  const noPost = () => expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(false)
+  it('closes the approve and reject dialogs instead of acting on text the owner never saw', async () => {
+    const { rerender } = renderView(detail(51, { revision: 7 }))
+    await userEvent.click(button('승인'))
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+    rerender(wrap(<PostDetailView data={detail(51, { revision: 8 })} />))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+
+    await userEvent.click(button('폐기'))
+    await userEvent.click(await screen.findByRole('radio', { name: '중복' }))
+    rerender(wrap(<PostDetailView data={detail(51, { revision: 9 })} />))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    noPost()
+  })
+  it('keeps the result notice when the action itself bumps the revision', async () => {
+    const { rerender } = renderView(detail(51, { revision: 7 }))
+    await userEvent.click(button('승인'))
+    await userEvent.click(await screen.findByRole('button', { name: '승인하기' }))
+    expect(await screen.findByText(/승인했어요/)).toBeInTheDocument()
+    rerender(wrap(<PostDetailView data={detail(51, { revision: 8 })} />))
+    expect(screen.getByText(/승인했어요/)).toBeInTheDocument()
+  })
+})
+
 describe('sending the displayed state', () => {
   it('approve sends the displayed revision after a confirmation', async () => {
     renderView(detail(51, { revision: 7 }))

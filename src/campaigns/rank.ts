@@ -47,6 +47,15 @@ export function awaitingPrice(c: Pick<Campaign, 'source' | 'product_id' | 'detai
   return !('price' in detail) && !('priceTriedAt' in detail)
 }
 
+/**
+ * A Musinsa campaign whose event detail has not been tried yet (collect.ts fills it for at most a
+ * capped number per run, and a crash can leave it unfetched). Its category and dates would be
+ * missing from a final ranking, so it waits COLLECTED like `awaitingPrice`.
+ */
+export function awaitingDetail(c: Pick<Campaign, 'source' | 'detail'>): boolean {
+  return c.source === 'musinsa' && !('detailTriedAt' in (c.detail ?? {}))
+}
+
 /** Why code alone rules a campaign out (before the LLM sees it), or null to let it through. */
 export function ruleSkipReason(c: RuleInput, profile: CampaignProfile, now: Date): string | null {
   const haystack = `${c.title}\n${c.brand ?? ''}`.toLowerCase()
@@ -227,13 +236,16 @@ async function loadHistory(): Promise<RankHistory> {
  * Filters COLLECTED campaigns by rule, scores the rest (`ruleScore`, or the LLM in batches when
  * CAMPAIGN_RANK_MODE is `llm`) and shortlists the best ones up to today's remaining quota. Returns
  * shortlisted ids in score order. Candidates the model leaves out, or all of them when the quota is
- * used up, stay COLLECTED for the next run, and so do gift campaigns still awaiting their price
- * (`awaitingPrice`).
+ * used up, stay COLLECTED for the next run, and so do campaigns still awaiting their gift price
+ * or Musinsa detail (`awaitingPrice`, `awaitingDetail`). With `source`, only that source is ranked
+ * (each collector ranks its own, so two collectors never share one quota count); without it, all.
  */
-export async function rankCollected(now = new Date()): Promise<number[]> {
+export async function rankCollected(now = new Date(), source?: string): Promise<number[]> {
   const profile = await loadCampaignProfile()
   const rows = await query<Campaign>(
-    "select * from campaigns where status = 'COLLECTED' order by id",
+    `select * from campaigns where status = 'COLLECTED' and ($1::text is null or source = $1)
+     order by id`,
+    [source ?? null],
   )
   if (rows.length === 0) return []
 
@@ -241,7 +253,7 @@ export async function rankCollected(now = new Date()): Promise<number[]> {
   for (const c of rows) {
     const skip = ruleSkipReason(c, profile, now)
     if (skip === null) {
-      if (!awaitingPrice(c)) candidates.push(c)
+      if (!awaitingPrice(c) && !awaitingDetail(c)) candidates.push(c)
       continue
     }
     await query(

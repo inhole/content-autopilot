@@ -31,8 +31,8 @@ export const POST_STATUS_LABELS: Record<string, string> = {
 }
 
 export const ORIGIN_LABELS: Record<string, string> = {
-  revived: '♻️ 재활용',
-  digest: '🗞 주간 묶음',
+  revived: '재활용',
+  digest: '주간 묶음',
 }
 
 /** Labels of the 🗑 폐기 reasons (REJECT_REASONS in src/pipeline/style.ts). */

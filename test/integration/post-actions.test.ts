@@ -266,6 +266,13 @@ describe('schedule actions', () => {
     expect(calls.notes[0]).toContain(`#${id} 5분 안에 발행돼요`)
   })
 
+  it('keeps the slot usable from JS after publish-now (millisecond precision)', async () => {
+    const id = await scheduled()
+    await actions().publishNow(id, { scheduledAt: slot })
+    const moved = (await getPost(id)).scheduled_at as Date
+    expect(await actions().unschedule(id, { scheduledAt: moved })).toMatchObject({ ok: true })
+  })
+
   it('reports Telegram failures without undoing the change', async () => {
     const id = await scheduled()
     tgFails = true

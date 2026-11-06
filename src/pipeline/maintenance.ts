@@ -153,8 +153,11 @@ export const loadPendingDrafts = async (): Promise<PendingDraft[]> =>
 /** A draft this long without a review message lost its review job; the hourly sweep resends it. */
 export const UNSENT_REVIEW_MINUTES = 10
 
+// No review message, or the message shows an older text (the re-send after an edit failed).
+const UNSENT = '(review_message_id is null or review_revision is distinct from revision)'
+
 /**
- * PENDING_REVIEW drafts that never got a review message. Every path that creates or revives a
+ * PENDING_REVIEW drafts that never got a review message for their current revision. Every path that creates or revives a
  * draft commits the row first and enqueues `review` afterwards (generate, revive, digest), so a
  * crash or a failed enqueue in between would otherwise leave a draft nobody is told about; a
  * retry of those jobs cannot redo it, since the row already moved on.
@@ -162,7 +165,7 @@ export const UNSENT_REVIEW_MINUTES = 10
 export async function loadUnsentReviews(now: Date): Promise<number[]> {
   const rows = await query<{ id: number }>(
     `select id from posts
-     where status = 'PENDING_REVIEW' and review_message_id is null
+     where status = 'PENDING_REVIEW' and ${UNSENT}
        and updated_at < $1::timestamptz - make_interval(mins => $2)
      order by id`,
     [now, UNSENT_REVIEW_MINUTES],
@@ -170,10 +173,10 @@ export async function loadUnsentReviews(now: Date): Promise<number[]> {
   return rows.map((r) => r.id)
 }
 
-/** Whether a draft is still waiting for review without a registered review message. */
+/** Whether a draft is still waiting for a review message of its current revision. */
 export async function isUnsentReview(postId: number): Promise<boolean> {
   const rows = await query(
-    "select 1 from posts where id = $1 and status = 'PENDING_REVIEW' and review_message_id is null",
+    `select 1 from posts where id = $1 and status = 'PENDING_REVIEW' and ${UNSENT}`,
     [postId],
   )
   return rows.length > 0

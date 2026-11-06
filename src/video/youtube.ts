@@ -211,7 +211,12 @@ export class YouTubeClient implements YouTubeApi {
     const res = await this.f(sessionUrl, {
       method: 'PUT',
       headers: await this.headers(extra),
-      body: new Uint8Array(bytes.subarray(from)),
+      // A view, not a copy of the whole video.
+      body: new Uint8Array(
+        bytes.buffer as ArrayBuffer,
+        bytes.byteOffset + from,
+        bytes.length - from,
+      ),
       signal: AbortSignal.timeout(5 * 60_000),
     })
     return readUploadResponse(res)

@@ -1,6 +1,7 @@
 import { type CampaignSource, competition, sourceInfo } from '../campaigns/types.ts'
 import type { ApiError, OpsResponse } from './api-types.ts'
 import {
+  CAMPAIGN_LIST_LIMIT,
   type CampaignDetailData,
   type CampaignFilter,
   type CampaignListRow,
@@ -55,7 +56,9 @@ export async function handleApi(
   if (path === '/api/campaigns') {
     const status = parseCampaignFilter(params.get('status'))
     const source = parseCampaignSource(params.get('source'))
-    const rows = await loaders.campaigns(status, source)
+    // The loader reads one row past the cap, so exactly CAMPAIGN_LIST_LIMIT rows is not "cut off".
+    const loaded = await loaders.campaigns(status, source)
+    const rows = loaded.slice(0, CAMPAIGN_LIST_LIMIT)
     return {
       status: 200,
       body: {
@@ -74,6 +77,7 @@ export async function handleApi(
             competition: competition(r),
           }
         }),
+        capped: loaded.length > CAMPAIGN_LIST_LIMIT ? CAMPAIGN_LIST_LIMIT : null,
       },
     }
   }

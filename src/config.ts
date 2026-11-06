@@ -8,6 +8,21 @@ const bool = z
   .default('false')
   .transform((v) => v === 'true')
 
+/** `H:MM` or `HH:MM` (trimmed) to zero-padded `HH:MM`; anything else stays as is and fails. */
+const slotSchema = z
+  .string()
+  .transform((s) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim())
+    return m ? `${(m[1] as string).padStart(2, '0')}:${m[2]}` : s
+  })
+  .refine((s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s), { message: 'expected HH:MM' })
+
+/** Publish slots, shared by the env value and the copy saved from the dashboard (settings.ts). */
+export const publishSlotsSchema = z
+  .array(slotSchema)
+  .transform((s) => [...new Set(s)].sort())
+  .refine((s) => s.length >= 1 && s.length <= 10, { message: 'need 1-10 slots' })
+
 export const schema = z.object({
   DATABASE_URL: z.string().min(1),
   // Defaults to true because production runs on Supabase; CI and local Postgres have no SSL.
@@ -39,7 +54,8 @@ export const schema = z.object({
   PUBLISH_SLOTS: z
     .string()
     .default('08:00,12:30,21:00')
-    .transform((s) => s.split(',').map((t) => t.trim())),
+    .transform((s) => s.split(',').filter((t) => t.trim()))
+    .pipe(publishSlotsSchema),
 
   // Thread chains (docs/decisions.md 8): drafts get up to two follow-up replies. Only affects
   // generation; a post that already has parts is published as a chain either way.
@@ -104,7 +120,8 @@ export const schema = z.object({
         .map((p) => p.trim().toLowerCase())
         .filter(Boolean),
     )
-    .pipe(z.array(z.enum(['reels', 'shorts']))),
+    .pipe(z.array(z.enum(['reels', 'shorts'])))
+    .transform((p) => [...new Set(p)]),
   VIDEO_PUBLISH_DRY_RUN: z
     .enum(['true', 'false'])
     .default('true')
@@ -118,8 +135,9 @@ export const schema = z.object({
   VIDEO_BGM_PATH: z.string().optional(),
   VIDEO_STORAGE: z.enum(['local', 'supabase']).default('local'),
   VIDEO_LOCAL_DIR: z.string().default('data/videos'),
-  // Largest owner upload through the admin console (docs/plans/video-upload.md 9).
-  VIDEO_UPLOAD_MAX_MB: z.coerce.number().int().min(1).max(200).default(50),
+  // Largest owner upload through the admin console (docs/plans/video-upload.md 9). The review
+  // sends the file through the Telegram bot API, which accepts at most 50MB.
+  VIDEO_UPLOAD_MAX_MB: z.coerce.number().int().min(1).max(50).default(50),
   SUPABASE_URL: z
     .string()
     .refine((v) => /^https:\/\/[^/?#\s]+\/?$/.test(v), 'must be an https origin without a path')

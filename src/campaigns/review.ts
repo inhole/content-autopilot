@@ -1,4 +1,6 @@
+import { config } from '../config.ts'
 import { query, transaction } from '../db/pool.ts'
+import { localDate } from '../lib/time.ts'
 import { endOfLocalDay } from './musinsa.ts'
 import {
   ACTIVE_CAMPAIGN_STATUSES,
@@ -102,7 +104,9 @@ export async function setReviewDeadline(id: number, deadline: Date): Promise<boo
       id,
       deadline,
     ])
-    if (old.review_deadline?.getTime() !== deadline.getTime()) {
+    // By day: rows saved before the deadline became 23:59:59.999 hold 23:59:00 for the same day.
+    const day = (d: Date) => localDate(d, config.TZ_NAME)
+    if (!old.review_deadline || day(old.review_deadline) !== day(deadline)) {
       await q("delete from campaign_reminders where campaign_id = $1 and kind like 'review-%'", [
         id,
       ])

@@ -207,7 +207,8 @@ try {
     case 'publish-now': {
       const postId = id()
       await query(
-        `update posts set status = 'SCHEDULED', scheduled_at = now(), attempts = 0, updated_at = now()
+        `update posts set status = 'SCHEDULED', scheduled_at = date_trunc('milliseconds', now()),
+           attempts = 0, updated_at = now()
          where id = $1 and status in ('PENDING_REVIEW', 'APPROVED', 'SCHEDULED', 'FAILED')`,
         [postId],
       )

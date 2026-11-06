@@ -59,8 +59,6 @@ const ADD_SCHEMA = z.object({
   note: z.string().max(500).optional(),
 })
 
-export const POST_ACTIONS = Object.keys(SCHEMAS) as PostActionName[]
-
 export const isPostAction = (name: string): name is PostActionName => Object.hasOwn(SCHEMAS, name)
 
 /** `/api/posts/12/approve` → `{ id: 12, action: 'approve' }`; null for any other path. */

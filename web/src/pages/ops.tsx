@@ -322,7 +322,11 @@ export function OpsView({
       </div>
       <div className="grid items-start gap-3 lg:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-3">
-          <ScheduleCard schedule={data.schedule} onNotice={onNotice} />
+          <ScheduleCard
+            schedule={data.schedule}
+            timeZone={data.settings.timeZone}
+            onNotice={onNotice}
+          />
           <SettingsCard settings={data.settings} />
         </div>
         <ProfileCard profile={data.profile} onNotice={onNotice} />

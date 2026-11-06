@@ -242,6 +242,14 @@ describe('VideoUploadPage', () => {
     ])
   })
 
+  it('ends the session when the upload answers 401', async () => {
+    client.setQueryData(['session'], { authenticated: true, csrf: 'csrf-token', expiresAt: '2026-12-01T00:00:00.000Z' })
+    FakeXhr.responses.push({ status: 401, body: { error: '로그인이 필요해요' } })
+    await fill()
+    await userEvent.click(screen.getByRole('button', { name: '올리기' }))
+    await waitFor(() => expect(client.getQueryData(['session'])).toEqual({ authenticated: false }))
+  })
+
   it('keeps the row after a rejected file and sends the next file to the same row', async () => {
     FakeXhr.responses.push({ status: 400, body: { error: '세로 영상만 올릴 수 있어요' } })
     FakeXhr.responses.push({

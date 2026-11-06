@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { config } from '../config.ts'
+import { query } from '../db/pool.ts'
 import { type Bgm, RenderLimitError, renderInputHash, renderVideo } from './render.ts'
 import { writeScript } from './script.ts'
 import { getStorage, storageKey, type VideoStorage } from './storage.ts'
@@ -86,6 +87,9 @@ export async function runRender(
   const storage = deps.storage ?? getStorage()
   try {
     const key = storageKey(videoId, randomUUID().slice(0, 8), result.sha256)
+    // Recorded before the upload (like owner uploads): if the outcome below is unknown, the key
+    // stays here and video-cleanup reclaims it once nothing references it.
+    await query('insert into video_upload_attempts (key, video_id) values ($1, $2)', [key, videoId])
     const url = await storage.upload(result.path, key)
     const applied = await applyRender(videoId, job.revision, {
       hash,
@@ -97,11 +101,15 @@ export async function runRender(
     // Only this run's key, or the file this render replaced, is ever deleted.
     const orphan = applied.applied ? applied.previousKey : key
     if (orphan) {
-      await storage
-        .remove(orphan)
-        .catch((err: unknown) =>
-          console.warn(`[video-render] could not delete ${orphan}`, (err as Error).message),
-        )
+      try {
+        await storage.remove(orphan)
+        // A stale render's attempt row goes only once its object is gone.
+        if (orphan === key) {
+          await query('delete from video_upload_attempts where key = $1', [key])
+        }
+      } catch (err) {
+        console.warn(`[video-render] could not delete ${orphan}`, (err as Error).message)
+      }
     }
     return applied.applied ? { kind: 'rendered' } : { kind: 'stale' }
   } finally {

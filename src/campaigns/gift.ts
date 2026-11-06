@@ -154,6 +154,7 @@ export async function fetchGiftTrialList(
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       console.warn(`gift list: page ${page} failed, keeping ${byId.size} items: ${reason}`)
+      done = true // stopped by the failure, not by the page cap
       break
     }
   }

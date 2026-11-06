@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { createDashboardServer, readCookie } from '../src/web/server.ts'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clientIp, createDashboardServer, readCookie } from '../src/web/server.ts'
 import { fakeActions } from './fake-actions.ts'
 import { CSRF, fakeAuth, SESSION_HEADERS, TOKEN } from './fake-auth.ts'
 import { fakePostActions } from './fake-post-actions.ts'
@@ -13,6 +13,8 @@ const sent: string[] = []
 const opsRuns: string[] = []
 let opsQueued = true
 let failNotify = false
+// While set, a Telegram send waits on it (a slow Telegram).
+let notifyGate: Promise<void> | null = null
 const profileCalls: string[] = []
 let profileStale = false
 let profileThrows = false
@@ -95,6 +97,7 @@ const server = createDashboardServer({
     },
   },
   notify: async (text) => {
+    if (notifyGate) await notifyGate
     if (failNotify) throw new Error('telegram down')
     sent.push(text)
   },
@@ -130,6 +133,7 @@ afterAll(async () => {
 beforeEach(() => {
   sent.length = 0
   failNotify = false
+  notifyGate = null
   state.actions.length = 0
   state.logins.length = 0
   state.revoked.length = 0
@@ -164,6 +168,18 @@ describe('helpers', () => {
     expect(readCookie('a=1; ca_session=xyz; b=2', 'ca_session')).toBe('xyz')
     expect(readCookie('xca_session=1', 'ca_session')).toBeUndefined()
     expect(readCookie(undefined, 'ca_session')).toBeUndefined()
+  })
+  it('takes the first X-Forwarded-For hop only when it is an IP', () => {
+    const req = (fwd: string | undefined) =>
+      ({
+        headers: fwd === undefined ? {} : { 'x-forwarded-for': fwd },
+        socket: { remoteAddress: '10.0.0.9' },
+      }) as never
+    expect(clientIp(req('203.0.113.7, 10.0.0.1'))).toBe('203.0.113.7')
+    expect(clientIp(req('2001:db8::1'))).toBe('2001:db8::1')
+    expect(clientIp(req('<b>evil</b>, 10.0.0.1'))).toBe('10.0.0.9')
+    expect(clientIp(req(''))).toBe('10.0.0.9')
+    expect(clientIp(req(undefined))).toBe('10.0.0.9')
   })
 })
 
@@ -297,9 +313,60 @@ describe('login', () => {
     expect(res.headers.get('set-cookie')).toBeNull()
   })
   it('429 and an alert when the code locks', async () => {
-    state.nextLogin = { ok: false, reason: 'locked' }
+    state.nextLogin = { ok: false, reason: 'locked', justLocked: true }
     expect((await post('/api/auth/login', { code: '000000' })).status).toBe(429)
     expect(sent[0]).toContain('틀려서')
+  })
+  it('429 without another alert for a code that was already locked', async () => {
+    state.nextLogin = { ok: false, reason: 'locked', justLocked: false }
+    expect((await post('/api/auth/login', { code: '000000' })).status).toBe(429)
+    expect(sent).toEqual([])
+    expect(state.actions.map((a) => a.result)).toEqual(['locked'])
+  })
+  it('429 at once for a second auth request while one is in flight', async () => {
+    let release: (() => void) | undefined
+    const original = auth.login
+    auth.login = async (code, client) => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return original(code, client)
+    }
+    try {
+      loginOk()
+      const first = post('/api/auth/login', { code: '123456' })
+      await vi.waitFor(() => expect(release).toBeDefined())
+      for (const path of ['/api/auth/login', '/api/auth/code']) {
+        const busy = await post(path, { code: '123456' })
+        expect(busy.status).toBe(429)
+        expect(busy.headers.get('retry-after')).toBe('1')
+      }
+      release?.()
+      expect((await first).status).toBe(200)
+    } finally {
+      auth.login = original
+    }
+    expect(state.logins).toHaveLength(1)
+    expect(state.actions.map((a) => a.action)).toEqual(['login'])
+    // The flag is released afterwards.
+    state.nextLogin = { ok: false, reason: 'no_code' }
+    expect((await post('/api/auth/login', { code: '123456' })).status).toBe(400)
+  })
+  it('does not hold the flag while Telegram is slow', async () => {
+    let open: (() => void) | undefined
+    notifyGate = new Promise<void>((r) => {
+      open = r
+    })
+    const code = post('/api/auth/code', {})
+    await vi.waitFor(() => expect(open).toBeDefined())
+    await new Promise((r) => setTimeout(r, 20))
+    loginOk()
+    // The code request is still waiting on Telegram, yet the login is not turned away.
+    const login = post('/api/auth/login', { code: '123456' })
+    await new Promise((r) => setTimeout(r, 20))
+    open?.()
+    expect((await login).status).toBe(200)
+    expect((await code).status).toBe(200)
   })
   it('400 when there is no live code', async () => {
     state.nextLogin = { ok: false, reason: 'no_code' }
@@ -637,7 +704,7 @@ describe('campaign actions', () => {
     const deadline = actionState.calls.find((c) => c.name === 'deadline')?.params as {
       deadline: Date
     }
-    expect(deadline.deadline.toISOString()).toBe('2026-10-30T14:59:00.000Z')
+    expect(deadline.deadline.toISOString()).toBe('2026-10-30T14:59:59.999Z')
     // Memos and drafts are never written to the audit log, only their length.
     const audits = JSON.stringify(state.actions)
     expect(audits).not.toContain('일주일 써봄')

@@ -52,7 +52,7 @@ export async function approvePost(
     try {
       const rows = await query(
         `update posts set status = 'SCHEDULED', scheduled_at = $2, updated_at = now()
-         where id = $1 and status in ('PENDING_REVIEW', 'APPROVED')
+         where id = $1 and status = 'PENDING_REVIEW'
            and ($3::int is null or revision = $3)
          returning id`,
         [postId, at, opts.revision ?? null],
@@ -108,9 +108,11 @@ export async function publishNow(postId: number, scheduledAt: Date): Promise<boo
   for (let attempt = 0; ; attempt++) {
     try {
       // The unique index on scheduled_at can in theory collide with a post already at this
-      // instant; each retry shifts by a few milliseconds.
+      // instant; each retry shifts by a few milliseconds. Truncated to ms so the slot read back
+      // into a JS Date still matches the `scheduled_at = $2` guards.
       const rows = await query(
-        `update posts set scheduled_at = now() + make_interval(secs => $3::double precision),
+        `update posts set scheduled_at = date_trunc('milliseconds', now())
+           + make_interval(secs => $3::double precision),
            updated_at = now()
          where id = $1 and status = 'SCHEDULED' and scheduled_at = $2
          returning id`,

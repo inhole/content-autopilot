@@ -168,14 +168,14 @@ export async function resetDryRun(
 }
 
 /**
- * Moves a publication to the next free slot of its platform and back to SCHEDULED: the retry
- * button on a FAILED row, and overdue SCHEDULED rows after an outage. `from` guards the state the
- * caller saw. Returns the new time, or null when the row was not in that state.
+ * Moves an overdue SCHEDULED publication (after an outage) to the next free slot of its platform.
+ * `from` guards the state the caller saw. Returns the new time, or null when the row was not in
+ * that state.
  */
 export async function reschedulePublication(
   publicationId: number,
-  from: 'FAILED' | 'SCHEDULED',
-  opts: { now?: Date; clearUpload?: boolean } = {},
+  from: 'SCHEDULED',
+  opts: { now?: Date } = {},
 ): Promise<Date | null> {
   const now = opts.now ?? new Date()
   for (let attempt = 1; ; attempt++) {
@@ -189,10 +189,9 @@ export async function reschedulePublication(
         const at = await nextVideoSlot(q, [pub.platform], now)
         await q(
           `update video_publications set status = 'SCHEDULED', scheduled_at = $2, attempts = 0,
-             alerted_at = null, error_kind = null,
-             upload_url = case when $3 then null else upload_url end, updated_at = now()
+             alerted_at = null, error_kind = null, updated_at = now()
            where id = $1`,
-          [publicationId, at, opts.clearUpload ?? false],
+          [publicationId, at],
         )
         return at
       })
@@ -299,14 +298,16 @@ export async function cancelPublication(
 
 /**
  * Moves one SCHEDULED publication to just before now, only if its slot is still the one the
- * caller saw (the admin console's `지금 발행`). The publish sweep then claims it as usual.
+ * caller saw (the admin console's `지금 발행`). The publish sweep then claims it as usual. Whole
+ * milliseconds, so the page can guard on the new slot (a JS Date) again.
  */
 export async function publishPublicationNow(
   publicationId: number,
   scheduledAt: Date,
 ): Promise<boolean> {
   const rows = await query(
-    `update video_publications set scheduled_at = now() - make_interval(secs => id * 0.001),
+    `update video_publications set scheduled_at = date_trunc('milliseconds', now())
+         - make_interval(secs => id * 0.001),
        updated_at = now()
      where id = $1 and status = 'SCHEDULED' and scheduled_at = $2 returning id`,
     [publicationId, scheduledAt],

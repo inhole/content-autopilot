@@ -2,7 +2,7 @@ import type { InlineKeyboard } from 'grammy'
 import type { PgBoss } from 'pg-boss'
 import { telegramApi } from '../campaigns/tg.ts'
 import { config } from '../config.ts'
-import { formatFinalFailure, isFinalAttempt, Q } from '../jobs.ts'
+import { alertOnFinalFailure, Q } from '../jobs.ts'
 import type { Reviewer } from '../review/telegram.ts'
 import { judgeExpired, reviveDraft } from './revive.ts'
 import { formatReviveList, reviveKeyboard } from './revive-bot.ts'
@@ -31,23 +31,6 @@ export const enqueueReviveCheck = (boss: PgBoss) => boss.send(REVIVE_QUEUES.chec
 
 export const enqueueRevive = (boss: PgBoss, postId: number) =>
   boss.send(REVIVE_QUEUES.revive, { postId }, { singletonKey: `revive-${postId}` })
-
-async function alertOnFinalFailure(
-  job: { retryCount: number },
-  retryLimit: number,
-  label: string,
-  reviewer: Reviewer,
-  fn: () => Promise<void>,
-): Promise<void> {
-  try {
-    await fn()
-  } catch (err) {
-    if (isFinalAttempt(job.retryCount, retryLimit)) {
-      await reviewer.notify(formatFinalFailure(label, err)).catch(() => {})
-    }
-    throw err
-  }
-}
 
 /** Creates the revive queues and their workers. `send` posts the list together with its buttons. */
 export async function registerReviveJobs(

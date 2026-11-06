@@ -60,67 +60,7 @@ APPROVED ─ 승인 취소(발행 행이 모두 한 번도 시도되지 않은 S
 - 반영 UPDATE의 결과가 **조건 불일치로 확정**되면(행이 0개) 그 요청은 자기 파일을 지우고 시도 행도 지운 뒤 409를 돌려준다. **예외로 결과를 모르면** 파일을 지우지 않는다. 시도 행이 남아 있으니 정리 작업이 나중에 DB 참조를 확인하고 처리한다.
 - **승인 취소(`unapprove`)**: 한 트랜잭션에서 영상 행과 발행 행들을 `for update`로 잠그고, 발행 행이 모두 `SCHEDULED`이면서 **한 번도 claim되지 않았을 때(`claim_seq = 0`)**만(또는 발행 행이 없는 직접 올리기) 발행 행을 지우고 `PENDING_REVIEW`, `revision+1`, 검수 메시지 id를 비운다. 처리 대기나 결과 불명으로 `SCHEDULED`에 돌아온 행은 이미 외부에 요청이 갔을 수 있어(Reels 컨테이너, Shorts 세션) 취소하지 않는다. 발행 claim은 같은 행 잠금을 기다린 뒤 행이 없어 아무것도 하지 않는다. 생성 영상에도 쓸 수 있다.
 - **발행 중단(`cancel`)**: `FAILED` 발행 행을 `CANCELLED`로 바꾼다. 화면이 본 실패 시도의 `claim_seq`가 맞아야 하고, 결과를 모르는 실패(`error_kind = 'session'`)는 "채널에 올라가지 않은 것을 확인했어요"가 있어야 한다. 중단 뒤 발행 행이 모두 끝났으면(`PUBLISHED`/`CANCELLED`) 부모 영상을 마무리한다: 하나라도 `PUBLISHED`면 `PUBLISHED`(정리 14일), 아니면 `FAILED`(정리 3일). `completeIfAllPublished`와 `completePublishedVideos`도 같은 규칙을 쓴다.
-- **다시 시도·중단·직접 올림의 가드는 웹과 Telegram이 같다.** 다시 시도와 중단은 `claim_seq`를 받아 `status = 'FAILED' and claim_seq = # 관리자 콘솔에서 영상 직접 올리기 (설계)
-
-상태: 설계 (2026-10-25, Codex 설계 리뷰 2회 반영). 숏폼 파이프라인(`docs/plans/video.md`, 결정 15) 위에 얹는다.
-
-## 1. 목표
-
-주인이 따로 만든 영상(CapCut, 폰 편집 등)을 관리자 콘솔에서 올리면, 생성 영상과 같은 검수·예약 발행·성과 수집을 탄다. 덤으로 관리자 콘솔에 영상 목록과 상세(미리보기, 승인·승인 취소·폐기·수정, 발행 상태, 다시 시도)를 둔다. 지금은 영상을 Telegram과 CLI로만 다룰 수 있다.
-
-하지 않는 것:
-
-- 서버에서 다시 인코딩하지 않는다. Railway CPU로 1080p 60초 변환은 몇 분씩 걸리고 워커의 다른 일을 막는다. 규격에 맞지 않으면 이유를 알려 주고 거절한다(폰·CapCut 기본 내보내기는 대부분 H.264/AAC mp4라 맞는다). 컨테이너만 MP4로 다시 묶는다(`-c copy`, 몇 초).
-- 올린 파일 교체는 하지 않는다. 잘못 올렸으면 폐기하고 다시 올린다(승인한 뒤라도 발행 전이면 승인 취소 → 폐기).
-- Telegram으로 파일을 받는 경로는 만들지 않는다(봇 API로 받는 파일은 20MB까지라 쓸모가 적다).
-- 저작권(음악 클레임)은 로컬에서 판정하지 않는다. 화면에서 안내만 한다(7절).
-
-## 2. 흐름
-
-```
-관리자 /videos/new: 파일 + 제목·캡션·해시태그·출처(선택) + [올리면서 바로 승인]
- 1) POST /api/videos            (JSON) → videos 행 UPLOADING (origin 'upload', post_id 없음)
- 2) POST /api/videos/:id/file?approve=0|1   (영상 바이트)
-      a. 시작: UPLOADING이면 upload_started_at = now() (조건부, 만료 기준)
-      b. 임시 폴더로 스트리밍(실제 수신량 상한, sha256) → ffprobe 검사 → MP4로 다시 묶기
-      c. 업로드 시도 키를 video_upload_attempts에 기록 → 저장소 업로드
-      d. 트랜잭션: UPLOADING인 경우에만 파일 반영 + PENDING_REVIEW, 시도 행 삭제
-      e. approve=1이면 승인 시도. 실패해도 파일 반영은 그대로이고 응답에 이유를 담는다
-      f. 승인하지 않았거나 실패했으면 Telegram 검수 메시지를 큐에 넣는다
- 이후는 생성 영상과 같다: 승인 → video_publications → video-publish → 성과 수집 → 정리
-```
-
-- 두 단계로 나누는 이유: 제목·캡션(최대 2200자)은 JSON으로, 파일은 원시 바이트로 보내야 한다. multipart 파서를 들이지 않고, 헤더나 쿼리에 한국어 캡션을 싣지도 않는다(헤더 16KB 한도). 상태는 `videos` 행이 들고 있으니 단계 사이에 끊겨도 남는 것은 `UPLOADING` 행뿐이고 maintenance가 치운다.
-- 전송은 **서버 경유**다. 브라우저가 Supabase에 서명 URL로 직접 올리는 방식은 CSP `connect-src`, Supabase CORS, 업로드 뒤 서버의 재다운로드 검사가 필요하다. 서버 경유는 서비스 키와 검사가 한곳에 있고 로컬 저장소(`VIDEO_STORAGE=local`)에서도 그대로 돈다. 대가는 최대 50MB가 Railway를 지나가는 것인데, 가끔 하는 일이라 문제없다.
-- **응답 계약:** 파일 경로는 `{ stored: true, approval: { ok: true, at } | { ok: false, error } | null, detail }`을 돌려준다. 파일 저장과 승인은 결과가 따로 온다.
-- **화면의 재시도 규칙:** 파일 요청이 네트워크 오류나 5xx로 끝나면 화면은 먼저 `GET /api/videos/:id`로 상태를 다시 읽는다. `UPLOADING`이면 같은 행에 파일을 다시 보내고, `PENDING_REVIEW`면 파일은 들어간 것이니 상세로 가서 승인 버튼을 보여 주고, `APPROVED`면 완료로 본다. `EXPIRED`면 같은 입력값으로 새 행을 만든다.
-
-## 3. 데이터 (`024_video_uploads.sql`)
-
-- `videos.post_id`의 `not null`을 뺀다. 생성 영상은 여전히 글 하나에 영상 하나(unique 유지, null은 여러 개 허용).
-- `videos.origin text not null default 'generated'`, `check (origin in ('generated', 'upload'))`, `check (origin = 'upload' or post_id is not null)`.
-- `videos.status`에 `UPLOADING`을 더한다. 파일이 아직 없는 업로드 행이다.
-- `videos.upload_started_at timestamptz`: 마지막 파일 요청이 시작한 시각(만료 기준, 4절).
-- `videos.original_name text`(표시용, 120자로 자름), `videos.width`, `videos.height integer`(표시 방향 기준 해상도. Telegram 전송과 화면에 쓴다). 생성 영상은 렌더할 때 1080×1920을 채운다.
-- `video_upload_attempts(key text primary key, video_id bigint, created_at timestamptz, reclaiming boolean)`: 저장소에 올리기 직전에 기록한 키. 파일 반영 트랜잭션이 `reclaiming = false`인 그 행을 **먼저 지우고**(0행이면 반영하지 않는다) 영상 행을 갱신한다. 남아 있는 행은 결과를 모르는 시도이고 정리 작업이 회수한다(8절).
-- `video_publications.status`에 `CANCELLED`를 더한다. 발행을 포기한 행이다(4절).
-
-업로드 영상은 `scenes`, `generation`, `render_hash`가 없고 `regen_seq`는 1에 머문다. 공유 타입(`VideoStatus`, `VideoRow`, 목록 타입, 웹 계약)은 `post_id: number | null`, `origin`, `UPLOADING`을 반영한다.
-
-## 4. 상태
-
-```
-UPLOADING ─ 파일 검사·저장 성공 → PENDING_REVIEW (→ 기존 흐름)
-          └ greatest(created_at, upload_started_at)에서 1시간 동안 반영이 없으면 → EXPIRED
-APPROVED ─ 승인 취소(발행 행이 모두 한 번도 시도되지 않은 SCHEDULED일 때) → PENDING_REVIEW
-         └ 발행 행이 모두 끝나면(PUBLISHED 또는 CANCELLED) → 하나라도 PUBLISHED면 PUBLISHED, 아니면 FAILED
-발행 행 FAILED ─ 다시 시도 → SCHEDULED / 중단 → CANCELLED
-```
-
-- 파일 단계는 시작할 때 `upload_started_at`을 조건부(`status='UPLOADING'`)로 찍고, 끝에 `status='UPLOADING' and origin='upload'`일 때만 반영한다. 한 요청은 수신 5분(Node `requestTimeout`) + 검사 1분 + 다시 묶기 2분 + 저장소 5분 안에 끝나니, 시작 뒤 1시간 동안 만료되지 않으면 진행 중인 요청이 만료와 겹치지 않는다.
-- 같은 행에 파일 요청이 동시에 두 개 오면 서버의 업로드 처리 슬롯(동시 1개, 6절)이 두 번째를 바로 429로 돌려준다. 다른 프로세스는 없지만(워커 하나), 혹시 둘 다 끝까지 가도 조건부 반영에서 먼저 끝난 쪽만 이긴다.
-- 반영 UPDATE의 결과가 **조건 불일치로 확정**되면(행이 0개) 그 요청은 자기 파일을 지우고 시도 행도 지운 뒤 409를 돌려준다. **예외로 결과를 모르면** 파일을 지우지 않는다. 시도 행이 남아 있으니 정리 작업이 나중에 DB 참조를 확인하고 처리한다.
-와 현재 `error_kind`를 한 UPDATE에서 확인한다. Telegram 버튼도 `vpub:retry:<id>:<claimSeq>`처럼 시도를 담고, 결과 불명 확인 버튼은 그 시도의 `session` 실패에만 붙는다. 예전 형식 버튼은 오래된 버튼으로 본다. 직접 올림 완료는 승인한 `revision`을 받는다(`vman:<id>:<revision>`, 웹 `{ revision }`). 그래서 승인 취소·재승인 뒤의 오래된 화면이나 버튼은 아무것도 바꾸지 못한다.
+- **다시 시도·중단·직접 올림의 가드는 웹과 Telegram이 같다.** 다시 시도와 중단은 `claim_seq`를 받아 `status = 'FAILED' and claim_seq = 와 현재 `error_kind`를 한 UPDATE에서 확인한다. Telegram 버튼도 `vpub:retry:<id>:<claimSeq>`처럼 시도를 담고, 결과 불명 확인 버튼은 그 시도의 `session` 실패에만 붙는다. 예전 형식 버튼은 오래된 버튼으로 본다. 직접 올림 완료는 승인한 `revision`을 받는다(`vman:<id>:<revision>`, 웹 `{ revision }`). 그래서 승인 취소·재승인 뒤의 오래된 화면이나 버튼은 아무것도 바꾸지 못한다.
 - 생성 영상 전용 경로는 업로드 영상을 건드리지 않는다: 원고 재작성(`requestRescript`, 🔁 버튼, 피드백 답장), 다시 시작(`restartVideo`), 장면 수정(`수정N:`, `화면N:`)은 `origin = 'generated'` 조건을 단다. 업로드 영상의 Telegram 검수 메시지에는 🔁 버튼이 없고, 원고 대신 제목·캡션·파일 정보를 보여 준다. 피드백 답장은 "직접 올린 영상은 다시 만들 수 없어요"로 답한다.
 - 자동 선택의 주간 한도(`VIDEO_WEEKLY_MAX`)는 생성 영상(`origin='generated'`)만 센다.
 - `PENDING_REVIEW`의 72시간 만료, 10분 미전송 재전송, 정리(`video-cleanup`)는 그대로 적용된다.
@@ -136,7 +76,7 @@ ffprobe -v error -protocol_whitelist file -f mov -print_format json -show_format
 ```
 
 - 입력은 서버가 만든 임시 경로뿐이고, `-protocol_whitelist file`로 네트워크·다른 프로토콜을 막고, demuxer를 `-f mov`(MP4/MOV 공용)로 고정해 자동 감지(playlist 등)를 끈다. MOV 외부 참조(`enable_drefs`)는 기본값(꺼짐) 그대로 둔다.
-- 자식 프로세스는 30초 제한, stdout 1MB 상한(넘으면 죽이고 거절). 다시 묶기는 2분 제한. 업로드 처리(수신~저장)는 프로세스 안에서 **동시에 하나**만 한다(나머지는 429 "다른 영상을 올리는 중이에요").
+- 자식 프로세스는 30초 제한, stdout 1MB 상한(넘으면 죽이고 거절). 다시 묶기는 2분 제한. 검사 시간 초과와 다시 묶기 실패도 500이 아니라 400 거절이다("편집 앱에서 H.264/AAC mp4로 다시 내보내 주세요"). 업로드 처리(수신~저장)는 프로세스 안에서 **동시에 하나**만 한다(나머지는 429 "다른 영상을 올리는 중이에요").
 
 검사 기준은 Instagram Reels API 규격(Meta 공식 샘플)과 Shorts의 교집합이다.
 
@@ -203,7 +143,7 @@ ffprobe -v error -protocol_whitelist file -f mov -print_format json -show_format
 
 | 변수 | 기본 | 설명 |
 |---|---|---|
-| `VIDEO_UPLOAD_MAX_MB` | 50 | 올릴 수 있는 최대 크기(1~200). Supabase 무료 플랜의 파일당 한도(50MB)와 Telegram 봇의 영상 전송 한도(50MB)에 맞췄다 |
+| `VIDEO_UPLOAD_MAX_MB` | 50 | 올릴 수 있는 최대 크기(1~50). Supabase 무료 플랜의 파일당 한도(50MB)와 Telegram 봇의 영상 전송 한도(50MB)에 맞췄다 |
 
 업로드는 `VIDEO_ENABLED`(자동 선택)와 상관없이 된다. 자동 발행은 기존처럼 `VIDEO_PLATFORMS`와 계정 설정을 따르고, 비어 있으면 직접 올리기 안내로 끝난다. 새 의존성은 `@ffprobe-installer/ffprobe`(Linux x64 바이너리 약 79MB)다.
 

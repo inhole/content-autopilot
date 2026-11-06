@@ -135,7 +135,8 @@ export async function draftBody(
 
 /**
  * Writes the review draft from the owner's memo and leaves the campaign DRAFT_REVIEW. Returns
- * false when nothing was written: no memo, wrong status, or a newer request superseded `seq`.
+ * false when nothing was written: no memo, wrong status, or a newer request superseded `seq`; true
+ * also when the draft for `seq` was already written, so the caller sends it again.
  */
 export async function generateReviewDraft(
   id: number,
@@ -144,6 +145,16 @@ export async function generateReviewDraft(
   const c = await loadCampaign(id)
   if (!c?.memo?.trim() || (c.status !== 'SELECTED' && c.status !== 'DRAFT_REVIEW')) {
     return false
+  }
+  // A retry of a job whose draft is already written (sending it failed): send the stored draft
+  // again instead of paying for a different one. An owner edit moves draft_seq past `seq`.
+  if (
+    opts.seq != null &&
+    c.status === 'DRAFT_REVIEW' &&
+    c.draft_seq === opts.seq &&
+    c.regen_seq === opts.seq
+  ) {
+    return true
   }
   const profile = await loadCampaignProfile()
   const limits = reviewLimits(profile)
@@ -256,13 +267,6 @@ export async function replaceDraftGuarded(
   }
   return { ok: true, revision: row.revision }
 }
-
-export const replaceDraft = (
-  id: number,
-  reviewMessageId: number,
-  text: string,
-  profile?: CampaignProfile,
-) => replaceDraftGuarded(id, { messageId: reviewMessageId }, text, profile)
 
 /**
  * The owner pasted the review into the shop's review form. Bound to the control message they saw

@@ -101,7 +101,9 @@ export type NewSession = { id: number; token: string; csrf: string; expiresAt: D
 
 export type LoginResult =
   | { ok: true; session: NewSession }
-  | { ok: false; reason: 'no_code' | 'locked' }
+  | { ok: false; reason: 'no_code' }
+  /** justLocked: this attempt locked the code, so the owner is alerted only once. */
+  | { ok: false; reason: 'locked'; justLocked: boolean }
   | { ok: false; reason: 'wrong'; attemptsLeft: number }
 
 /**
@@ -120,12 +122,13 @@ export async function loginWithCode(
        order by id desc limit 1`,
     )
     if (!live) return { ok: false, reason: 'no_code' }
-    if (live.attempts >= CODE_MAX_ATTEMPTS) return { ok: false, reason: 'locked' }
+    if (live.attempts >= CODE_MAX_ATTEMPTS)
+      return { ok: false, reason: 'locked', justLocked: false }
     if (!sameHash(sha256(code), live.code_hash)) {
       const attempts = live.attempts + 1
       await q('update admin_login_codes set attempts = $2 where id = $1', [live.id, attempts])
       return attempts >= CODE_MAX_ATTEMPTS
-        ? { ok: false, reason: 'locked' }
+        ? { ok: false, reason: 'locked', justLocked: true }
         : { ok: false, reason: 'wrong', attemptsLeft: CODE_MAX_ATTEMPTS - attempts }
     }
     await q('update admin_login_codes set used_at = now() where id = $1', [live.id])
@@ -188,4 +191,31 @@ export async function recordAdminAction(a: AdminAction): Promise<void> {
      values ($1, $2, $3, $4, $5, $6)`,
     [a.sessionId, a.action, a.target ?? null, a.result, a.ip, a.detail ?? null],
   )
+}
+
+/**
+ * Deletes what the login tables no longer need: codes a day past expiry, sessions 30 days past
+ * expiry or revocation, and login-attempt audit rows without a session after 90 days. Rows of
+ * writes keep their audit even after their session is gone (session_id is then null).
+ */
+export async function pruneAdminAuth(): Promise<{
+  codes: number
+  sessions: number
+  actions: number
+}> {
+  const codes = await query(
+    `delete from admin_login_codes where expires_at < now() - interval '1 day' returning id`,
+  )
+  const sessions = await query(
+    `delete from admin_sessions
+     where expires_at < now() - interval '30 days' or revoked_at < now() - interval '30 days'
+     returning id`,
+  )
+  const actions = await query(
+    `delete from admin_actions
+     where session_id is null and action in ('code_request', 'login') and result <> 'ok'
+       and at < now() - interval '90 days'
+     returning id`,
+  )
+  return { codes: codes.length, sessions: sessions.length, actions: actions.length }
 }
