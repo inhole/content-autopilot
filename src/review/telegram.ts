@@ -5,9 +5,9 @@ import { config } from '../config.ts'
 import { query, transaction } from '../db/pool.ts'
 import { addTopicFromUrl } from '../pipeline/add-topic.ts'
 import { DIGEST_BOT_COMMANDS, DIGEST_HELP_LINES } from '../pipeline/digest-jobs.ts'
+import { charCount } from '../pipeline/generate.ts'
 import { weeklyReport } from '../pipeline/insights.ts'
 import {
-  ctaSuffix,
   FIRST_FOLLOWUP_IDX,
   lastFollowupLimit,
   loadParts,
@@ -202,8 +202,6 @@ export function parseReviewReply(input: string): ReviewReply {
   return { kind: 'feedback' }
 }
 
-const len = (text: string) => [...text].length
-
 /**
  * Pure: `parts` are the follow-up texts and `cta` the configured CTA (the caller reads them), so
  * the bot and the CLI render the same text. Without parts it is the single-post format.
@@ -219,13 +217,17 @@ export function formatReview(
   const origin = p.origin ? ORIGIN_LABELS[p.origin] : undefined
   if (origin) lines.push(origin)
   if (parts.length === 0) {
-    lines.push(`📝 초안 #${p.id}${score} · ${len(p.text)}/${THREADS_TEXT_LIMIT}자`, '', p.text)
+    lines.push(
+      `📝 초안 #${p.id}${score} · ${charCount(p.text)}/${THREADS_TEXT_LIMIT}자`,
+      '',
+      p.text,
+    )
   } else {
     const total = parts.length + 1
-    const lastLimit = THREADS_TEXT_LIMIT - len(ctaSuffix(cta ?? ''))
+    const lastLimit = lastFollowupLimit(cta)
     lines.push(
       `📝 초안 #${p.id}${score} · 연결 글 ${total}개`,
-      `[1/${total}] 본 글 (${len(p.text)}/${THREADS_TEXT_LIMIT}자)`,
+      `[1/${total}] 본 글 (${charCount(p.text)}/${THREADS_TEXT_LIMIT}자)`,
       p.text,
     )
     parts.forEach((text, i) => {
@@ -233,7 +235,7 @@ export function formatReview(
       const extras = last ? [cta ? 'CTA' : '', p.source_url ? '링크' : ''].filter(Boolean) : []
       const limit = last ? lastLimit : THREADS_TEXT_LIMIT
       lines.push(
-        `[${i + 2}/${total}] 답글 (${len(text)}/${limit}자)${extras.length ? ` + ${extras.join('·')}` : ''}`,
+        `[${i + 2}/${total}] 답글 (${charCount(text)}/${limit}자)${extras.length ? ` + ${extras.join('·')}` : ''}`,
         text,
       )
     })
@@ -306,9 +308,11 @@ export async function applyReviewEdit(
       }
       if (!op.text) return invalid('바꿀 내용이 비어 있어요.')
       const limit = op.idx === total && total > 1 ? lastLimit : THREADS_TEXT_LIMIT
-      if (len(op.text) > limit) {
+      if (charCount(op.text) > limit) {
         const hint = limit < THREADS_TEXT_LIMIT ? ' (마지막 답글은 CTA 자리를 남겨둬요)' : ''
-        return invalid(`${op.idx}번 조각은 ${limit}자를 넘을 수 없어요: ${len(op.text)}자${hint}`)
+        return invalid(
+          `${op.idx}번 조각은 ${limit}자를 넘을 수 없어요: ${charCount(op.text)}자${hint}`,
+        )
       }
       if (op.idx === 1) text = op.text
       else followups[op.idx - FIRST_FOLLOWUP_IDX] = op.text
@@ -322,9 +326,9 @@ export async function applyReviewEdit(
       followups.splice(op.idx - FIRST_FOLLOWUP_IDX, 1)
       links.splice(op.idx - FIRST_FOLLOWUP_IDX, 1)
       const newLast = followups[followups.length - 1]
-      if (newLast !== undefined && len(newLast) > lastLimit) {
+      if (newLast !== undefined && charCount(newLast) > lastLimit) {
         return invalid(
-          `지우면 ${followups.length + 1}번 조각이 마지막 답글이 되는데 ${lastLimit}자를 넘어요 (${len(newLast)}자). 먼저 "수정${followups.length + 1}:"로 줄여주세요.`,
+          `지우면 ${followups.length + 1}번 조각이 마지막 답글이 되는데 ${lastLimit}자를 넘어요 (${charCount(newLast)}자). 먼저 "수정${followups.length + 1}:"로 줄여주세요.`,
         )
       }
     }

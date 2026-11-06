@@ -18,8 +18,6 @@ ${source === 'musinsa' ? RANK_CRITERIA_MUSINSA : RANK_CRITERIA_GIFT}
 - 후보에 적힌 정보만 근거로 삼고, 적혀 있지 않은 제품 특성은 추측하지 않는다.
 - 모든 후보를 하나도 빠짐없이 평가한다. reason은 한국어 한 문장이다.`
 
-export const RANK_SYSTEM = rankSystem('kakao-gift')
-
 export function profileBlock(profile: CampaignProfile): string {
   return [
     `소개: ${profile.about}`,

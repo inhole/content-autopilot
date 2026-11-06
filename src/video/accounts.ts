@@ -45,7 +45,7 @@ async function loadInstagramAccount(): Promise<Account | null> {
   return seeded ?? (await loadAccount('INSTAGRAM'))
 }
 
-export async function getInstagramApi(): Promise<InstagramApi> {
+export async function getInstagramApi(fetchFn?: typeof fetch): Promise<InstagramApi> {
   if (config.VIDEO_PUBLISH_DRY_RUN) return new DryRunInstagram()
   const account = await loadInstagramAccount()
   if (!account) {
@@ -57,16 +57,19 @@ export async function getInstagramApi(): Promise<InstagramApi> {
     baseUrl: config.INSTAGRAM_API_BASE,
     userId: account.user_id,
     accessToken: account.access_token,
+    fetch: fetchFn,
   })
 }
 
-export async function refreshInstagramTokenIfNeeded(): Promise<'refreshed' | 'fresh' | 'skipped'> {
+export async function refreshInstagramTokenIfNeeded(
+  fetchFn?: typeof fetch,
+): Promise<'refreshed' | 'fresh' | 'skipped'> {
   if (config.VIDEO_PUBLISH_DRY_RUN || !config.VIDEO_PLATFORMS.includes('reels')) return 'skipped'
   const account = await loadInstagramAccount()
   if (!account) return 'skipped'
   const msLeft = account.expires_at ? account.expires_at.getTime() - Date.now() : 0
   if (account.expires_at && msLeft > REFRESH_WITHIN_DAYS * 86_400_000) return 'fresh'
-  const { accessToken, expiresInSeconds } = await (await getInstagramApi()).refreshToken()
+  const { accessToken, expiresInSeconds } = await (await getInstagramApi(fetchFn)).refreshToken()
   await query(
     `update platform_accounts set access_token = $1,
        expires_at = now() + make_interval(secs => $2), refreshed_at = now(), updated_at = now()
@@ -149,7 +152,7 @@ export async function saveYouTubeAccount(a: {
 }
 
 /** A valid access token, renewed with the refresh token when it is about to expire. */
-async function youtubeAccessToken(fetchFn: typeof fetch = fetch): Promise<string> {
+export async function youtubeAccessToken(fetchFn: typeof fetch = fetch): Promise<string> {
   const account = await loadAccount('YOUTUBE')
   if (!account?.refresh_token) {
     throw new YouTubeAuthError(

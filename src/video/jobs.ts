@@ -37,7 +37,7 @@ import {
   registerVideoBot,
   sendVideoReview,
 } from './telegram.ts'
-import { cleanupUploadTemp } from './upload.ts'
+import { cleanupVideoTemp } from './upload.ts'
 
 // Video queues (docs/plans/video.md 2). One cloud worker runs them next to the Threads and
 // campaign queues; renders run one at a time (pg-boss localConcurrency defaults to 1).
@@ -174,6 +174,8 @@ export async function runPublishDue(boss: PgBoss, now = new Date()): Promise<voi
     }
   }
 
+  // The only sender of failure alerts (≤5 min after the failure): one sender, no duplicates, and
+  // re-sent until alerted_at is set, so a Telegram outage loses nothing.
   for (const f of await unalertedFailures()) {
     await notifyPublicationFailure(f)
     await markAlerted(f.id)
@@ -270,13 +272,6 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
       await notifyVideo(
         publishedText(row?.video_id ?? 0, outcome.platform, outcome.mediaId, outcome.permalink),
       )
-    } else if (outcome.kind === 'failed') {
-      // The sweep re-sends this alert until alerted_at is set, so a Telegram outage loses nothing.
-      for (const f of await unalertedFailures()) {
-        if (f.id !== publicationId) continue
-        await notifyPublicationFailure(f)
-        await markAlerted(f.id)
-      }
     } else if (outcome.kind === 'retry') {
       console.warn(`[video-publish] #${publicationId} will retry: ${outcome.error}`)
     }
@@ -292,7 +287,7 @@ export async function registerVideoJobs(boss: PgBoss): Promise<void> {
       config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID ? await unsentReviews(now) : []
     for (const id of unsent) await enqueueVideoReview(boss, id, true)
     const uploads = await expireUploads(now)
-    const tmp = await cleanupUploadTemp(now.getTime())
+    const tmp = await cleanupVideoTemp(now.getTime())
     const stuck = await recoverStuckStages(now)
     for (const s of stuck.retry) {
       if (s.status === 'SCRIPTING') await enqueueVideoScript(boss, s.id, s.seq)

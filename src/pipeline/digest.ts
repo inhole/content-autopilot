@@ -5,7 +5,7 @@ import { localDate } from '../lib/time.ts'
 import { chatJson } from '../llm/openrouter.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 import { DIGEST_RULES, type DigestPromptItem, digestUserPrompt } from './digest-prompts.ts'
-import { charCount, type StoredGeneration, shortenPrompt } from './generate.ts'
+import { fitter, type StoredGeneration } from './generate.ts'
 import { lastFollowupLimit, loadParts, MAX_FOLLOWUPS, replaceParts } from './parts.ts'
 import { GENERATE_SYSTEM, PROMPT_VERSION } from './prompts.ts'
 
@@ -88,8 +88,6 @@ const digestDraftSchema = z.object({
   topic_tag: z.string().max(50),
   caveats: z.array(z.string()),
 })
-const shortenSchema = (limit: number) => z.object({ text: z.string().min(1).max(limit) })
-const SHORTEN_MARGIN = 50
 const DIGEST_SYSTEM = `${GENERATE_SYSTEM}\n\n${DIGEST_RULES}`
 
 /**
@@ -115,18 +113,7 @@ export async function draftDigest(
       `digest needs ${items.length - 1} follow-ups, the model wrote ${followups.length}`,
     )
   }
-  const fitTo = async (text: string, limit: number): Promise<string> => {
-    if (charCount(text) <= limit) return text
-    const shortened = await chatJson({
-      model,
-      system: DIGEST_SYSTEM,
-      user: shortenPrompt(text, limit - SHORTEN_MARGIN),
-      schema: shortenSchema(limit),
-      schemaName: 'weekly_digest_shortened',
-      temperature: 0.3,
-    })
-    return shortened.text
-  }
+  const fitTo = fitter(model, DIGEST_SYSTEM, 'weekly_digest_shortened')
   const lastIdx = followups.length - 1
   return {
     ...raw,

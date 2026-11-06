@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -73,6 +73,17 @@ const hour = (label: string, h: number) => screen.getByRole('button', { name: `$
 const gets = () => fetchMock.mock.calls.filter(([, init]) => init?.method !== 'POST').length
 
 describe('schedule card', () => {
+  it('warns when the worker does not run on Korean time', async () => {
+    renderPage()
+    await screen.findByTestId('schedule-card')
+    expect(within(card()).getByText(/시각은 한국 시간이에요/)).toBeInTheDocument()
+    cleanup()
+    ops = { ...mockOps(), settings: { ...mockOps().settings, timeZone: 'UTC' } }
+    renderPage()
+    await screen.findByTestId('schedule-card')
+    expect(within(card()).queryByText(/한국 시간이에요/)).toBeNull()
+    expect(within(card()).getByText(/워커 시간대\(UTC\)/)).toBeInTheDocument()
+  })
   it('shows the env badge and no reset for env values', async () => {
     renderPage()
     await screen.findByTestId('schedule-card')

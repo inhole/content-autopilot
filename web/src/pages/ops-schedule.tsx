@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input.tsx'
 import { Spinner } from '@/components/ui/spinner.tsx'
 import { Toggle } from '@/components/ui/toggle.tsx'
 import { ApiError } from '@/lib/api.ts'
+import { TZ } from '@/lib/format.ts'
 import { describeDaily, humanizeCron } from '@/lib/ops.ts'
 import { useResetSchedule, useSaveSchedule } from '@/lib/queries.ts'
 import type {
@@ -457,11 +458,18 @@ function ScheduleRows({ cur, def }: { cur: OpsScheduleView; def: OpsScheduleView
 
 export function ScheduleCard({
   schedule,
+  timeZone,
   onNotice,
 }: {
   schedule: OpsSchedule
+  /** The worker's zone (TZ_NAME): crons and publish slots are wall-clock times there. */
+  timeZone: string
   onNotice?: NoticeFn
 }) {
+  const zoneNote =
+    timeZone === TZ
+      ? '시각은 한국 시간이에요.'
+      : `시각은 한국 시간이 아니라 워커 시간대(${timeZone}) 기준이에요.`
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const reset = useResetSchedule()
@@ -501,7 +509,7 @@ export function ScheduleCard({
         </CardTitle>
         <CardDescription>
           수집 일정은 저장하는 즉시 바뀌어요. 초안 수는 다음 Threads 수집부터, 발행 시각은 다음
-          승인부터, 체험단 카드 수는 다음 선별부터 적용돼요. 시각은 한국 시간이에요.
+          승인부터, 체험단 카드 수는 다음 선별부터 적용돼요. {zoneNote}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -512,7 +520,7 @@ export function ScheduleCard({
           busy={busy}
           onClose={() => setEditing(false)}
           title="일정과 수량 편집"
-          description="시각은 한국 시간이에요. 수집 일정은 저장하는 즉시 바뀌어요."
+          description={`${zoneNote} 수집 일정은 저장하는 즉시 바뀌어요.`}
         >
           <ScheduleForm
             schedule={schedule}

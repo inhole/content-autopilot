@@ -37,14 +37,16 @@ afterEach(() => {
   setCsrfToken(null)
 })
 
+const panel = (d: CampaignDetailResponse, now?: Date) => (
+  <QueryClientProvider client={client}>
+    <MemoryRouter>
+      <CampaignActionsPanel data={d} now={now} />
+    </MemoryRouter>
+  </QueryClientProvider>
+)
+
 function renderPanel(d: CampaignDetailResponse, now?: Date) {
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <CampaignActionsPanel data={d} now={now} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
+  return render(panel(d, now))
 }
 
 /** The last POST: path, headers and parsed body. */
@@ -232,6 +234,25 @@ describe('sending actions', () => {
       ['campaigns'],
       ['overview'],
     ])
+  })
+})
+
+describe('a newer revision while a confirmation is open', () => {
+  it('closes the 패스 and 리뷰 올림 dialogs', async () => {
+    const user = userEvent.setup()
+    const { rerender } = renderPanel(detail(101, { revision: 3 }))
+    await user.click(button('패스'))
+    await user.click(await screen.findByRole('radio', { name: '경쟁률이 너무 높음' }))
+    rerender(panel(detail(101, { revision: 4 })))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+
+    const review = { status: 'DRAFT_REVIEW', revision: 4 } as const
+    rerender(panel(detail(103, review)))
+    await user.click(button('리뷰 올림'))
+    await screen.findByRole('alertdialog')
+    rerender(panel(detail(103, { ...review, revision: 5 })))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(false)
   })
 })
 

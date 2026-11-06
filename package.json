@@ -30,7 +30,7 @@
     "rss-parser": "^3.13.0",
     "satori": "^0.33.5",
     "tsx": "^4.23.15",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

@@ -1,5 +1,6 @@
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
+import { decideAfterFailure, LostClaimError } from '../pipeline/publish.ts'
 import { currentAccountId, getInstagramApi, getYouTubeApi } from './accounts.ts'
 import { findPublishedReel, type InstagramApi, InstagramApiError } from './instagram.ts'
 import { getStorage, type VideoStorage } from './storage.ts'
@@ -17,9 +18,6 @@ import {
 // claim bumps claim_seq, every later write is conditioned on it, and the external id (container or
 // upload session) is saved before the irreversible step so a retry resumes instead of re-posting.
 
-export const MAX_ATTEMPTS = 3
-/** Extra attempts while we cannot tell whether the last one went out. */
-const MAX_UNKNOWN_ATTEMPTS = MAX_ATTEMPTS * 2
 /** Longer than the longest single external call (5 min upload) plus the Reels wait (8 min). */
 export const STALE_PUBLISHING_MINUTES = 15
 /** SCHEDULED rows this far past their slot are moved to the next slot instead of going out late. */
@@ -38,14 +36,6 @@ export class FinalPublishError extends Error {
   ) {
     super(message)
     this.name = 'FinalPublishError'
-  }
-}
-
-/** Another worker took over this publication's claim. */
-export class LostClaimError extends Error {
-  constructor() {
-    super('publication claim was taken over by another worker')
-    this.name = 'LostClaimError'
   }
 }
 
@@ -99,19 +89,6 @@ export function classify(err: unknown): FinalPublishError | null {
     return new FinalPublishError(`토큰이 거절됐어요: ${err.message}`, 'auth')
   }
   return null
-}
-
-export type FailureDecision = 'published' | 'retry' | 'failed'
-
-/** Same rule as posts: a PUBLISHED container wins; unknown outcomes get a few extra attempts. */
-export function decideAfterFailure(input: {
-  attempts: number
-  containerStatus: string | null
-}): FailureDecision {
-  if (input.containerStatus === 'PUBLISHED') return 'published'
-  if (input.attempts < MAX_ATTEMPTS) return 'retry'
-  if (input.containerStatus === 'unknown' && input.attempts < MAX_UNKNOWN_ATTEMPTS) return 'retry'
-  return 'failed'
 }
 
 type Sleep = (ms: number) => Promise<void>
@@ -474,14 +451,14 @@ export async function markAlerted(publicationId: number): Promise<void> {
 
 /** Moves a publication's slot to now so the next sweep sends it (CLI `video:publish-now`). */
 export async function publishVideoNow(videoId: number): Promise<number> {
-  // Just before now (claims only take due rows), offset per row for the unique slot index.
+  // Just before now (claims only take due rows), offset per row for the unique slot index;
+  // whole milliseconds, so a JS Date read back from it still matches the web guard.
   const rows = await query(
-    `update video_publications set scheduled_at = now() - make_interval(secs => id * 0.001),
+    `update video_publications set scheduled_at = date_trunc('milliseconds', now())
+         - make_interval(secs => id * 0.001),
        updated_at = now()
      where video_id = $1 and status = 'SCHEDULED' returning id`,
     [videoId],
   )
   return rows.length
 }
-
-export const isDryRunMediaId = (id: string | null) => id?.startsWith('dry-') ?? false

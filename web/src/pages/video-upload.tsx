@@ -17,7 +17,7 @@ import { Spinner } from '@/components/ui/spinner.tsx'
 import { Textarea } from '@/components/ui/textarea.tsx'
 import { ApiError, api, uploadVideoFile } from '@/lib/api.ts'
 import { charCount, formatBytes, formatDuration, isHttpUrl } from '@/lib/format.ts'
-import { refreshVideoData, useVideos } from '@/lib/queries.ts'
+import { onWriteAuthError, refreshVideoData, useVideos } from '@/lib/queries.ts'
 import type { VideoFileResponse } from '@/lib/types.ts'
 import { parseHashtags } from '@/pages/video-detail.tsx'
 
@@ -156,6 +156,8 @@ export function VideoUploadPage() {
       )
       setDone({ id, result })
     } catch (err) {
+      // Not a useMutation, so the MutationCache never sees these writes.
+      onWriteAuthError(client, err)
       const status = err instanceof ApiError ? err.status : 0
       const message = err instanceof Error ? err.message : '올리지 못했어요'
       // A rule the file broke, the size or the type: the row stays UPLOADING, pick another file.

@@ -35,8 +35,6 @@ const SCHEMAS = {
   posted: z.object({ revision }),
 } satisfies Record<CampaignActionName, z.ZodType>
 
-export const CAMPAIGN_ACTIONS = Object.keys(SCHEMAS) as CampaignActionName[]
-
 export const isCampaignAction = (name: string): name is CampaignActionName =>
   Object.hasOwn(SCHEMAS, name)
 

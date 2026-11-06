@@ -1,6 +1,5 @@
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
-import { localDate } from '../lib/time.ts'
 import { urlHash } from '../lib/url.ts'
 import {
   estimateApplyDeadline,
@@ -17,7 +16,7 @@ import {
   musinsaEventUrl,
   musinsaProductId,
 } from './musinsa.ts'
-import type { GiftPrice } from './types.ts'
+import { type CampaignSource, daysUntil, type GiftPrice } from './types.ts'
 
 export type GiftCollectResult = {
   fetched: number
@@ -63,30 +62,7 @@ export async function collectGiftCampaigns(
     }
   })
 
-  const result = await query<{ id: number; inserted: boolean }>(
-    `insert into campaigns (source, external_id, url, url_hash, status, title, brand, product_id,
-       image_url, recruit_count, application_count, remaining_days, apply_deadline, detail,
-       first_seen_at, last_seen_at)
-     select 'kakao-gift', r.external_id, r.url, r.url_hash, 'COLLECTED', r.title, r.brand,
-       r.product_id, r.image_url, r.recruit_count, r.application_count, r.remaining_days,
-       r.apply_deadline, r.detail, $2, $2
-     from jsonb_to_recordset($1::jsonb) as r(external_id text, url text, url_hash text, title text,
-       brand text, product_id bigint, image_url text, recruit_count integer,
-       application_count integer, remaining_days integer, apply_deadline timestamptz, detail jsonb)
-     on conflict (source, external_id) do update set
-       title = excluded.title,
-       brand = excluded.brand,
-       product_id = excluded.product_id,
-       image_url = excluded.image_url,
-       recruit_count = excluded.recruit_count,
-       application_count = excluded.application_count,
-       remaining_days = excluded.remaining_days,
-       apply_deadline = excluded.apply_deadline,
-       detail = coalesce(campaigns.detail, '{}'::jsonb) || excluded.detail,
-       last_seen_at = excluded.last_seen_at
-     returning id, (xmax = 0) as inserted`,
-    [JSON.stringify(rows), now],
-  )
+  const result = await upsertCampaigns('kakao-gift', rows, now)
 
   await fillGiftPrices(now, {
     fetchPrice: opts.fetchPrice ?? fetchGiftProductPrice,
@@ -161,20 +137,16 @@ export async function fillGiftPrices(
   return { filled, failed }
 }
 
-/** Whole local calendar days from `now` to `target` in `tz` (negative when past). */
-function calendarDaysUntil(target: Date, now: Date, tz: string): number {
-  const day = (d: Date) => Date.parse(`${localDate(d, tz)}T00:00:00Z`)
-  return Math.round((day(target) - day(now)) / 86_400_000)
-}
-
 const DETAIL_DELAY_MS = 300
+// Same cap as the gift price fill; the rest follow in later runs.
+const DETAIL_CAP_PER_RUN = 150
 
 /**
  * Upserts the public Musinsa 체험단 list into `campaigns`, source 'musinsa'. Same rules as the gift
  * collector: new rows are COLLECTED, existing rows only get their list fields and last_seen_at
  * refreshed (fields that only the detail endpoint gave stay). Musinsa gives exact end dates and
- * counts. For newly created rows the event detail is fetched too; a failed detail fetch is logged
- * and never fails the collection.
+ * counts. Then the event detail of COLLECTED rows never tried is fetched (`fillMusinsaDetails`); a
+ * failed detail fetch is logged and never fails the collection.
  */
 export async function collectMusinsaCampaigns(
   now = new Date(),
@@ -182,6 +154,7 @@ export async function collectMusinsaCampaigns(
     fetchList?: typeof fetchMusinsaList
     fetchDetail?: typeof fetchMusinsaDetail
     detailDelayMs?: number
+    detailCap?: number
   } = {},
 ): Promise<GiftCollectResult> {
   const { items, invalid, totalCount = null } = await (opts.fetchList ?? fetchMusinsaList)()
@@ -200,17 +173,97 @@ export async function collectMusinsaCampaigns(
       image_url: item.mainImage ?? null,
       recruit_count: item.recruitmentCount ?? null,
       application_count: item.applicantsCount ?? null,
-      remaining_days: calendarDaysUntil(deadline, now, config.TZ_NAME),
+      remaining_days: daysUntil(deadline, now, config.TZ_NAME),
       apply_deadline: deadline,
       detail: item,
     }
   })
 
-  const result = await query<{ id: number; external_id: string; inserted: boolean }>(
+  const result = await upsertCampaigns('musinsa', rows, now)
+  await fillMusinsaDetails(now, {
+    fetchDetail: opts.fetchDetail ?? fetchMusinsaDetail,
+    delayMs: opts.detailDelayMs ?? DETAIL_DELAY_MS,
+    cap: opts.detailCap ?? DETAIL_CAP_PER_RUN,
+  })
+
+  const inserted = result.filter((r) => r.inserted).sort((a, b) => a.id - b.id)
+  return {
+    fetched: items.length,
+    created: inserted.map((r) => r.id),
+    updated: result.length - inserted.length,
+    invalid,
+    totalCount,
+  }
+}
+
+/**
+ * Fetches the event detail of COLLECTED Musinsa rows never tried yet (`detail.detailTriedAt`
+ * missing; new rows first), one request at a time, `delayMs` apart, at most `cap` per run, and
+ * merges it into `campaigns.detail`. Success and failure both stamp `detailTriedAt`, so a run that
+ * crashed mid-way or hit the cap is picked up by the next run, while a failure (logged, never
+ * failing the collection) is not retried. updated_at is not touched.
+ */
+async function fillMusinsaDetails(
+  now: Date,
+  opts: {
+    fetchDetail: (eventId: string) => Promise<MusinsaDetailFields>
+    delayMs: number
+    cap: number
+  },
+): Promise<void> {
+  const rows = await query<{ id: number; external_id: string }>(
+    `select id, external_id from campaigns
+      where source = 'musinsa' and status = 'COLLECTED'
+        and not (coalesce(detail, '{}'::jsonb) ? 'detailTriedAt')
+      order by first_seen_at desc, id
+      limit $1`,
+    [opts.cap],
+  )
+  let first = true
+  for (const row of rows) {
+    if (!first) await sleep(opts.delayMs)
+    first = false
+    let fields: object = {}
+    try {
+      fields = await opts.fetchDetail(row.external_id)
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      console.warn(`musinsa detail: #${row.id} (${row.external_id}) skipped: ${reason}`)
+    }
+    await query(
+      `update campaigns set detail = coalesce(detail, '{}'::jsonb) || $2::jsonb
+         || jsonb_build_object('detailTriedAt', $3::text) where id = $1`,
+      [row.id, JSON.stringify(fields), now.toISOString()],
+    )
+  }
+}
+
+type CampaignRow = {
+  external_id: string
+  url: string
+  url_hash: string
+  title: string
+  brand: string | null
+  product_id: number | null
+  image_url: string | null
+  recruit_count: number | null
+  application_count: number | null
+  remaining_days: number | null
+  apply_deadline: Date | null
+  detail: unknown
+}
+
+/**
+ * Inserts new list rows as COLLECTED; existing rows (same source and external id) only get their
+ * list fields and last_seen_at refreshed, and the list item is merged over the stored `detail`
+ * (`||`) so fields only the price or detail fetch gave survive.
+ */
+function upsertCampaigns(source: CampaignSource, rows: CampaignRow[], now: Date) {
+  return query<{ id: number; inserted: boolean }>(
     `insert into campaigns (source, external_id, url, url_hash, status, title, brand, product_id,
        image_url, recruit_count, application_count, remaining_days, apply_deadline, detail,
        first_seen_at, last_seen_at)
-     select 'musinsa', r.external_id, r.url, r.url_hash, 'COLLECTED', r.title, r.brand,
+     select $3, r.external_id, r.url, r.url_hash, 'COLLECTED', r.title, r.brand,
        r.product_id, r.image_url, r.recruit_count, r.application_count, r.remaining_days,
        r.apply_deadline, r.detail, $2, $2
      from jsonb_to_recordset($1::jsonb) as r(external_id text, url text, url_hash text, title text,
@@ -227,45 +280,7 @@ export async function collectMusinsaCampaigns(
        apply_deadline = excluded.apply_deadline,
        detail = coalesce(campaigns.detail, '{}'::jsonb) || excluded.detail,
        last_seen_at = excluded.last_seen_at
-     returning id, external_id, (xmax = 0) as inserted`,
-    [JSON.stringify(rows), now],
+     returning id, (xmax = 0) as inserted`,
+    [JSON.stringify(rows), now, source],
   )
-
-  const inserted = result.filter((r) => r.inserted).sort((a, b) => a.id - b.id)
-  await storeDetails(inserted, opts.fetchDetail ?? fetchMusinsaDetail, {
-    delayMs: opts.detailDelayMs ?? DETAIL_DELAY_MS,
-  })
-  return {
-    fetched: items.length,
-    created: inserted.map((r) => r.id),
-    updated: result.length - inserted.length,
-    invalid,
-    totalCount,
-  }
-}
-
-/**
- * Fetches the event detail of each new row (one request at a time, `delayMs` apart) and merges it
- * into `campaigns.detail`. Per-row failures are logged and skipped. updated_at is not touched.
- */
-async function storeDetails(
-  rows: { id: number; external_id: string }[],
-  fetchDetail: (eventId: string) => Promise<MusinsaDetailFields>,
-  opts: { delayMs: number },
-): Promise<void> {
-  let first = true
-  for (const row of rows) {
-    if (!first) await sleep(opts.delayMs)
-    first = false
-    try {
-      const fields = await fetchDetail(row.external_id)
-      await query(
-        "update campaigns set detail = coalesce(detail, '{}'::jsonb) || $2::jsonb where id = $1",
-        [row.id, JSON.stringify(fields)],
-      )
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
-      console.warn(`musinsa detail: #${row.id} (${row.external_id}) skipped: ${reason}`)
-    }
-  }
 }

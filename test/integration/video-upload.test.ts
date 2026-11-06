@@ -16,7 +16,7 @@ import {
 import { reclaimUploadAttempts } from '../../src/video/cleanup.ts'
 import { videosThisWeek } from '../../src/video/pick.ts'
 import { type UploadInfo, UploadRejected } from '../../src/video/probe.ts'
-import { publishPublication } from '../../src/video/publish.ts'
+import { publishPublication, publishVideoNow } from '../../src/video/publish.ts'
 import { runFfmpeg } from '../../src/video/render.ts'
 import {
   applyEdit,
@@ -489,6 +489,23 @@ describe('unapprove, cancel and guards', () => {
     expect(await publishPublicationNow(id, new Date(slot.getTime() + 1000))).toBe(false)
     expect(await publishPublicationNow(id, slot)).toBe(true)
     expect(await publishPublicationNow(id, slot)).toBe(false)
+    // The page re-reads the moved slot (JS Date, milliseconds) and presses again: no 409.
+    const [moved] = await query<{ scheduled_at: Date }>(
+      'select scheduled_at from video_publications where id = $1',
+      [id],
+    )
+    expect(await publishPublicationNow(id, moved?.scheduled_at ?? new Date())).toBe(true)
+  })
+
+  it('keeps a CLI publish-now slot usable as a millisecond guard', async () => {
+    const a = await approvedUpload(['REELS'])
+    const id = a.pubs[0]?.id ?? 0
+    expect(await publishVideoNow(a.id)).toBe(1)
+    const [row] = await query<{ scheduled_at: Date }>(
+      'select scheduled_at from video_publications where id = $1',
+      [id],
+    )
+    expect(await publishPublicationNow(id, row?.scheduled_at ?? new Date())).toBe(true)
   })
 
   it('publishes an approved upload like a generated video', async () => {

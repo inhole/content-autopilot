@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import type { Bot } from 'grammy'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeCampaignCallback, parseCampaignCallback } from '../src/campaigns/callbacks.ts'
 import {
   draftControlButtons,
@@ -7,7 +8,19 @@ import {
   judgeReviewPress,
   parseReviewReply,
   REVIEW_HELP_LINES,
+  registerReviewBot,
 } from '../src/campaigns/review-telegram.ts'
+
+const loadCampaign = vi.hoisted(() => vi.fn())
+const startIntake = vi.hoisted(() => vi.fn(async () => true))
+vi.mock('../src/campaigns/store.ts', async (orig) => ({
+  ...(await orig<typeof import('../src/campaigns/store.ts')>()),
+  loadCampaign,
+}))
+vi.mock('../src/campaigns/review-draft.ts', async (orig) => ({
+  ...(await orig<typeof import('../src/campaigns/review-draft.ts')>()),
+  startIntake,
+}))
 
 const review = { tone: 't', minChars: 100, maxChars: 500, points: [] }
 
@@ -92,5 +105,62 @@ describe('formatDraftControl per source', () => {
     expect(
       formatDraftControl({ id: 7, draft_text: '가'.repeat(150), source: 'musinsa' }, { review }),
     ).toContain('무신사 상품 후기')
+  })
+})
+
+describe('📝 press', () => {
+  type Handler = (ctx: unknown) => Promise<void>
+  const handlers: { press?: Handler } = {}
+  const bot = {
+    callbackQuery: (_re: RegExp, fn: Handler) => {
+      handlers.press = fn
+    },
+    on: () => {},
+  } as unknown as Bot
+  registerReviewBot(bot, { onDraftRequested: async () => {} })
+
+  const press = async (replyFails = false) => {
+    const replies: { text: string; other?: { reply_parameters?: { message_id: number } } }[] = []
+    const ctx = {
+      callbackQuery: { data: 'rev:draft:7:0', message: { message_id: 1 } },
+      reply: async (text: string, other?: { reply_parameters?: { message_id: number } }) => {
+        replies.push({ text, other })
+        if (replyFails && other?.reply_parameters)
+          throw new Error('message to be replied not found')
+        return { message_id: 900 }
+      },
+      answerCallbackQuery: async () => true,
+      editMessageReplyMarkup: async () => true,
+    }
+    await handlers.press?.(ctx)
+    return replies
+  }
+  const selected = { id: 7, title: '이어폰', status: 'SELECTED', intake_message_id: null }
+
+  beforeEach(() => {
+    loadCampaign.mockReset()
+    startIntake.mockClear()
+  })
+
+  it('sends the intake message the first time', async () => {
+    loadCampaign.mockResolvedValue(selected)
+    const replies = await press()
+    expect(replies.map((r) => r.text)).toEqual([intakeText(selected)])
+    expect(startIntake).toHaveBeenCalledWith(7, 900)
+  })
+
+  it('points at the existing intake instead of sending a new one', async () => {
+    loadCampaign.mockResolvedValue({ ...selected, intake_message_id: 555 })
+    const replies = await press()
+    expect(replies).toHaveLength(1)
+    expect(replies[0]?.other?.reply_parameters?.message_id).toBe(555)
+    expect(startIntake).not.toHaveBeenCalled()
+  })
+
+  it('sends a new intake when the old one is gone', async () => {
+    loadCampaign.mockResolvedValue({ ...selected, intake_message_id: 555 })
+    const replies = await press(true)
+    expect(replies.at(-1)?.text).toBe(intakeText(selected))
+    expect(startIntake).toHaveBeenCalledWith(7, 900)
   })
 })

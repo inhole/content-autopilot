@@ -10,13 +10,20 @@ import { seedPost, seedTopic } from './helpers.ts'
 const NOW = new Date('2026-10-19T12:00:00Z')
 const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000)
 
-async function seed(opts: { status?: string; messageId?: number | null; touched: Date }) {
+async function seed(opts: {
+  status?: string
+  messageId?: number | null
+  touched: Date
+  staleMessage?: boolean
+}) {
   const id = await seedPost(await seedTopic(), { status: opts.status ?? 'PENDING_REVIEW' })
-  await query('update posts set review_message_id = $2, updated_at = $3 where id = $1', [
-    id,
-    opts.messageId ?? null,
-    opts.touched,
-  ])
+  // A sent review shows the current revision unless the re-send after an edit failed.
+  await query(
+    `update posts set review_message_id = $2, updated_at = $3,
+       review_revision = case when $2::bigint is null then null else revision - $4::int end
+     where id = $1`,
+    [id, opts.messageId ?? null, opts.touched, opts.staleMessage ? 1 : 0],
+  )
   return id
 }
 
@@ -27,8 +34,10 @@ describe('loadUnsentReviews', () => {
     await seed({ messageId: 77, touched: minutesAgo(120) }) // already sent
     await seed({ status: 'EXPIRED', touched: minutesAgo(120) })
     await seed({ status: 'SCHEDULED', touched: minutesAgo(120) })
+    // Edited or unscheduled, then the re-send failed: the old message shows an older revision.
+    const stale = await seed({ messageId: 78, staleMessage: true, touched: minutesAgo(120) })
 
-    expect(await loadUnsentReviews(NOW)).toEqual([lost])
+    expect(await loadUnsentReviews(NOW)).toEqual([lost, stale])
   })
 })
 
@@ -37,8 +46,10 @@ describe('isUnsentReview', () => {
     const waiting = await seed({ touched: minutesAgo(30) })
     const sent = await seed({ messageId: 77, touched: minutesAgo(30) })
     const expired = await seed({ status: 'EXPIRED', touched: minutesAgo(30) })
+    const stale = await seed({ messageId: 78, staleMessage: true, touched: minutesAgo(30) })
 
     expect(await isUnsentReview(waiting)).toBe(true)
+    expect(await isUnsentReview(stale)).toBe(true)
     // The original review job got there first: the recovery job must not send a second message.
     expect(await isUnsentReview(sent)).toBe(false)
     expect(await isUnsentReview(expired)).toBe(false)

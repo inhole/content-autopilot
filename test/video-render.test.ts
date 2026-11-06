@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegPath from 'ffmpeg-static'
@@ -22,6 +22,7 @@ import {
   SilentTts,
   type TtsProvider,
 } from '../src/video/tts.ts'
+import { cleanupVideoTemp } from '../src/video/upload.ts'
 import { pcmDurationMs, silence, writeWav } from '../src/video/wav.ts'
 
 const input = {
@@ -78,6 +79,26 @@ describe('render helpers', () => {
     expect(renderInputHash(input, b, null)).not.toBe(h)
     expect(renderInputHash(input, a, { path: 'm.mp3', size: 1 })).not.toBe(h)
     expect(renderInputHash({ ...input, brand: '@other' }, a, null)).not.toBe(h)
+  })
+})
+
+describe('temp cleanup', () => {
+  it('also removes render folders a killed process left behind', async () => {
+    const root = join(tmpdir(), 'content-autopilot')
+    const old = join(root, `render-test-old-${process.pid}`)
+    const fresh = join(root, `render-test-fresh-${process.pid}`)
+    await mkdir(old, { recursive: true })
+    await mkdir(fresh, { recursive: true })
+    const hoursAgo = new Date(Date.now() - 2 * 3600_000)
+    await utimes(old, hoursAgo, hoursAgo)
+    try {
+      await cleanupVideoTemp()
+      await expect(stat(old)).rejects.toThrow()
+      expect((await stat(fresh)).isDirectory()).toBe(true)
+    } finally {
+      await rm(old, { recursive: true, force: true })
+      await rm(fresh, { recursive: true, force: true })
+    }
   })
 })
 

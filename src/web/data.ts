@@ -1,6 +1,5 @@
 import {
   ACTIVE_CAMPAIGN_STATUSES,
-  CAMPAIGN_SOURCE_KEYS,
   CAMPAIGN_STATUSES,
   type Campaign,
   type CampaignSource,
@@ -15,8 +14,6 @@ import { loadRevivable } from '../pipeline/revive.ts'
 import { THREADS_TEXT_LIMIT } from '../threads/client.ts'
 
 /** Read-only queries for the dashboard. Nothing here writes to the database. */
-
-export { CAMPAIGN_SOURCE_KEYS }
 
 export type CampaignFilter = CampaignStatus | 'active' | 'all'
 
@@ -154,6 +151,9 @@ export function nextDeadline(
   }
 }
 
+/** Most rows the campaign list returns (newest update first); the app says when it is hit. */
+export const CAMPAIGN_LIST_LIMIT = 300
+
 export async function loadCampaignList(
   filter: CampaignFilter,
   source: CampaignSource | null = null,
@@ -178,7 +178,7 @@ export async function loadCampaignList(
             review_deadline, score, updated_at,
             detail->'price' as gift_price, detail->'products' as products
        from campaigns ${where}
-      order by updated_at desc limit 300`,
+      order by updated_at desc limit ${CAMPAIGN_LIST_LIMIT + 1}`,
     values,
   )
   const rows: CampaignListRow[] = raw.map(({ gift_price, products, ...r }) => ({
@@ -251,7 +251,7 @@ export function parsePostLimit(value: string | null | undefined): number {
 
 /**
  * Engagement of posts published within the last `days` days, from each post's latest insights
- * snapshot. `daily` sums by KST publish date (oldest first, only days with posts); `top` is the
+ * snapshot. `daily` sums by TZ_NAME publish date (oldest first, only days with posts); `top` is the
  * 10 posts with the most views. Posts without any snapshot count as zero in `daily`.
  */
 export async function loadInsights(days: number, now: Date = new Date()): Promise<InsightsData> {
@@ -266,7 +266,7 @@ export async function loadInsights(days: number, now: Date = new Date()): Promis
     reposts: number | null
   }>(
     `select p.id, p.text, p.published_at,
-            to_char(p.published_at at time zone 'Asia/Seoul', 'YYYY-MM-DD') as day,
+            to_char(p.published_at at time zone $3, 'YYYY-MM-DD') as day,
             i.views, i.likes, i.replies, i.reposts
        from posts p
        left join lateral (
@@ -277,7 +277,7 @@ export async function loadInsights(days: number, now: Date = new Date()): Promis
         and p.published_at > $1::timestamptz - make_interval(days => $2::int)
         and p.published_at <= $1::timestamptz
       order by p.published_at`,
-    [now, days],
+    [now, days, config.TZ_NAME],
   )
   const byDay = new Map<string, InsightsData['daily'][number]>()
   for (const r of rows) {

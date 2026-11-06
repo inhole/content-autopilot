@@ -178,6 +178,11 @@ describe('answerReply', () => {
     const api = await notified()
     api.publish.mockRejectedValueOnce(new Error('threads down'))
     await expect(answerReply(900, 'a', api)).rejects.toThrow('threads down')
+    const [row] = await query<{ answer_container_id: string | null }>(
+      'select answer_container_id from threads_replies where telegram_message_id = $1',
+      [900],
+    )
+    expect(row?.answer_container_id).toBeNull()
     expect(await answerReply(900, 'a', api)).not.toBeNull()
   })
 
@@ -213,6 +218,19 @@ describe('answerReply', () => {
       "select answer_state from threads_replies where id = 'r1'",
     )
     expect(row?.answer_state).toBe('ANSWERED')
+  })
+
+  it('does not post again while the earlier container status is still unknown', async () => {
+    const api = await notified()
+    await query(
+      `update threads_replies set answer_state = 'ANSWERING', answer_container_id = 'old-1',
+         answer_claimed_at = now() - interval '1 hour' where id = 'r1'`,
+    )
+    api.getContainerStatus.mockRejectedValueOnce(new Error('lookup failed'))
+    await expect(answerReply(900, 'a', api)).rejects.toThrow(/확인하지 못했어요/)
+    expect(api.createTextContainer).not.toHaveBeenCalled()
+    // The claim is kept (and renewed), so an immediate retry is refused too.
+    await expect(answerReply(900, 'a', api)).rejects.toThrow(/이미/)
   })
 
   it('rejects over-limit text before claiming', async () => {

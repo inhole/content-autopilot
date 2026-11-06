@@ -1,7 +1,7 @@
 import type { Bot } from 'grammy'
 import type { PgBoss } from 'pg-boss'
 import { config } from '../config.ts'
-import { formatFinalFailure, isFinalAttempt } from '../jobs.ts'
+import { alertOnFinalFailure as alertWith } from '../jobs.ts'
 import { localHour } from '../lib/time.ts'
 import { applySchedules } from '../schedules.ts'
 import { collectGiftCampaigns, collectMusinsaCampaigns } from './collect.ts'
@@ -19,7 +19,7 @@ export const CQ = {
   card: 'campaign-card',
   reviewDraft: 'review-draft',
   maintenance: 'campaign-maintenance',
-  // Public Musinsa 체험단 list (no login). Ranking is shared with gift; this queue only collects.
+  // Public Musinsa 체험단 list (no login). Each collector ranks only its own source.
   musinsaCollect: 'musinsa-collect',
   rank: 'campaign-rank',
 } as const
@@ -47,25 +47,12 @@ export function isReminderHour(now: Date, tz: string): boolean {
 }
 
 /** Runs `fn` and, if it throws on the queue's last attempt, tells the owner before rethrowing. */
-async function alertOnFinalFailure<T>(
+const alertOnFinalFailure = <T>(
   job: { retryCount: number },
   retryLimit: number,
   label: string,
   fn: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await fn()
-  } catch (err) {
-    if (isFinalAttempt(job.retryCount, retryLimit)) {
-      try {
-        await sendCampaignMessage(formatFinalFailure(label, err))
-      } catch (notifyErr) {
-        console.error(`[${label}] failed to send failure alert`, notifyErr)
-      }
-    }
-    throw err
-  }
-}
+) => alertWith(job, retryLimit, label, { notify: sendCampaignMessage }, fn)
 
 const sendCard = (boss: PgBoss, campaignId: number) =>
   boss.send(CQ.card, { campaignId } satisfies CampaignData, {
@@ -99,24 +86,24 @@ export async function sendPendingCards(send: (campaignId: number) => Promise<unk
   for (const id of await campaignIdsByStatus('SHORTLISTED')) await send(id)
 }
 
-/** Collects the Kakao gift list, ranks what is new and sends a card for every pick. */
+/** Collects the Kakao gift list, ranks the gift rows and sends a card for every pick. */
 export async function runGiftCollect(
   send: (campaignId: number) => Promise<unknown>,
   now = new Date(),
 ) {
   const collected = await collectGiftCampaigns(now)
-  const picked = await rankCollected(now)
+  const picked = await rankCollected(now, 'kakao-gift')
   await sendPendingCards(send)
   return { ...collected, created: collected.created.length, picked }
 }
 
-/** Collects the public Musinsa list, ranks what is new and sends a card for every pick. */
+/** Collects the public Musinsa list, ranks the Musinsa rows and sends a card for every pick. */
 export async function runMusinsaCollect(
   send: (campaignId: number) => Promise<unknown>,
   now = new Date(),
 ) {
   const collected = await collectMusinsaCampaigns(now)
-  const picked = await rankCollected(now)
+  const picked = await rankCollected(now, 'musinsa')
   await sendPendingCards(send)
   return { ...collected, created: collected.created.length, picked }
 }

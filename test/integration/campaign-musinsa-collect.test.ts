@@ -122,6 +122,68 @@ describe('collectMusinsaCampaigns', () => {
     expect((ok.detail as Record<string, unknown>).eventCategory).toBe('FASHION_ACCESSORY')
   })
 
+  it('fetches the detail of a COLLECTED row a crashed run never tried, and stamps every try', async () => {
+    // Inserted by a run that died before its detail fetch: no detailTriedAt.
+    const crashed = await seedCampaign({
+      source: 'musinsa',
+      external_id: '1',
+      status: 'COLLECTED',
+      detail: JSON.stringify({ id: 1 }),
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const calls: string[] = []
+    await collectMusinsaCampaigns(now, {
+      fetchList: fetchList([item(1), item(2)]),
+      fetchDetail: async (id) => {
+        calls.push(String(id))
+        if (String(id) === '2') throw new Error('HTTP 503')
+        return detailFields
+      },
+      ...noDelay,
+    })
+    warn.mockRestore()
+    expect(calls.sort()).toEqual(['1', '2'])
+    const ok = (await getCampaign(crashed)).detail as Record<string, unknown>
+    expect(ok).toMatchObject({ ...detailFields, detailTriedAt: now.toISOString() })
+    const failed = await one("select detail from campaigns where external_id = '2'")
+    expect(failed.detail).toMatchObject({ detailTriedAt: now.toISOString() })
+
+    // Both were tried, so the next run fetches nothing.
+    calls.length = 0
+    await collectMusinsaCampaigns(now, {
+      fetchList: fetchList([item(1), item(2)]),
+      fetchDetail: async (id) => {
+        calls.push(String(id))
+        return detailFields
+      },
+      ...noDelay,
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('fetches at most detailCap details per run; the rest follow in later runs', async () => {
+    const calls: string[] = []
+    const spy = async (id: string | number) => {
+      calls.push(String(id))
+      return detailFields
+    }
+    const list = fetchList([item(1), item(2), item(3)])
+    await collectMusinsaCampaigns(now, {
+      fetchList: list,
+      fetchDetail: spy,
+      detailCap: 2,
+      ...noDelay,
+    })
+    expect(calls).toHaveLength(2)
+    await collectMusinsaCampaigns(now, {
+      fetchList: list,
+      fetchDetail: spy,
+      detailCap: 2,
+      ...noDelay,
+    })
+    expect(calls.sort()).toEqual(['1', '2', '3'])
+  })
+
   it('refreshes list fields without touching status, owner fields, updated_at or detail fields', async () => {
     const first = await collectMusinsaCampaigns(now, {
       fetchList: fetchList([item(1)]),

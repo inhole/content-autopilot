@@ -9,6 +9,7 @@ import { config } from '../config.ts'
 import { query, transaction } from '../db/pool.ts'
 import { type Approval, approveVideo } from './approve.ts'
 import { prepareUpload, type UploadInfo, UploadRejected } from './probe.ts'
+import { RENDER_TMP_ROOT } from './render.ts'
 import { getStorage, storageKey, type VideoStorage } from './storage.ts'
 import { type MetaEdit, metaProblem } from './store.ts'
 import { cleanHashtags, sourceLabel, type VideoStatus } from './types.ts'
@@ -229,25 +230,30 @@ async function statusOf(videoId: number): Promise<VideoStatus | null> {
   return row?.status ?? null
 }
 
-/** Removes temp folders a killed process left behind (older than an hour, not the active one). */
-export async function cleanupUploadTemp(now = Date.now()): Promise<number> {
-  let names: string[]
-  try {
-    names = await readdir(UPLOAD_TMP_ROOT)
-  } catch {
-    return 0
-  }
+/**
+ * Removes upload and render temp folders a killed process left behind (older than an hour, not
+ * the active upload; a render job expires after 30 minutes).
+ */
+export async function cleanupVideoTemp(now = Date.now()): Promise<number> {
   let removed = 0
-  for (const name of names) {
-    const path = join(UPLOAD_TMP_ROOT, name)
-    if (path === activeDir) continue
+  for (const root of [UPLOAD_TMP_ROOT, RENDER_TMP_ROOT]) {
+    let names: string[]
     try {
-      const { mtimeMs } = await stat(path)
-      if (now - mtimeMs < TMP_MAX_AGE_MS) continue
-      await rm(path, { recursive: true, force: true })
-      removed++
+      names = await readdir(root)
     } catch {
-      // Gone meanwhile, or not ours to read: skip.
+      continue
+    }
+    for (const name of names) {
+      const path = join(root, name)
+      if (path === activeDir) continue
+      try {
+        const { mtimeMs } = await stat(path)
+        if (now - mtimeMs < TMP_MAX_AGE_MS) continue
+        await rm(path, { recursive: true, force: true })
+        removed++
+      } catch {
+        // Gone meanwhile, or not ours to read: skip.
+      }
     }
   }
   return removed

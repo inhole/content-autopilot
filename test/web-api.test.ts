@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Campaign } from '../src/campaigns/types.ts'
 import { envRuntimeSettings } from '../src/settings.ts'
-import type { CampaignListRow } from '../src/web/data.ts'
+import { CAMPAIGN_LIST_LIMIT, type CampaignListRow } from '../src/web/data.ts'
 import { loadOps } from '../src/web/ops.ts'
 import { createDashboardServer, type DashboardLoaders } from '../src/web/server.ts'
 import { fakeActions } from './fake-actions.ts'
@@ -57,6 +57,10 @@ const loaders: DashboardLoaders = {
   }),
   campaigns: async (filter, source) => {
     calls.campaigns.push([filter, source])
+    if (filter === 'all')
+      return Array.from({ length: CAMPAIGN_LIST_LIMIT + 1 }, (_, i) => row({ id: i }))
+    if (filter === 'SKIPPED')
+      return Array.from({ length: CAMPAIGN_LIST_LIMIT }, (_, i) => row({ id: i }))
     return [
       row({}),
       row({
@@ -323,6 +327,15 @@ describe('api', () => {
     expect(musinsa.next_deadline.estimated).toBe(false)
     expect(musinsa.competition).toBeNull()
     expect(none.next_deadline).toBeNull()
+    expect(body.capped).toBeNull()
+  })
+  it('campaign list says when it hit the cap', async () => {
+    const body = await (await get('/api/campaigns?status=all')).json()
+    expect(body.rows).toHaveLength(CAMPAIGN_LIST_LIMIT)
+    expect(body.capped).toBe(CAMPAIGN_LIST_LIMIT)
+    const exact = await (await get('/api/campaigns?status=SKIPPED')).json()
+    expect(exact.rows).toHaveLength(CAMPAIGN_LIST_LIMIT)
+    expect(exact.capped).toBeNull()
   })
   it('campaign list falls back to defaults for unknown params', async () => {
     const body = await (await get('/api/campaigns?status=NOPE&source=x')).json()

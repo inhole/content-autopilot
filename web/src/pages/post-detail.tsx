@@ -256,7 +256,9 @@ export function PostDetailView({
         </div>
       </div>
 
-      <PostActionsPanel ctrl={ctrl} />
+      {/* Re-mounted per revision so an open confirmation never acts on text the owner did not
+          see; the notice lives in ctrl and survives. */}
+      <PostActionsPanel key={post.revision} ctrl={ctrl} />
 
       <Section
         title="글"

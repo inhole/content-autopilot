@@ -7,7 +7,7 @@ import {
   chars,
   markControlSent,
   markPosted,
-  replaceDraft,
+  replaceDraftGuarded,
   saveMemo,
   startIntake,
 } from './review-draft.ts'
@@ -156,6 +156,21 @@ export function registerReviewBot(bot: Bot, deps: ReviewBotDeps): void {
           await ctx.answerCallbackQuery({ text: '리뷰 초안을 쓸 수 있는 상태가 아니에요' })
           return
         }
+        // An intake is already out: point at it, so a memo replied there is not lost.
+        if (campaign.intake_message_id != null) {
+          const pointed = await ctx
+            .reply('이 안내 메시지에 답장으로 사용 메모를 보내주세요.', {
+              reply_parameters: { message_id: campaign.intake_message_id },
+            })
+            .then(
+              () => true,
+              () => false, // deleted: send a new one
+            )
+          if (pointed) {
+            await ctx.answerCallbackQuery()
+            return
+          }
+        }
         const sent = await ctx.reply(intakeText(campaign))
         await startIntake(id, sent.message_id)
         await ctx.answerCallbackQuery()
@@ -225,7 +240,7 @@ export function registerReviewBot(bot: Bot, deps: ReviewBotDeps): void {
         await deps.onDraftRequested(control.id, parsed.text)
         return
       }
-      const result = await replaceDraft(control.id, replyTo, parsed.text)
+      const result = await replaceDraftGuarded(control.id, { messageId: replyTo }, parsed.text)
       if (!result.ok) {
         await ctx.reply(result.message)
         return

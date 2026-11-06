@@ -20,6 +20,8 @@ export async function seedCampaign(
     shortlistedAt?: Date | null
     source?: string
     detail?: unknown
+    /** Musinsa rows default to a tried detail fetch (`detailTriedAt`); false leaves it untried. */
+    detailTried?: boolean
     productId?: number | null
   } = {},
 ): Promise<number> {
@@ -31,6 +33,13 @@ export async function seedCampaign(
       : PICKED.includes(status)
         ? (opts.updatedAt ?? new Date())
         : null
+  const detail =
+    opts.source === 'musinsa' && opts.detailTried !== false
+      ? {
+          detailTriedAt: '2026-01-01T00:00:00.000Z',
+          ...((opts.detail as object | undefined) ?? {}),
+        }
+      : opts.detail
   const [row] = await query<{ id: number }>(
     `insert into campaigns (external_id, url, url_hash, status, title, brand, recruit_count,
        application_count, remaining_days, apply_deadline, reject_reason, updated_at, source, detail,
@@ -51,7 +60,7 @@ export async function seedCampaign(
       opts.rejectReason ?? null,
       opts.updatedAt ?? null,
       opts.source ?? 'kakao-gift',
-      opts.detail == null ? null : JSON.stringify(opts.detail),
+      detail == null ? null : JSON.stringify(detail),
       shortlistedAt,
       opts.productId ?? null,
     ],

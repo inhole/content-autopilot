@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { isIP } from 'node:net'
 import {
   type CampaignActionDeps,
   type CampaignActions,
@@ -79,7 +80,6 @@ import {
   runPublicationAction,
   runVideoAction,
   runVideoCreate,
-  type VideoActionResult,
   type VideoRoute,
 } from './video-actions.ts'
 import { loadVideoDetail, loadVideoList, UPLOAD_TYPES } from './video-data.ts'
@@ -222,11 +222,14 @@ const sessionCookie = (token: string) =>
   `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL_DAYS * 86400}`
 const CLEAR_COOKIE = `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
 
-/** Client IP for logs and alerts: the first X-Forwarded-For hop (Railway's proxy), else the socket. */
+/**
+ * Client IP for logs and alerts: the first X-Forwarded-For hop (Railway's proxy) when it is an
+ * IP, else the socket. The header is client-supplied and ends up in Telegram messages.
+ */
 export function clientIp(req: http.IncomingMessage): string | null {
   const fwd = req.headers['x-forwarded-for']
   const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim()
-  return (first || req.socket.remoteAddress) ?? null
+  return (first && isIP(first) ? first : req.socket.remoteAddress) ?? null
 }
 
 const JSON_TYPES = ['application/json']
@@ -265,6 +268,9 @@ const ACTION_BODY_LIMIT = 16384
 const PROFILE_BODY_LIMIT = 65536
 
 class BadBody extends Error {}
+
+/** What a write route answers and records in the audit log. */
+type WriteResult = Pick<PostActionResult, 'body' | 'result' | 'detail'> & { status: number }
 
 async function readJson(req: http.IncomingMessage, limit = BODY_LIMIT): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -371,50 +377,12 @@ export function createRequestHandler(deps: DashboardDeps) {
     return { session: current.session, ip: clientIp(req) }
   }
 
-  async function handleCampaignAction(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-    match: NonNullable<ReturnType<typeof matchCampaignActionPath>>,
-  ): Promise<void> {
-    const authorized = await authorizeWrite(req, res)
-    if (!authorized) return
-    const { session, ip } = authorized
-    const audit = {
-      sessionId: session.id,
-      action: `campaign.${match.action}`,
-      target: match.id === null ? null : `campaign:${match.id}`,
-      ip,
-    }
-    let body: unknown
-    try {
-      body = await readJson(req, ACTION_BODY_LIMIT)
-    } catch (err) {
-      if (!(err instanceof BadBody)) throw err
-      await auth.record({ ...audit, result: 'invalid' })
-      sendJson(req, res, 400, { error: '잘못된 요청이에요' })
-      return
-    }
-    try {
-      const r = await runCampaignAction(
-        { actions: deps.actions, loadDetail: deps.loaders.campaign, now: nowFn() },
-        match.action,
-        match.id,
-        body,
-      )
-      await auth.record({ ...audit, result: r.result, detail: r.detail ?? null })
-      sendJson(req, res, r.status, r.body)
-    } catch (err) {
-      await auth.record({ ...audit, result: 'error' }).catch(() => {})
-      throw err
-    }
-  }
-
-  /** Shared body of every Threads write: authorize, read the body, run, audit. */
-  async function handlePostWrite(
+  /** Shared body of every JSON write: authorize, read the body, run, audit. */
+  async function handleWrite(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     target: { action: string; target: string | null },
-    run: (body: unknown) => Promise<PostActionResult>,
+    run: (body: unknown) => Promise<WriteResult>,
   ): Promise<void> {
     const authorized = await authorizeWrite(req, res)
     if (!authorized) return
@@ -446,50 +414,32 @@ export function createRequestHandler(deps: DashboardDeps) {
   }
 
   /** POST /api/videos, /api/videos/:id/<action>, /api/publications/:id/<action>. */
-  async function handleVideoWrite(
+  const handleVideoWrite = (
     req: http.IncomingMessage,
     res: http.ServerResponse,
     route: Exclude<VideoRoute, { kind: 'file' }>,
-  ): Promise<void> {
-    const authorized = await authorizeWrite(req, res)
-    if (!authorized) return
-    const { session, ip } = authorized
-    const audit = {
-      sessionId: session.id,
-      action:
+  ) =>
+    handleWrite(
+      req,
+      res,
+      route.kind === 'create'
+        ? { action: 'video.create', target: null }
+        : route.kind === 'video'
+          ? {
+              action: `video.${route.action}`,
+              target: route.id === null ? null : `video:${route.id}`,
+            }
+          : {
+              action: `publication.${route.action}`,
+              target: route.id === null ? null : `publication:${route.id}`,
+            },
+      (body) =>
         route.kind === 'create'
-          ? 'video.create'
+          ? runVideoCreate(deps.videoActions, body)
           : route.kind === 'video'
-            ? `video.${route.action}`
-            : `publication.${route.action}`,
-      target:
-        route.kind === 'create' || route.id === null
-          ? null
-          : `${route.kind === 'video' ? 'video' : 'publication'}:${route.id}`,
-      ip,
-    }
-    let body: unknown
-    try {
-      body = await readJson(req, ACTION_BODY_LIMIT)
-    } catch (err) {
-      if (!(err instanceof BadBody)) throw err
-      await auth.record({ ...audit, result: 'invalid' })
-      sendJson(req, res, 400, { error: '잘못된 요청이에요' })
-      return
-    }
-    try {
-      let r: VideoActionResult
-      if (route.kind === 'create') r = await runVideoCreate(deps.videoActions, body)
-      else if (route.kind === 'video')
-        r = await runVideoAction(videoCtx, route.action, route.id, body)
-      else r = await runPublicationAction(videoCtx, route.action, route.id, body)
-      await auth.record({ ...audit, result: r.result, detail: r.detail ?? null })
-      sendJson(req, res, r.status, r.body)
-    } catch (err) {
-      await auth.record({ ...audit, result: 'error' }).catch(() => {})
-      throw err
-    }
-  }
+            ? runVideoAction(videoCtx, route.action, route.id, body)
+            : runPublicationAction(videoCtx, route.action, route.id, body),
+    )
 
   /**
    * POST /api/videos/:id/file: the body is the video itself, streamed to disk by the upload step
@@ -644,21 +594,24 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
   }
 
-  /** POST /api/ops/profile and /api/ops/profile/reset: edit the saved campaign profile. */
-  async function handleOpsProfile(
+  /**
+   * POST /api/ops/<profile|schedule>[/reset]: save or clear a saved single-row copy on the
+   * displayed revision. `apply` returns the invalid fields, or the new state (null when stale).
+   */
+  async function handleOpsEdit(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    reset: boolean,
+    action: string,
+    limit: number,
+    apply: (
+      body: Record<string, unknown>,
+      revision: number,
+    ) => Promise<{ fields: string[] } | { saved: OpsProfileResponse | OpsScheduleResponse | null }>,
   ): Promise<void> {
     const authorized = await authorizeWrite(req, res)
     if (!authorized) return
     const { session, ip } = authorized
-    const audit = {
-      sessionId: session.id,
-      action: reset ? 'ops.profile.reset' : 'ops.profile',
-      target: null,
-      ip,
-    }
+    const audit = { sessionId: session.id, action, target: null, ip }
     const invalid = async (fields: string[], revision?: number) => {
       await auth.record({
         ...audit,
@@ -668,9 +621,9 @@ export function createRequestHandler(deps: DashboardDeps) {
       sendJson(req, res, 400, {
         error: '입력값을 확인해 주세요',
         fields,
-      } satisfies OpsProfileInvalid)
+      } satisfies OpsProfileInvalid & OpsScheduleInvalid)
     }
-    const body = await readJson(req, PROFILE_BODY_LIMIT).catch(async (err) => {
+    const body = await readJson(req, limit).catch(async (err) => {
       if (!(err instanceof BadBody)) throw err
       return undefined
     })
@@ -678,104 +631,186 @@ export function createRequestHandler(deps: DashboardDeps) {
       await invalid(['revision'])
       return
     }
-    const { revision, profile } = body as { revision?: unknown; profile?: unknown }
+    const { revision } = body as { revision?: unknown }
     if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
       await invalid(['revision'])
       return
     }
     try {
-      let result: OpsProfileResponse | null
-      if (reset) {
-        result = await deps.profileEdit.reset(revision)
-      } else {
-        const parsed = parseProfileInput(profile)
-        if (!parsed.ok) {
-          await invalid(parsed.fields, revision)
-          return
-        }
-        result = await deps.profileEdit.save(parsed.profile, revision)
+      const out = await apply(body as Record<string, unknown>, revision)
+      if ('fields' in out) {
+        await invalid(out.fields, revision)
+        return
       }
-      if (!result) {
+      if (!out.saved) {
         await auth.record({ ...audit, result: 'stale', detail: { revision } })
         sendJson(req, res, 409, {
           error: '다른 곳에서 먼저 바뀌었어요. 새로 불러올게요',
           stale: true,
-        } satisfies OpsProfileConflict)
+        } satisfies OpsProfileConflict & OpsScheduleConflict)
         return
       }
-      await auth.record({ ...audit, result: 'ok', detail: { revision } })
-      sendJson(req, res, 200, result)
+      const detail =
+        'applied' in out.saved ? { revision, applied: out.saved.applied } : { revision }
+      await auth.record({ ...audit, result: 'ok', detail })
+      sendJson(req, res, 200, out.saved)
     } catch (err) {
       await auth.record({ ...audit, result: 'error', detail: { revision } }).catch(() => {})
       throw err
     }
   }
 
-  /** POST /api/ops/schedule and /api/ops/schedule/reset: edit the saved schedules and volumes. */
-  async function handleOpsSchedule(
+  const editProfile =
+    (reset: boolean) => async (body: Record<string, unknown>, revision: number) => {
+      if (reset) return { saved: await deps.profileEdit.reset(revision) }
+      const parsed = parseProfileInput(body.profile)
+      if (!parsed.ok) return { fields: parsed.fields }
+      return { saved: await deps.profileEdit.save(parsed.profile, revision) }
+    }
+
+  const editSchedule =
+    (reset: boolean) => async (body: Record<string, unknown>, revision: number) => {
+      if (reset) return { saved: await deps.scheduleEdit.reset(revision) }
+      const parsed = parseScheduleInput(body.schedule)
+      if (!parsed.ok) return { fields: parsed.fields }
+      return { saved: await deps.scheduleEdit.save(parsed.schedule, revision) }
+    }
+
+  /** A POST-only write route: 405 for other methods, 400 for a bad body, 500 for anything else. */
+  async function writeRoute(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    reset: boolean,
+    label: string,
+    handle: () => Promise<void>,
   ): Promise<void> {
-    const authorized = await authorizeWrite(req, res)
-    if (!authorized) return
-    const { session, ip } = authorized
-    const audit = {
-      sessionId: session.id,
-      action: reset ? 'ops.schedule.reset' : 'ops.schedule',
-      target: null,
-      ip,
-    }
-    const invalid = async (fields: string[], revision?: number) => {
-      await auth.record({
-        ...audit,
-        result: 'invalid',
-        ...(revision === undefined ? {} : { detail: { revision } }),
-      })
-      sendJson(req, res, 400, {
-        error: '입력값을 확인해 주세요',
-        fields,
-      } satisfies OpsScheduleInvalid)
-    }
-    const body = await readJson(req, ACTION_BODY_LIMIT).catch(async (err) => {
-      if (!(err instanceof BadBody)) throw err
-      return undefined
-    })
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      await invalid(['revision'])
-      return
-    }
-    const { revision, schedule } = body as { revision?: unknown; schedule?: unknown }
-    if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) {
-      await invalid(['revision'])
+    if (req.method !== 'POST') {
+      sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
       return
     }
     try {
-      let result: OpsScheduleResponse | null
-      if (reset) {
-        result = await deps.scheduleEdit.reset(revision)
-      } else {
-        const parsed = parseScheduleInput(schedule)
-        if (!parsed.ok) {
-          await invalid(parsed.fields, revision)
-          return
-        }
-        result = await deps.scheduleEdit.save(parsed.schedule, revision)
-      }
-      if (!result) {
-        await auth.record({ ...audit, result: 'stale', detail: { revision } })
-        sendJson(req, res, 409, {
-          error: '다른 곳에서 먼저 바뀌었어요. 새로 불러올게요',
-          stale: true,
-        } satisfies OpsScheduleConflict)
+      await handle()
+    } catch (err) {
+      if (err instanceof BadBody) {
+        sendJson(req, res, 400, { error: '잘못된 요청이에요' })
         return
       }
-      await auth.record({ ...audit, result: 'ok', detail: { revision, applied: result.applied } })
-      sendJson(req, res, 200, result)
-    } catch (err) {
-      await auth.record({ ...audit, result: 'error', detail: { revision } }).catch(() => {})
-      throw err
+      console.error(`dashboard ${label} failed:`, err)
+      if (!res.headersSent) sendJson(req, res, 500, { error: 'internal error' })
+      else res.end()
     }
+  }
+
+  // One code request or login check at a time per process: each holds a pool connection while
+  // it waits on the advisory lock, so a burst of unauthenticated requests could drain the pool.
+  let authBusy = false
+
+  /**
+   * Runs `fn` (only the DB part: Telegram sends can take minutes and must not hold the flag) unless
+   * another code request or login is in flight here; then answers 429 at once and returns undefined.
+   */
+  async function exclusive<T>(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
+    if (authBusy) {
+      sendJson(
+        req,
+        res,
+        429,
+        { error: '다른 로그인 요청을 처리하는 중이에요. 잠시 뒤에 다시 해 주세요', retryAfter: 1 },
+        { 'Retry-After': '1' },
+      )
+      return undefined
+    }
+    authBusy = true
+    try {
+      return await fn()
+    } finally {
+      authBusy = false
+    }
+  }
+
+  /** POST /api/auth/code: issue a code and send it to the owner's Telegram chat. */
+  async function handleCodeRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    ip: string | null,
+  ): Promise<void> {
+    const r = await exclusive(req, res, () => auth.requestCode(ip))
+    if (!r) return
+    if (!r.ok) {
+      await auth.record({ sessionId: null, action: 'code_request', result: r.reason, ip })
+      if (r.reason === 'hourly_limit' && r.firstLimitHit) {
+        await alert(
+          `⚠️ 관리자 콘솔 로그인 코드 요청이 한 시간 한도(${CODE_REQUESTS_PER_HOUR}회)를 넘었어요\nIP: ${ip ?? '-'}`,
+        )
+      }
+      const message =
+        r.reason === 'too_soon'
+          ? `${r.retryAfterS}초 뒤에 다시 요청해 주세요`
+          : '요청이 너무 많아요. 잠시 뒤에 다시 해 주세요'
+      sendJson(
+        req,
+        res,
+        429,
+        { error: message, retryAfter: r.retryAfterS },
+        {
+          'Retry-After': String(r.retryAfterS),
+        },
+      )
+      return
+    }
+    try {
+      await deps.notify(
+        `🔐 관리자 콘솔 로그인 코드: ${r.code}\n${CODE_TTL_MINUTES}분 동안 한 번만 쓸 수 있어요\nIP: ${ip ?? '-'}\n직접 요청하지 않았다면 무시하세요`,
+      )
+    } catch (err) {
+      console.error('login code send failed:', (err as Error).message)
+      await auth.expireCodes()
+      await auth.record({ sessionId: null, action: 'code_request', result: 'send_failed', ip })
+      sendJson(req, res, 502, { error: 'Telegram으로 코드를 보내지 못했어요' })
+      return
+    }
+    await auth.record({ sessionId: null, action: 'code_request', result: 'ok', ip })
+    sendJson(req, res, 200, { expiresAt: r.expiresAt.toISOString() })
+  }
+
+  /** POST /api/auth/login with a well-formed code: check it and open a session. */
+  async function handleLogin(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    ip: string | null,
+    code: string,
+  ): Promise<void> {
+    const userAgent = req.headers['user-agent'] ?? null
+    const r = await exclusive(req, res, () => auth.login(code, { ip, userAgent }))
+    if (!r) return
+    if (!r.ok) {
+      await auth.record({ sessionId: null, action: 'login', result: r.reason, ip })
+      if (r.reason === 'locked') {
+        if (r.justLocked)
+          await alert(
+            `⚠️ 관리자 콘솔 로그인 코드를 ${CODE_MAX_ATTEMPTS}번 틀려서 그 코드를 막았어요\nIP: ${ip ?? '-'}`,
+          )
+        sendJson(req, res, 429, { error: '시도 횟수를 넘었어요. 새 코드를 받아 주세요' })
+      } else if (r.reason === 'no_code') {
+        sendJson(req, res, 400, { error: '유효한 코드가 없어요. 코드를 다시 받아 주세요' })
+      } else if (r.reason === 'wrong') {
+        sendJson(req, res, 401, {
+          error: `코드가 맞지 않아요 (남은 시도 ${r.attemptsLeft}번)`,
+        })
+      }
+      return
+    }
+    await auth.record({ sessionId: r.session.id, action: 'login', result: 'ok', ip })
+    await alert(`🔐 관리자 콘솔 로그인\n${kst(nowFn())}\nIP: ${ip ?? '-'}`)
+    const out: AuthSessionResponse = {
+      authenticated: true,
+      csrf: r.session.csrf,
+      expiresAt: r.session.expiresAt.toISOString(),
+    }
+    sendJson(req, res, 200, out, { 'Set-Cookie': sessionCookie(r.session.token) })
   }
 
   async function handleAuth(
@@ -805,78 +840,19 @@ export function createRequestHandler(deps: DashboardDeps) {
     }
 
     if (path === '/api/auth/code') {
-      const r = await auth.requestCode(ip)
-      if (!r.ok) {
-        await auth.record({ sessionId: null, action: 'code_request', result: r.reason, ip })
-        if (r.reason === 'hourly_limit' && r.firstLimitHit) {
-          await alert(
-            `⚠️ 관리자 콘솔 로그인 코드 요청이 한 시간 한도(${CODE_REQUESTS_PER_HOUR}회)를 넘었어요\nIP: ${ip ?? '-'}`,
-          )
-        }
-        const message =
-          r.reason === 'too_soon'
-            ? `${r.retryAfterS}초 뒤에 다시 요청해 주세요`
-            : '요청이 너무 많아요. 잠시 뒤에 다시 해 주세요'
-        sendJson(
-          req,
-          res,
-          429,
-          { error: message, retryAfter: r.retryAfterS },
-          {
-            'Retry-After': String(r.retryAfterS),
-          },
-        )
-        return
-      }
-      try {
-        await deps.notify(
-          `🔐 관리자 콘솔 로그인 코드: ${r.code}\n${CODE_TTL_MINUTES}분 동안 한 번만 쓸 수 있어요\nIP: ${ip ?? '-'}\n직접 요청하지 않았다면 무시하세요`,
-        )
-      } catch (err) {
-        console.error('login code send failed:', (err as Error).message)
-        await auth.expireCodes()
-        await auth.record({ sessionId: null, action: 'code_request', result: 'send_failed', ip })
-        sendJson(req, res, 502, { error: 'Telegram으로 코드를 보내지 못했어요' })
-        return
-      }
-      await auth.record({ sessionId: null, action: 'code_request', result: 'ok', ip })
-      sendJson(req, res, 200, { expiresAt: r.expiresAt.toISOString() })
+      await handleCodeRequest(req, res, ip)
       return
     }
 
     if (path === '/api/auth/login') {
+      // Read and check the body before taking the busy flag: a slow body must not hold it.
       const body = await readJson(req)
       const code = (body as { code?: unknown } | null)?.code
       if (typeof code !== 'string' || !/^\d{6}$/.test(code)) {
         sendJson(req, res, 400, { error: '6자리 숫자 코드를 넣어 주세요' })
         return
       }
-      const userAgent = req.headers['user-agent'] ?? null
-      const r = await auth.login(code, { ip, userAgent })
-      if (!r.ok) {
-        await auth.record({ sessionId: null, action: 'login', result: r.reason, ip })
-        if (r.reason === 'locked') {
-          await alert(
-            `⚠️ 관리자 콘솔 로그인 코드를 ${CODE_MAX_ATTEMPTS}번 틀려서 그 코드를 막았어요\nIP: ${ip ?? '-'}`,
-          )
-          sendJson(req, res, 429, { error: '시도 횟수를 넘었어요. 새 코드를 받아 주세요' })
-        } else if (r.reason === 'no_code') {
-          sendJson(req, res, 400, { error: '유효한 코드가 없어요. 코드를 다시 받아 주세요' })
-        } else if (r.reason === 'wrong') {
-          sendJson(req, res, 401, {
-            error: `코드가 맞지 않아요 (남은 시도 ${r.attemptsLeft}번)`,
-          })
-        }
-        return
-      }
-      await auth.record({ sessionId: r.session.id, action: 'login', result: 'ok', ip })
-      await alert(`🔐 관리자 콘솔 로그인\n${kst(nowFn())}\nIP: ${ip ?? '-'}`)
-      const out: AuthSessionResponse = {
-        authenticated: true,
-        csrf: r.session.csrf,
-        expiresAt: r.session.expiresAt.toISOString(),
-      }
-      sendJson(req, res, 200, out, { 'Set-Cookie': sessionCookie(r.session.token) })
+      await handleLogin(req, res, ip, code)
       return
     }
 
@@ -932,46 +908,34 @@ export function createRequestHandler(deps: DashboardDeps) {
     const isApi = path === '/api' || path.startsWith('/api/')
     const actionRoute = isApi ? matchCampaignActionPath(path) : null
     if (actionRoute) {
-      if (req.method !== 'POST') {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
-        return
-      }
-      try {
-        await handleCampaignAction(req, res, actionRoute)
-      } catch (err) {
-        if (err instanceof BadBody) {
-          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
-          return
-        }
-        console.error('dashboard campaign action failed:', err)
-        sendJson(req, res, 500, { error: 'internal error' })
-      }
+      await writeRoute(req, res, 'campaign action', () =>
+        handleWrite(
+          req,
+          res,
+          {
+            action: `campaign.${actionRoute.action}`,
+            target: actionRoute.id === null ? null : `campaign:${actionRoute.id}`,
+          },
+          (body) =>
+            runCampaignAction(
+              { actions: deps.actions, loadDetail: deps.loaders.campaign, now: nowFn() },
+              actionRoute.action,
+              actionRoute.id,
+              body,
+            ),
+        ),
+      )
       return
     }
-    if (isApi && (path === '/api/ops/profile' || path === '/api/ops/profile/reset')) {
-      if (req.method !== 'POST') {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
-        return
-      }
-      try {
-        await handleOpsProfile(req, res, path.endsWith('/reset'))
-      } catch (err) {
-        console.error('dashboard ops profile failed:', err)
-        sendJson(req, res, 500, { error: 'internal error' })
-      }
-      return
-    }
-    if (isApi && (path === '/api/ops/schedule' || path === '/api/ops/schedule/reset')) {
-      if (req.method !== 'POST') {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
-        return
-      }
-      try {
-        await handleOpsSchedule(req, res, path.endsWith('/reset'))
-      } catch (err) {
-        console.error('dashboard ops schedule failed:', err)
-        sendJson(req, res, 500, { error: 'internal error' })
-      }
+    const opsEdit = isApi ? /^\/api\/ops\/(profile|schedule)(\/reset)?$/.exec(path) : null
+    if (opsEdit) {
+      const [, what, reset] = opsEdit
+      const action = `ops.${what}${reset ? '.reset' : ''}`
+      await writeRoute(req, res, `ops ${what}`, () =>
+        what === 'profile'
+          ? handleOpsEdit(req, res, action, PROFILE_BODY_LIMIT, editProfile(Boolean(reset)))
+          : handleOpsEdit(req, res, action, ACTION_BODY_LIMIT, editSchedule(Boolean(reset))),
+      )
       return
     }
     const opsRun = isApi ? /^\/api\/ops\/([^/]+)\/run$/.exec(path) : null
@@ -981,52 +945,25 @@ export function createRequestHandler(deps: DashboardDeps) {
         sendJson(req, res, 404, { error: 'not found' })
         return
       }
-      if (req.method !== 'POST') {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
-        return
-      }
-      try {
-        await handleOpsRun(req, res, name)
-      } catch (err) {
-        console.error('dashboard ops run failed:', err)
-        sendJson(req, res, 500, { error: 'internal error' })
-      }
+      await writeRoute(req, res, 'ops run', () => handleOpsRun(req, res, name))
       return
     }
     // `/api/videos` is also the list (GET): only its POST is the create route.
     const videoRoute = isApi ? matchVideoRoute(path) : null
     if (videoRoute && !(videoRoute.kind === 'create' && isRead)) {
-      if (req.method !== 'POST') {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
-        return
-      }
-      try {
-        if (videoRoute.kind === 'file') {
-          await handleVideoFile(req, res, videoRoute.id, url.searchParams.get('approve') === '1')
-        } else {
-          await handleVideoWrite(req, res, videoRoute)
-        }
-      } catch (err) {
-        if (err instanceof BadBody) {
-          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
-          return
-        }
-        console.error('dashboard video action failed:', err)
-        if (!res.headersSent) sendJson(req, res, 500, { error: 'internal error' })
-        else res.end()
-      }
+      await writeRoute(req, res, 'video action', () =>
+        videoRoute.kind === 'file'
+          ? handleVideoFile(req, res, videoRoute.id, url.searchParams.get('approve') === '1')
+          : handleVideoWrite(req, res, videoRoute),
+      )
       return
     }
     const postRoute = isApi ? matchPostActionPath(path) : null
     const collectionRoute = isApi ? matchPostCollectionPath(path) : null
     if (postRoute || collectionRoute) {
-      if (req.method !== 'POST') {
-        sendJson(req, res, 405, { error: 'method not allowed' }, { Allow: 'POST' })
-        return
-      }
-      try {
+      await writeRoute(req, res, 'post action', async () => {
         if (postRoute) {
-          await handlePostWrite(
+          await handleWrite(
             req,
             res,
             {
@@ -1042,18 +979,11 @@ export function createRequestHandler(deps: DashboardDeps) {
               ),
           )
         } else if (collectionRoute) {
-          await handlePostWrite(req, res, { action: collectionRoute, target: null }, (body) =>
+          await handleWrite(req, res, { action: collectionRoute, target: null }, (body) =>
             runPostCollectionAction(deps.postActions, collectionRoute, body),
           )
         }
-      } catch (err) {
-        if (err instanceof BadBody) {
-          sendJson(req, res, 400, { error: '잘못된 요청이에요' })
-          return
-        }
-        console.error('dashboard post action failed:', err)
-        sendJson(req, res, 500, { error: 'internal error' })
-      }
+      })
       return
     }
     if (!isRead) {

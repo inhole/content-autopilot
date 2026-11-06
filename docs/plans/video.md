@@ -28,8 +28,8 @@ video-publish-due (*/5)          기한이 된 발행 행, 멈춘 PUBLISHING 행
 video-publish {publicationId}    REELS: 컨테이너 → FINISHED 대기 → media_publish
                                  SHORTS: resumable 세션 → 업로드 → 처리 결과는 sweep이 확인
   모든 발행이 끝나면 videos.status = PUBLISHED
-video-maintenance (매시)         72시간 방치된 검수 영상 EXPIRED, 안 간 검수 메시지 재전송,
-                                 멈춘 원고·렌더 재투입(최대 2번, 그다음 FAILED)
+video-maintenance (매시)         72시간 방치된 검수 영상 EXPIRED, 안 간 검수 메시지 재전송(버전마다 매시 최대 24번),
+                                 멈춘 원고·렌더 재투입(최대 2번, 그다음 FAILED), 1시간 넘은 업로드·렌더 임시 폴더 정리
 video-insights (매일 05:30)      발행 30일 이내 영상의 성과 스냅숏
 video-cleanup (매일 04:30)       끝난 영상 파일을 저장소에서 지움
 video-refresh-token (매일 04:10) Instagram 장기 토큰 갱신
@@ -51,7 +51,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
 
 - **장면 그림:** satori(객체 트리 → SVG, flex 레이아웃과 `word-break: keep-all` 한국어 줄바꿈)로 그리고 resvg로 PNG를 만든다. 글꼴은 Pretendard(OFL)를 `assets/fonts`에 넣는다. 이 PC에서 1080×1920 프레임 1장에 0.7초가 걸렸다.
 - **인코딩:** `ffmpeg-static`(npm 설치 때 플랫폼별 바이너리를 받는다)을 비동기 자식 프로세스로 돌린다. concat demuxer → H.264 `yuv420p` 30fps(`-tune stillimage`, `-threads 2`) + AAC 48kHz, `+faststart`, 5분 제한 시간. 이 PC에서 2초짜리에 1.5초가 걸렸다.
-- **자원:** 렌더 큐는 한 번에 하나만 돌고(`localConcurrency` 1), 프레임과 TTS는 순서대로 만든다. 임시 파일은 작업마다 `os.tmpdir()` 아래 폴더에 만들고 끝나면 지운다. 실제 Railway 사양에서 45초 영상 시간과 메모리를 첫 배포 때 잰다.
+- **자원:** 렌더 큐는 한 번에 하나만 돌고(`localConcurrency` 1), 프레임과 TTS는 순서대로 만든다. 임시 파일은 작업마다 `os.tmpdir()/content-autopilot/render-*` 폴더에 만들고 끝나면 지운다. 프로세스가 죽어 남은 폴더는 매시 maintenance가 1시간 뒤 지운다. 실제 Railway 사양에서 45초 영상 시간과 메모리를 첫 배포 때 잰다.
 - Remotion은 헤드리스 Chrome과 번들러가 필요해서 Railway에서 무겁다. 로컬 렌더 워커는 PC가 켜져 있어야 하고 없앤 워커 역할 구분을 되살려야 한다. 지금 필요한 화면(문구 카드 + 자막)에 비해 둘 다 비용이 크다.
 - 화면은 자막 조각마다 한 장이고 컷 전환이다. 움직임 효과는 반응을 본 뒤 `zoompan`이나 `xfade`로 붙인다.
 - **결과 검사:** 렌더 뒤 `ffmpeg -i`로 실제 길이를 읽어 타임라인과 1초 넘게 다르면 실패로 본다. 길이는 15~75초, 크기는 45MB 이하여야 한다(Telegram 업로드 50MB 제한). 75초를 넘으면 다시 시도해도 같으니 바로 FAILED로 두고 재생성을 안내한다.
@@ -82,7 +82,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
 ### 3-5. 단계마다 소유권을 확인해서 오래된 결과가 덮어쓰지 못하게 한다
 
 - **원고:** 재생성 요청은 `regen_seq+1`과 피드백(`regen_feedback`)을 같은 UPDATE로 남기고 `SCRIPTING`으로 바꾼다. 원고 작업은 `status='SCRIPTING' and regen_seq = seq`일 때만 결과를 쓴다. 그래서 오래된 요청이나 재투입된 중복 작업은 아무것도 바꾸지 못한다. 피드백이 DB에 있으니 enqueue 전에 죽어도 maintenance가 같은 요청을 다시 넣을 수 있다.
-- **렌더:** 렌더 작업은 시작할 때 `(revision, 장면, 렌더 입력 해시)`를 읽고, 끝나면 `status='RENDERING' and revision = 읽은 값`일 때만 `video_url`, `render_hash`, `PENDING_REVIEW`를 쓴다. 조건이 안 맞으면(그사이 수정·재생성) 방금 올린 파일을 지우고 끝낸다. 실패로 끝낼 때(`FAILED`)도 같은 소유 토큰(원고는 `regen_seq`, 렌더는 `revision`)을 조건으로 건다. 그래서 오래된 작업의 실패가 새 요청을 `FAILED`로 만들지 못한다.
+- **렌더:** 렌더 작업은 시작할 때 `(revision, 장면, 렌더 입력 해시)`를 읽고, 끝나면 `status='RENDERING' and revision = 읽은 값`일 때만 `video_url`, `render_hash`, `PENDING_REVIEW`를 쓴다. 조건이 안 맞으면(그사이 수정·재생성) 방금 올린 파일을 지우고 끝낸다. 직접 올리기와 같이 저장소에 올리기 전에 키를 `video_upload_attempts`에 기록하고, 반영 트랜잭션이 그 행을 지운다. 그래서 업로드 뒤 DB 오류처럼 결과를 모르는 파일은 `video-cleanup`이 회수한다. 실패로 끝낼 때(`FAILED`)도 같은 소유 토큰(원고는 `regen_seq`, 렌더는 `revision`)을 조건으로 건다. 그래서 오래된 작업의 실패가 새 요청을 `FAILED`로 만들지 못한다.
 - **렌더 입력 해시**에는 장면, 출처 표시, 브랜드, TTS 공급자·음성·모델, 화면 템플릿 버전(글꼴 포함), 배경음악 파일 이름·크기가 들어간다. 해시가 같으면 렌더를 건너뛴다. 저장 파일 이름은 렌더 실행마다 새로 만드는 id와 완성 mp4 SHA-256 앞부분이다. 실행마다 키가 달라서, 반영되지 못한 렌더가 지우는 파일은 자기 파일뿐이다.
 - **장면 수정:** `수정N:`/`화면N:`은 `scenes` 교체, `revision+1`, `RENDERING` 전환을 UPDATE 한 번으로 한다. 그래서 수정 전에 시작한 렌더는 revision이 달라져 반영되지 못한다.
 - **검수 불변식:** `PENDING_REVIEW`인 영상은 항상 현재 장면으로 만든 파일을 가리킨다. 장면을 바꾸는 모든 경로가 상태를 `RENDERING`이나 `SCRIPTING`으로 옮기기 때문이다. 제목·캡션 교체는 렌더 결과에 영향이 없어 `PENDING_REVIEW`를 유지하고 `revision`만 올린다.
@@ -91,6 +91,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
 ### 3-6. 검수는 Telegram, 두 메시지를 한 버전으로 묶는다
 
 - 원고가 영상 캡션(1024자)에 다 안 들어가서 메시지를 두 개 보낸다. 먼저 원고 메시지(제목, 장면별 화면 문구·내레이션, 캡션, 길이, 4096자 이내로 자름), 그다음 영상(`sendVideo`, 저장소에서 받은 파일을 직접 업로드, 짧은 캡션 + `✅ 승인` / `🔁 다시 만들기` / `🗑 폐기`).
+- 영상 파일을 먼저 내려받고 나서 원고 메시지를 보낸다(다운로드 실패로 원고 메시지만 쌓이지 않게). 등록되지 못한 버전은 매시 maintenance가 다시 보내되 버전마다 24번까지만 한다(`stage_recoveries`, `MAX_REVIEW_RESENDS`). Telegram 장애는 넘기고, 끝내 안 가는 메시지는 하루 뒤 멈춰 72시간 내내 쌓이지 않는다.
 - 두 메시지는 같은 시점에 읽은 내용으로 만들고, 다 보낸 뒤 **UPDATE 한 번**으로 `script_message_id`, `review_message_id`, `review_revision`을 등록한다(`status='PENDING_REVIEW' and revision = 보낸 revision`일 때만). 등록에 실패하면 방금 보낸 영상의 버튼을 지운다. 등록되면 이전 메시지들의 버튼을 지운다.
 - 버튼은 `vid:<action>:<videoId>:<revision>`이다. 누르면 승인·폐기·재생성의 **실제 UPDATE**가 `status='PENDING_REVIEW' and revision = 버튼의 revision and review_message_id = 누른 메시지 and review_revision = revision`을 조건으로 한다.
 - 답장은 등록된 두 메시지에만 받고, 고치는 UPDATE도 같은 조건(답장한 메시지가 등록된 둘 중 하나, `review_revision = revision`)을 건다.
@@ -117,7 +118,7 @@ roadmap은 Remotion과 로컬 PC 렌더 워커를 먼저 검토하자고 했다.
 
 - `status='PUBLISHING', attempts+1, claim_seq+1`로 가져가고, 이후 모든 쓰기는 `claim_seq` 토큰을 조건으로 한다. 15분 넘게 멈춘 `PUBLISHING`은 다시 가져간다. 큐 작업은 `expireInSeconds` 1800이고, 재시도는 sweep만 한다(`retryLimit: 0`).
 - 외부 호출에는 모두 제한 시간이 있다(일반 30초, 파일 업로드 5분). 15분 lease는 가장 긴 단일 호출보다 길다.
-- **실패 분류:** 인증 오류(HTTP 401, Meta 오류 코드 190, Google `invalid_grant`)와 계정 불일치는 다시 해도 같으니 바로 `FAILED`와 “토큰/계정 확인” 알림이다. 나머지는 3번까지 다시 하고, 결과를 모르는 경우(아래)는 6번까지 기다린다. `FAILED` 알림은 `alerted_at`으로 한 번만 가고, `🔁 다시 시도` 버튼이 붙는다.
+- **실패 분류:** 인증 오류(HTTP 401, Meta 오류 코드 190, Google `invalid_grant`)와 계정 불일치는 다시 해도 같으니 바로 `FAILED`와 “토큰/계정 확인” 알림이다. 나머지는 3번까지 다시 하고, 결과를 모르는 경우(아래)는 6번까지 기다린다. `FAILED` 알림은 발행 확인 주기(`video-publish-due`)만 보내서 `alerted_at`으로 한 번만 가고, `🔁 다시 시도` 버튼이 붙는다.
 - **Reels** (Instagram 로그인 방식 API, `graph.instagram.com`, Facebook 페이지 불필요)
 
   | 단계 | 처리 |

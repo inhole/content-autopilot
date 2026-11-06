@@ -32,6 +32,7 @@ import { pollReplies } from './pipeline/replies.ts'
 import type { Reviewer } from './review/telegram.ts'
 import { applySchedules } from './schedules.ts'
 import { refreshThreadsTokenIfNeeded, threadsTokenExpiry } from './threads/account.ts'
+import { pruneAdminAuth } from './web/auth.ts'
 
 export const Q = {
   daily: 'daily-pipeline',
@@ -76,11 +77,11 @@ export function formatFinalFailure(label: string, err: unknown): string {
  * Without this a job that exhausts its retries would only show up in logs. A failing notify must
  * never mask the original error.
  */
-async function alertOnFinalFailure<T>(
+export async function alertOnFinalFailure<T>(
   job: { retryCount: number },
   retryLimit: number,
   label: string,
-  reviewer: Reviewer,
+  notifier: { notify(text: string): Promise<unknown> },
   fn: () => Promise<T>,
 ): Promise<T> {
   try {
@@ -88,7 +89,7 @@ async function alertOnFinalFailure<T>(
   } catch (err) {
     if (isFinalAttempt(job.retryCount, retryLimit)) {
       try {
-        await reviewer.notify(formatFinalFailure(label, err))
+        await notifier.notify(formatFinalFailure(label, err))
       } catch (notifyErr) {
         console.error(`[${label}] failed to send failure alert`, notifyErr)
       }
@@ -213,6 +214,8 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     } catch (err) {
       if (err instanceof SkipTopicError) {
         console.warn(`[generate] ${err.message}`)
+        // Manual /add and web topics would otherwise vanish without a word.
+        await reviewer.notify(`⚠️ 주제 #${topicId}: 본문을 읽지 못해 건너뛰었어요`)
         return
       }
       throw err
@@ -326,7 +329,9 @@ export async function registerJobs(boss: PgBoss, reviewer: Reviewer): Promise<vo
     for (const postId of unsent) {
       await boss.send(Q.review, { postId, ifUnsent: true } satisfies ReviewData)
     }
-    console.log('[review-maintenance]', { ...result, resentReviews: unsent })
+    // Login codes, old sessions and unauthenticated login attempts would otherwise grow forever.
+    const pruned = await pruneAdminAuth()
+    console.log('[review-maintenance]', { ...result, resentReviews: unsent, pruned })
   })
 
   // Insights: snapshot numbers daily before the 06:00 pipeline; report every Monday morning.

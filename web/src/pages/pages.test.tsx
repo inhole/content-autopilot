@@ -251,8 +251,8 @@ describe('CampaignDetailView', () => {
 describe('PostsTable', () => {
   it('shows origin labels and reactions in numeric columns', () => {
     render(wrap(<PostsTable rows={postsFixture.rows} />))
-    expect(screen.getAllByText('♻️ 재활용').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('🗞 주간 묶음').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('재활용').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('주간 묶음').length).toBeGreaterThan(0)
     expect(screen.getAllByText('1,820').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/조회 1,820 · 좋아요 31 · 답글 4/).length).toBeGreaterThan(0)
   })
@@ -365,6 +365,19 @@ describe('routing with the API', () => {
       '/api/campaigns?status=APPLIED&source=musinsa',
       expect.anything(),
     )
+  })
+
+  it('says when the campaign list hit the server cap', async () => {
+    const page = (capped: number | null) =>
+      vi.fn(async () => new Response(JSON.stringify({ filter: {}, rows: campaignRowsFixture, capped })))
+    stubFetch(page(300))
+    const { unmount } = renderApp('/campaigns')
+    expect(await screen.findByText('최근 300건만 보여요')).toBeInTheDocument()
+    unmount()
+    stubFetch(page(null))
+    renderApp('/campaigns')
+    await screen.findAllByRole('link', { name: /#101/ })
+    expect(screen.queryByText(/건만 보여요/)).toBeNull()
   })
 
   it('writes the filters back to the URL', async () => {

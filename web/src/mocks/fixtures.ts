@@ -142,6 +142,7 @@ export const campaignRowsFixture: CampaignRow[] = [
 export const campaignListFixture = (status: string, source: string | null) => ({
   filter: { status, source },
   rows: campaignRowsFixture.filter((r) => !source || r.source === source),
+  capped: null,
 })
 
 const buildCampaignDetail = (id: number): CampaignDetailResponse | null => {

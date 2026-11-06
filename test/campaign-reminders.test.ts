@@ -75,6 +75,13 @@ describe('review deadline reminders', () => {
   it('fires d0 for an overdue deadline too', () => {
     expect(at('2026-11-02T00:00:00Z')).toEqual(['review-d0'])
   })
+  it('says how many days have passed for an overdue deadline', () => {
+    const [today] = dueReminders(input, new Set(), new Date('2026-10-30T03:00:00Z'), TZ)
+    expect(today?.text).toContain('리뷰 마감이 오늘(')
+    const [late] = dueReminders(input, new Set(), new Date('2026-11-02T00:00:00Z'), TZ)
+    expect(late?.text).toContain('3일 지났어요')
+    expect(late?.text).not.toContain('오늘')
+  })
   it('adds the draft button only while SELECTED', () => {
     const now = new Date('2026-10-29T15:00:00Z')
     const sel = dueReminders(input, new Set(), now, TZ)[0]

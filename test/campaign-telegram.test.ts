@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { encodeCampaignCallback } from '../src/campaigns/callbacks.ts'
+import { endOfLocalDay } from '../src/campaigns/musinsa.ts'
 import {
   CAMPAIGN_BOT_COMMANDS,
   CAMPAIGN_HELP_LINES,
   campaignCardButtons,
-  daysUntil,
+  dueSetText,
   formatActiveCampaigns,
   formatCampaignCard,
   formatDday,
@@ -12,7 +13,7 @@ import {
   parseDueDate,
   rejectReasonButtons,
 } from '../src/campaigns/telegram.ts'
-import { CAMPAIGN_REJECT_REASONS, type Campaign } from '../src/campaigns/types.ts'
+import { CAMPAIGN_REJECT_REASONS, type Campaign, daysUntil } from '../src/campaigns/types.ts'
 
 const TZ = 'Asia/Seoul'
 
@@ -185,7 +186,7 @@ describe('judgeCampaignPress', () => {
 
 describe('parseDueDate', () => {
   const now = new Date('2026-10-18T03:00:00Z') // 10/18 KST
-  const end = (d: string) => new Date(`${d}T14:59:00.000Z`) // 23:59 KST
+  const end = (d: string) => new Date(`${d}T14:59:59.999Z`) // end of the KST day
   it.each([
     ['10/30', '2026-10-30'],
     ['10-30', '2026-10-30'],
@@ -207,8 +208,23 @@ describe('parseDueDate', () => {
       expect(parseDueDate(input, now, TZ)).toBeNull()
     },
   )
+  it('is the same instant as a Musinsa deadline for that day (endOfLocalDay)', () => {
+    expect(parseDueDate('11/14', now, TZ)).toEqual(endOfLocalDay('2026-11-14'))
+  })
   it('rolls Feb 29 to the next leap year only when valid', () => {
     expect(parseDueDate('2/29', new Date('2027-03-01T00:00:00Z'), TZ)).toEqual(end('2028-02-29'))
+  })
+})
+
+describe('dueSetText', () => {
+  const now = new Date('2026-10-18T03:00:00Z') // 10/18 KST
+  it('shows the year only when it is not this KST year', () => {
+    expect(dueSetText(3, parseDueDate('10/30', now, TZ) as Date, now, TZ)).toBe(
+      '📅 #3 리뷰 기한을 10/30(금)로 기록했어요.',
+    )
+    expect(dueSetText(3, parseDueDate('1/5', now, TZ) as Date, now, TZ)).toBe(
+      '📅 #3 리뷰 기한을 2027-1/5(화)로 기록했어요.',
+    )
   })
 })
 

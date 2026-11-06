@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { localDate } from '../lib/time.ts'
 
 /** Mirrors the check constraint in migrations/014_campaigns.sql. */
 export const CAMPAIGN_STATUSES = [
@@ -43,7 +44,6 @@ export const CAMPAIGN_SOURCES = {
   },
 } as const
 export type CampaignSource = keyof typeof CAMPAIGN_SOURCES
-export const CAMPAIGN_SOURCE_KEYS = Object.keys(CAMPAIGN_SOURCES) as CampaignSource[]
 
 export function isCampaignSource(value: unknown): value is CampaignSource {
   return typeof value === 'string' && Object.hasOwn(CAMPAIGN_SOURCES, value)
@@ -228,6 +228,12 @@ export const campaignPrice = (c: { source?: string; detail?: unknown }): number 
   campaignPriceInfo(c).price
 
 /** Applicants per slot, or null when either count is unknown. */
+/** Whole local calendar days from `now` to `target` in `tz` (0 = same day, negative when past). */
+export function daysUntil(target: Date, now: Date, tz: string): number {
+  const day = (d: Date) => Date.parse(`${localDate(d, tz)}T00:00:00Z`)
+  return Math.round((day(target) - day(now)) / 86_400_000)
+}
+
 export function competition(c: Pick<Campaign, 'application_count' | 'recruit_count'>) {
   if (c.application_count == null || !c.recruit_count) return null
   return c.application_count / c.recruit_count

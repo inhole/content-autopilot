@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppRoutes, createQueryClient } from '@/app.tsx'
 import { ThemeProvider } from '@/components/theme-provider.tsx'
 import { setCsrfToken } from '@/lib/api.ts'
-import { overviewFixture, postsFixture } from '@/mocks/fixtures.ts'
+import { campaignDetailFixture, overviewFixture, postsFixture } from '@/mocks/fixtures.ts'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -130,6 +130,38 @@ describe('session end', () => {
     fakeServer({ '/api/posts': () => json({ error: '로그인이 필요해요' }, 401) }, true)
     renderApp('/posts')
     expect(await screen.findByRole('button', { name: 'Telegram으로 코드 받기' })).toBeInTheDocument()
+  })
+
+  it('returns to the login page when a write answers 401', async () => {
+    fakeServer(
+      {
+        '/api/campaigns/101': () => json(campaignDetailFixture(101)),
+        '/api/campaigns/101/apply': () => json({ error: '로그인이 필요해요' }, 401),
+      },
+      true,
+    )
+    const user = userEvent.setup()
+    renderApp('/campaigns/101')
+    await user.click(await screen.findByRole('button', { name: '신청함' }))
+    expect(await screen.findByRole('button', { name: 'Telegram으로 코드 받기' })).toBeInTheDocument()
+  })
+
+  it('fetches the session (and its CSRF token) again when a write answers 403', async () => {
+    const calls = fakeServer(
+      {
+        '/api/campaigns/101': () => json(campaignDetailFixture(101)),
+        '/api/campaigns/101/apply': () => json({ error: '허용되지 않은 요청이에요' }, 403),
+      },
+      true,
+    )
+    const user = userEvent.setup()
+    renderApp('/campaigns/101')
+    const apply = await screen.findByRole('button', { name: '신청함' })
+    const sessionCalls = () => calls.filter((c) => c.url === '/api/auth/session').length
+    const before = sessionCalls()
+    await user.click(apply)
+    await waitFor(() => expect(sessionCalls()).toBe(before + 1))
+    expect(screen.getByTestId('loc')).toHaveTextContent('/campaigns/101')
   })
 
   it('logs out with the CSRF token', async () => {

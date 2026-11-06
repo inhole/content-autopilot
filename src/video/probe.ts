@@ -25,6 +25,8 @@ export const UPLOAD_RULES = {
   maxAudioBps: 128_000,
 } as const
 
+const REMUX_FAILED = 'mp4로 다시 묶지 못했어요. 편집 앱에서 H.264/AAC mp4로 다시 내보내 주세요.'
+
 /** The file breaks a rule; `message` is shown to the owner as is. */
 export class UploadRejected extends Error {
   constructor(message: string) {
@@ -209,7 +211,15 @@ export function runProbe(file: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<Pr
       child.kill('SIGKILL')
       reject(err)
     }
-    const timer = setTimeout(() => fail(new Error('ffprobe timed out')), timeoutMs)
+    const timer = setTimeout(
+      () =>
+        fail(
+          new UploadRejected(
+            '영상 파일을 확인하는 데 너무 오래 걸렸어요. 편집 앱에서 H.264/AAC mp4로 다시 내보내 주세요.',
+          ),
+        ),
+      timeoutMs,
+    )
     child.stdout.on('data', (d: Buffer) => {
       size += d.length
       if (size > PROBE_MAX_OUTPUT) fail(new UploadRejected('영상 파일 구조가 너무 복잡해요'))
@@ -266,7 +276,11 @@ export async function remuxToMp4(input: string, output: string, info: UploadInfo
       `file:${output}`,
     ],
     REMUX_TIMEOUT_MS,
-  )
+  ).catch((err: unknown) => {
+    // The file passed the checks but ffmpeg cannot copy it (or timed out): the owner re-exports.
+    console.warn('[video-upload] remux failed', (err as Error).message)
+    throw new UploadRejected(REMUX_FAILED)
+  })
 }
 
 export type Mp4Layout = { moovBeforeMdat: boolean; editLists: number }
@@ -349,7 +363,7 @@ export async function prepareUpload(
   const after = checkUpload(await runProbe(output), sizeBytes)
   const layout = await mp4Layout(output)
   if (!layout.moovBeforeMdat || layout.editLists > 0) {
-    throw new UploadRejected('mp4로 다시 묶지 못했어요. 편집 앱에서 다시 내보내 주세요')
+    throw new UploadRejected(REMUX_FAILED)
   }
   if (
     after.width !== info.width ||

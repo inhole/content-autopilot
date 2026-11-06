@@ -1,24 +1,32 @@
 import { config } from '../config.ts'
 import { query } from '../db/pool.ts'
-import { localDate } from '../lib/time.ts'
+import { endOfLocalDay } from './musinsa.ts'
 import type { CampaignButton } from './tg.ts'
-import { type Campaign, sourceInfo } from './types.ts'
+import { type Campaign, daysUntil, musinsaFacts, sourceInfo } from './types.ts'
 
 export type Reminder = { kind: string; text: string; buttons: CampaignButton[] }
 
 export type ReminderInput = Pick<
   Campaign,
   'id' | 'status' | 'title' | 'apply_deadline' | 'selected_at' | 'review_deadline'
-> & { source?: string }
+> & { source?: string; detail?: Campaign['detail'] }
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const REMINDER_STATUSES = ['APPLIED', 'SELECTED', 'DRAFT_REVIEW']
 
-/** Whole calendar days from `from` to `to` in `tz` (0 = same local day). */
-export function calendarDaysBetween(from: Date, to: Date, tz: string): number {
-  const a = Date.parse(`${localDate(from, tz)}T00:00:00Z`)
-  const b = Date.parse(`${localDate(to, tz)}T00:00:00Z`)
-  return Math.round((b - a) / DAY_MS)
+/**
+ * When the result-check may go out: a day after the apply deadline, and for Musinsa not before
+ * the start of the KST announcement day (`winnerDrawDate`), when the source gave a usable one.
+ */
+function resultCheckAt(c: ReminderInput, applyDeadline: Date): number {
+  const after = applyDeadline.getTime() + DAY_MS
+  const draw = musinsaFacts({ source: c.source ?? '', detail: c.detail ?? null })?.winnerDrawDate
+  if (!draw) return after
+  try {
+    return Math.max(after, endOfLocalDay(draw).getTime() + 1 - DAY_MS)
+  } catch {
+    return after // malformed date from the source
+  }
 }
 
 function formatDay(d: Date, tz: string): string {
@@ -70,7 +78,7 @@ export function dueReminders(
   if (
     c.status === 'APPLIED' &&
     c.apply_deadline &&
-    now.getTime() >= c.apply_deadline.getTime() + DAY_MS &&
+    now.getTime() >= resultCheckAt(c, c.apply_deadline) &&
     !sent.has('result-check')
   ) {
     out.push({
@@ -95,15 +103,19 @@ export function dueReminders(
   }
 
   if (c.review_deadline && (c.status === 'SELECTED' || c.status === 'DRAFT_REVIEW')) {
-    const left = calendarDaysBetween(now, c.review_deadline, tz)
+    const left = daysUntil(c.review_deadline, now, tz)
     const kind = deadlineKind(left)
     if (kind) {
       const moreSpecific = DEADLINE_KINDS.slice(DEADLINE_KINDS.indexOf(kind))
       if (!moreSpecific.some((k) => sent.has(k))) {
-        const when = left <= 0 ? '오늘' : left === 1 ? '내일' : `${left}일 뒤`
+        const day = formatDay(c.review_deadline, tz)
+        const when =
+          left < 0
+            ? `리뷰 마감(${day})이 ${-left}일 지났어요.`
+            : `리뷰 마감이 ${left === 0 ? '오늘' : left === 1 ? '내일' : `${left}일 뒤`}(${day})이에요.`
         out.push({
           kind,
-          text: `⏰ ${label(c)}\n리뷰 마감이 ${when}(${formatDay(c.review_deadline, tz)})이에요.`,
+          text: `⏰ ${label(c)}\n${when}`,
           buttons: c.status === 'SELECTED' ? [draftButton(c)] : [],
         })
       }
@@ -123,7 +135,7 @@ export async function runCampaignReminders(
   tz: string = config.TZ_NAME,
 ): Promise<number> {
   const campaigns = await query<ReminderInput>(
-    `select id, source, status, title, apply_deadline, selected_at, review_deadline
+    `select id, source, status, title, apply_deadline, selected_at, review_deadline, detail
      from campaigns where status = any($1::text[]) order by id`,
     [REMINDER_STATUSES],
   )

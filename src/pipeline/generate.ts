@@ -40,6 +40,22 @@ export const shortenPrompt = (text: string, target = THREADS_TEXT_LIMIT - SHORTE
 
 export const charCount = (text: string) => [...text].length
 
+/** Returns a function that shortens a text over `limit` once, with the given system prompt. */
+export const fitter =
+  (model: string, system: string, schemaName: string) =>
+  async (text: string, limit: number): Promise<string> => {
+    if (charCount(text) <= limit) return text
+    const shortened = await chatJson({
+      model,
+      system,
+      user: shortenPrompt(text, limit - SHORTEN_MARGIN),
+      schema: shortenSchema(limit),
+      schemaName,
+      temperature: 0.3,
+    })
+    return shortened.text
+  }
+
 /**
  * Whether a topic's draft gets follow-ups. `alternate` (the format experiment, decision 16) gives
  * even topic ids a chain and odd ones a single post, so a regeneration keeps its format.
@@ -75,18 +91,7 @@ export async function draftPost(
     .filter(Boolean)
     .slice(0, MAX_FOLLOWUPS)
 
-  const fitTo = async (text: string, limit: number): Promise<string> => {
-    if (charCount(text) <= limit) return text
-    const shortened = await chatJson({
-      model,
-      system,
-      user: shortenPrompt(text, limit - SHORTEN_MARGIN),
-      schema: shortenSchema(limit),
-      schemaName: 'threads_post_shortened',
-      temperature: 0.3,
-    })
-    return shortened.text
-  }
+  const fitTo = fitter(model, system, 'threads_post_shortened')
   const lastIdx = followups.length - 1
   return {
     ...raw,

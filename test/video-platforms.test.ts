@@ -7,12 +7,7 @@ import {
   metaErrorCode,
   parseReelInsights,
 } from '../src/video/instagram.ts'
-import {
-  classify,
-  decideAfterFailure,
-  FinalPublishError,
-  judgeShortStatus,
-} from '../src/video/publish.ts'
+import { classify, FinalPublishError, judgeShortStatus } from '../src/video/publish.ts'
 import {
   parseStatistics,
   parseVideoStatus,
@@ -215,14 +210,6 @@ describe('publish failure handling', () => {
     expect(classify(new FinalPublishError('x', 'session'))?.kind).toBe('session')
     expect(classify(new Error('timeout'))).toBeNull()
     expect(classify(new InstagramApiError('x', 500, '', 2))).toBeNull()
-  })
-
-  it('lets a PUBLISHED container win and gives unknown outcomes extra attempts', () => {
-    expect(decideAfterFailure({ attempts: 3, containerStatus: 'PUBLISHED' })).toBe('published')
-    expect(decideAfterFailure({ attempts: 2, containerStatus: null })).toBe('retry')
-    expect(decideAfterFailure({ attempts: 3, containerStatus: null })).toBe('failed')
-    expect(decideAfterFailure({ attempts: 4, containerStatus: 'unknown' })).toBe('retry')
-    expect(decideAfterFailure({ attempts: 6, containerStatus: 'unknown' })).toBe('failed')
   })
 })
 

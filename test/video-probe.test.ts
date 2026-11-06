@@ -10,7 +10,10 @@ import {
   type ProbeStream,
   parseRate,
   prepareUpload,
+  remuxToMp4,
   rotationOf,
+  runProbe,
+  type UploadInfo,
   UploadRejected,
 } from '../src/video/probe.ts'
 import { runFfmpeg } from '../src/video/render.ts'
@@ -181,6 +184,21 @@ describe.skipIf(!ffmpegPath)('prepareUpload (ffmpeg/ffprobe smoke)', () => {
       await rm(dir, { recursive: true, force: true })
     }
   }, 120_000)
+
+  it('answers a probe timeout and a failed remux as a rejection, not a server error', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ca-probe-'))
+    try {
+      const fake = join(dir, 'fake.mp4')
+      await import('node:fs/promises').then((fs) => fs.writeFile(fake, 'not a video'))
+      await expect(runProbe(fake, 1)).rejects.toBeInstanceOf(UploadRejected)
+      const info = { videoIndex: 0, audioIndex: null, videoCodec: 'h264' } as UploadInfo
+      await expect(remuxToMp4(fake, `${fake}.out.mp4`, info)).rejects.toThrow(
+        'mp4로 다시 묶지 못했어요',
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it('rejects a file that is not a video at all', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ca-probe-'))
